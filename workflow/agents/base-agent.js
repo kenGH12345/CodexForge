@@ -147,7 +147,9 @@ class BaseAgent {
 
     // Auto-generate Chinese translation for .md files (non-blocking)
     if (outputFilePath.endsWith('.md')) {
-      translateMdFile(outputFilePath, this.llmCall).catch(() => {});
+      translateMdFile(outputFilePath, this.llmCall).catch((err) => {
+        console.warn(`[${this.role}] ⚠️  Chinese translation failed (non-fatal): ${err.message}`);
+      });
     }
     
     return outputFilePath;

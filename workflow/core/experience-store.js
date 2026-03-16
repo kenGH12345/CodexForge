@@ -91,6 +91,14 @@ class ExperienceStore {
   record(options) {
     const { type, category, title, content, taskId = null, skill = null, tags = [], codeExample = null } = options;
     const id = `EXP-${Date.now()}-${Math.random().toString(36).slice(2, 9).toUpperCase()}`;
+    // Default TTL: negative experiences expire after 90 days, positive after 365 days.
+    // Callers can override by passing options.ttlDays = null to disable expiry.
+    const ttlDays = options.ttlDays !== undefined
+      ? options.ttlDays
+      : (type === ExperienceType.NEGATIVE ? 90 : 365);
+    const expiresAt = ttlDays != null
+      ? new Date(Date.now() + ttlDays * 86400_000).toISOString()
+      : null;
     const exp = {
       id,
       type,
@@ -107,6 +115,7 @@ class ExperienceStore {
       evolutionCount: 0,    // How many times this triggered a skill evolution
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      expiresAt,            // ISO string or null (null = never expires)
     };
     this.experiences.push(exp);
     this._titleIndex.add(exp.title);
@@ -130,7 +139,9 @@ class ExperienceStore {
    * @returns {Experience[]}
    */
   search({ keyword = null, type = null, category = null, skill = null, tags = null, sourceFile = null, limit = 10, scoreSort = false } = {}) {
-    let results = this.experiences;
+    const now = Date.now();
+    // Filter out expired experiences before any other filtering
+    let results = this.experiences.filter(e => !e.expiresAt || new Date(e.expiresAt).getTime() > now);
 
     if (type) results = results.filter(e => e.type === type);
     if (category) results = results.filter(e => e.category === category);
@@ -322,6 +333,26 @@ class ExperienceStore {
   }
 
   /**
+   * Purges all expired experiences from the store and persists the result.
+   * Call this periodically (e.g. at workflow start) to keep the store lean.
+   *
+   * @returns {{ purged: number, remaining: number }}
+   */
+  purgeExpired() {
+    const now = Date.now();
+    const before = this.experiences.length;
+    this.experiences = this.experiences.filter(e => !e.expiresAt || new Date(e.expiresAt).getTime() > now);
+    // Rebuild title index after purge
+    this._titleIndex = new Set(this.experiences.map(e => e.title));
+    const purged = before - this.experiences.length;
+    if (purged > 0) {
+      this._save();
+      console.log(`[ExperienceStore] Purged ${purged} expired experience(s). Remaining: ${this.experiences.length}`);
+    }
+    return { purged, remaining: this.experiences.length };
+  }
+
+  /**
    * Returns a formatted context block for injection into agent prompts.
    * Includes top positive experiences and all negative experiences for a skill.
    *
@@ -372,7 +403,15 @@ class ExperienceStore {
       lines.push('_No accumulated experience yet for this context._');
     }
 
-    return lines.join('\n');
+    // Token guard: cap the context block at 6000 chars to avoid prompt bloat.
+    // Experiences are already sorted by relevance (scoreSort=true), so truncation
+    // drops the least-relevant entries first.
+    const MAX_CONTEXT_CHARS = 6000;
+    const raw = lines.join('\n');
+    if (raw.length > MAX_CONTEXT_CHARS) {
+      return raw.slice(0, MAX_CONTEXT_CHARS) + '\n\n_... (experience context truncated to stay within token budget)_';
+    }
+    return raw;
   }
 
   /**

@@ -161,6 +161,9 @@ class Orchestrator {
     // Initialise AgentFlow subsystems
     this.taskManager = new TaskManager();
     this.experienceStore = new ExperienceStore();
+    // Purge expired experiences at startup to keep the store lean.
+    // Negative experiences expire after 90 days, positive after 365 days (configurable via ttlDays).
+    this.experienceStore.purgeExpired();
     this.complaintWall = new ComplaintWall();
     this.skillEvolution = new SkillEvolutionEngine();
 
@@ -927,7 +930,50 @@ class Orchestrator {
     }
     const output = await this._rawLlmCall(optimisedPrompt);
 
-    // Auto-generate experience metadata so _runAgentWorker can record it.
+    // ── Parallel mode quality gate: run lightweight review for ARCHITECT/DEVELOPER ──
+    // This mirrors the sequential mode's CodeReviewAgent / ArchitectureReviewAgent
+    // so parallel tasks get the same quality checks as sequential ones.
+    // Reviews are capped at 1 round (vs 2 in sequential) to keep parallel fast.
+    let reviewRiskNotes = [];
+    if (role === AgentRole.ARCHITECT && output && output.length > 200) {
+      try {
+        const { ArchitectureReviewAgent } = require('./core/architecture-review-agent');
+        const tmpPath = require('path').join(PATHS.OUTPUT_DIR, `arch-task-${task.id}.tmp.md`);
+        require('fs').writeFileSync(tmpPath, output, 'utf-8');
+        const reviewer = new ArchitectureReviewAgent(this._rawLlmCall, { maxRounds: 1, verbose: false, outputDir: PATHS.OUTPUT_DIR });
+        const reviewResult = await reviewer.review(tmpPath, null);
+        reviewRiskNotes = reviewResult.riskNotes || [];
+        if (reviewRiskNotes.length > 0) {
+          console.warn(`[Orchestrator] ⚠️  Parallel arch review (task ${task.id}): ${reviewRiskNotes.length} issue(s) found.`);
+          for (const note of reviewRiskNotes) {
+            this.stateMachine.recordRisk(note.includes('(high)') ? 'high' : 'medium', `[ParallelArch:${task.id}] ${note}`, false);
+          }
+          this.stateMachine.flushRisks();
+        }
+        try { require('fs').unlinkSync(tmpPath); } catch { /* ignore */ }
+      } catch (err) {
+        console.warn(`[Orchestrator] Parallel arch review failed for task "${task.id}" (non-fatal): ${err.message}`);
+      }
+    } else if (role === AgentRole.DEVELOPER && output && output.length > 200) {
+      try {
+        const { CodeReviewAgent } = require('./core/code-review-agent');
+        const tmpPath = require('path').join(PATHS.OUTPUT_DIR, `code-task-${task.id}.tmp.md`);
+        require('fs').writeFileSync(tmpPath, output, 'utf-8');
+        const reviewer = new CodeReviewAgent(this._rawLlmCall, { maxRounds: 1, verbose: false, outputDir: PATHS.OUTPUT_DIR });
+        const reviewResult = await reviewer.review(tmpPath, null);
+        reviewRiskNotes = reviewResult.riskNotes || [];
+        if (reviewRiskNotes.length > 0) {
+          console.warn(`[Orchestrator] ⚠️  Parallel code review (task ${task.id}): ${reviewRiskNotes.length} issue(s) found.`);
+          for (const note of reviewRiskNotes) {
+            this.stateMachine.recordRisk(note.includes('(high)') ? 'high' : 'medium', `[ParallelCode:${task.id}] ${note}`, false);
+          }
+          this.stateMachine.flushRisks();
+        }
+        try { require('fs').unlinkSync(tmpPath); } catch { /* ignore */ }
+      } catch (err) {
+        console.warn(`[Orchestrator] Parallel code review failed for task "${task.id}" (non-fatal): ${err.message}`);
+      }
+    }
     // _runAgentWorker checks result.experience; without this field the experience
     // recording block is never entered (the field is always undefined).
     // We synthesise a minimal experience entry from the task metadata so that

@@ -41,7 +41,8 @@ async function _runAnalyst(rawRequirement) {
         clarResult.enrichedRequirement = `[Scope: Full – implement all mentioned features]\n\n${clarResult.enrichedRequirement}`;
       }
     } catch (err) {
-      console.warn(`[Orchestrator] SocraticEngine scope clarification failed (non-fatal): ${err.message}`);
+      this.stateMachine.recordRisk('low', `[SocraticEngine] Scope clarification skipped (engine unavailable): ${err.message}`);
+      console.warn(`[Orchestrator] ⚠️  SocraticEngine scope clarification skipped – proceeding automatically. Reason: ${err.message}`);
     }
   }
 
@@ -77,7 +78,8 @@ async function _runArchitect() {
       techStackPrefix = '[Tech Stack: Enterprise-grade – include full observability, logging, and monitoring]\n\n';
     }
   } catch (err) {
-    console.warn(`[Orchestrator] SocraticEngine tech stack preference failed (non-fatal): ${err.message}`);
+    this.stateMachine.recordRisk('low', `[SocraticEngine] Tech stack preference skipped (engine unavailable): ${err.message}`);
+    console.warn(`[Orchestrator] ⚠️  SocraticEngine tech stack preference skipped – proceeding automatically. Reason: ${err.message}`);
   }
 
   const analystMeta = this.bus.getMeta(AgentRole.ARCHITECT);
@@ -157,7 +159,9 @@ async function _runArchitect() {
       }
     } catch (err) {
       if (err.message.includes('User rejected architecture')) throw err;
-      console.warn(`[Orchestrator] SocraticEngine architecture approval failed (non-fatal): ${err.message}`);
+      // Record the skip as a risk so it's visible in the manifest
+      this.stateMachine.recordRisk('low', `[SocraticEngine] Architecture approval skipped (engine unavailable): ${err.message}`);
+      console.warn(`[Orchestrator] ⚠️  SocraticEngine architecture approval skipped – proceeding automatically. Reason: ${err.message}`);
     }
   }
 
@@ -302,6 +306,28 @@ async function _runDeveloper() {
     console.log(`[Orchestrator] ℹ️  ${reviewResult.failed} minor code issue(s) remain. Proceeding automatically.`);
   }
 
+  // ── Early Entropy GC (post-CODE) ─────────────────────────────────────────
+  // Run entropy scan immediately after code generation so high-severity
+  // violations are visible BEFORE the TEST stage. This gives the developer
+  // a chance to fix oversized files / circular deps while the code is fresh.
+  // The full entropy scan still runs after TEST for a final clean-state check.
+  try {
+    console.log(`\n[Orchestrator] 🔍 Early entropy scan (post-CODE stage)...`);
+    const earlyGcResult = await this.entropyGC.run();
+    if (earlyGcResult.violations > 0) {
+      const highCount = earlyGcResult.details?.high ?? 0;
+      const gcMsg = `[EntropyGC/early] ${earlyGcResult.violations} violation(s) detected after CODE stage (${highCount} high). See output/entropy-report.md.`;
+      console.warn(`[Orchestrator] ⚠️  ${gcMsg}`);
+      if (highCount > 0) {
+        this.stateMachine.recordRisk('high', gcMsg);
+      }
+    } else {
+      console.log(`[Orchestrator] ✅ Early entropy scan: no violations found.`);
+    }
+  } catch (err) {
+    console.warn(`[Orchestrator] Early EntropyGC scan failed (non-fatal): ${err.message}`);
+  }
+
   this.bus.publish(AgentRole.DEVELOPER, AgentRole.TESTER, outputPath, {
     reviewRounds: reviewResult.rounds ?? 0,
     failedItems:  reviewResult.failed ?? 0,
@@ -399,8 +425,9 @@ async function _runTester() {
         console.log(`[Orchestrator] 🤔 Defect handling decision: "${defectDecision.optionText}"`);
         this.stateMachine.recordRisk('low', `[SocraticEngine] Defect handling: ${defectDecision.optionText}`);
       } catch (err) {
-        console.warn(`[Orchestrator] SocraticEngine defect decision failed (non-fatal): ${err.message}`);
-      }
+      this.stateMachine.recordRisk('low', `[SocraticEngine] Defect handling decision skipped (engine unavailable): ${err.message}`);
+      console.warn(`[Orchestrator] ⚠️  SocraticEngine defect decision skipped – proceeding automatically. Reason: ${err.message}`);
+    }
       const testFailTitle = 'Test report: high-severity issues unresolved after self-correction';
       const failContent = `Unresolved high-severity signals after ${corrResult.rounds} self-correction round(s): ${riskMsg}`;
       if (!this.experienceStore.appendByTitle(testFailTitle, failContent)) {
@@ -548,14 +575,73 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
     const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
     const existingDiff = fs.existsSync(codeDiffPath) ? fs.readFileSync(codeDiffPath, 'utf-8') : '(no previous diff)';
 
+    // Collect actual source files for Fix Agent context (not just the diff)
+    // This resolves the "blind fix" problem where Fix Agent only saw code.diff
+    // and had no visibility into the actual current state of source files.
+    let sourceFilesContext = '';
+    try {
+      const sourceExts = (this._config.sourceExtensions || ['.js', '.ts', '.py', '.go', '.java', '.cs']);
+      const ignoreDirs = new Set(this._config.ignoreDirs || ['node_modules', '.git', 'dist', 'build', 'output']);
+      const sourceFiles = [];
+
+      const collectFiles = (dir, depth = 0) => {
+        if (depth > 4) return;
+        let entries;
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const entry of entries) {
+          if (ignoreDirs.has(entry.name)) continue;
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            collectFiles(fullPath, depth + 1);
+          } else if (sourceExts.some(ext => entry.name.endsWith(ext))) {
+            sourceFiles.push(fullPath);
+          }
+        }
+      };
+      collectFiles(this.projectRoot);
+
+      // Prioritise files mentioned in the failure output
+      const failureText = result.output || result.failureSummary.join('\n');
+      const mentionedFiles = sourceFiles.filter(f => {
+        const rel = path.relative(this.projectRoot, f).replace(/\\/g, '/');
+        return failureText.includes(rel) || failureText.includes(path.basename(f));
+      });
+      const otherFiles = sourceFiles.filter(f => !mentionedFiles.includes(f));
+      const orderedFiles = [...mentionedFiles, ...otherFiles];
+
+      const fileSnippets = [];
+      let totalChars = 0;
+      const MAX_SOURCE_CHARS = 8000;
+
+      for (const filePath of orderedFiles) {
+        if (totalChars >= MAX_SOURCE_CHARS) break;
+        try {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const rel = path.relative(this.projectRoot, filePath).replace(/\\/g, '/');
+          const snippet = content.length > 3000 ? content.slice(0, 3000) + '\n... (truncated)' : content;
+          fileSnippets.push(`### ${rel}\n\`\`\`\n${snippet}\n\`\`\``);
+          totalChars += snippet.length;
+        } catch { /* skip unreadable files */ }
+      }
+
+      if (fileSnippets.length > 0) {
+        sourceFilesContext = `## Current Source Files (${fileSnippets.length} file(s))\n\n${fileSnippets.join('\n\n')}`;
+        console.log(`[Orchestrator] 📂 Fix Agent context: ${fileSnippets.length} source file(s) injected (${totalChars} chars)`);
+      }
+    } catch (err) {
+      console.warn(`[Orchestrator] ⚠️  Could not collect source files for Fix Agent: ${err.message}`);
+    }
+
     const fixPrompt = [
       `You are a **Code Fix Agent**. The project's test suite has failed.`,
       `Your task: produce REPLACE_IN_FILE blocks that fix ALL failing tests.`,
       ``,
-      `## Previous Code (for context)`,
+      `## Previous Diff (for reference)`,
       `\`\`\`diff`,
-      existingDiff.slice(0, 4000),
+      existingDiff.slice(0, 2000),
       `\`\`\``,
+      ``,
+      sourceFilesContext,
       ``,
       failureContext,
       ``,
@@ -573,7 +659,7 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
       `## Rules`,
       `1. Analyse the failure output above and identify the root cause of each failing test.`,
       `2. Output ONLY [REPLACE_IN_FILE] blocks – no explanations, no markdown prose.`,
-      `3. The "find:" block MUST be an exact substring of the current file (copy-paste it).`,
+      `3. The "find:" block MUST be an exact substring of the current file (copy-paste it from the source above).`,
       `4. Only change what is necessary to fix the failures.`,
       `5. Do NOT change test files unless the test itself is clearly wrong.`,
       `6. File paths are relative to the project root: ${this.projectRoot}`,

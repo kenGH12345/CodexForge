@@ -66,6 +66,14 @@ class StateMachine {
     return STATE_ORDER[idx + 1];
   }
 
+  /**
+   * Returns the previous state before the current one, or null if already at INIT.
+   */
+  getPreviousState() {
+    const idx = STATE_ORDER.indexOf(this.getState());
+    if (idx <= 0) return null;
+    return STATE_ORDER[idx - 1];
+  }
   // ─── Transition ───────────────────────────────────────────────────────────────
 
   /**
@@ -111,6 +119,77 @@ class StateMachine {
     }
 
     return toState;
+  }
+
+  /**
+   * Rolls back the state machine to the previous state.
+   * Useful when a downstream stage discovers a fundamental issue that requires
+   * re-running an earlier stage (e.g. architecture review fails → re-analyse).
+   *
+   * @param {string} [reason] - Human-readable reason for rollback
+   * @returns {string} The state rolled back to
+   * @throws {Error} If already at INIT state (cannot roll back further)
+   */
+  async rollback(reason = '') {
+    const fromState = this.getState();
+    const toState = this.getPreviousState();
+
+    if (!toState) {
+      throw new Error(`[StateMachine] Cannot rollback: already at initial state "${fromState}"`);
+    }
+
+    console.warn(`[StateMachine] ⏪ Rollback: ${fromState} → ${toState}${reason ? ` (reason: ${reason})` : ''}`);
+
+    await this.hookEmitter(HOOK_EVENTS.BEFORE_STATE_TRANSITION, { fromState, toState, rollback: true, reason });
+
+    const entry = createHistoryEntry(fromState, toState, null, `[ROLLBACK] ${reason}`);
+    this.manifest.history.push(entry);
+    this.manifest.currentState = toState;
+    this.manifest.updatedAt = new Date().toISOString();
+    this.manifest.lastRollback = { fromState, toState, reason, timestamp: new Date().toISOString() };
+
+    this._writeManifest();
+
+    await this.hookEmitter(HOOK_EVENTS.AFTER_STATE_TRANSITION, { fromState, toState, rollback: true, manifest: this.manifest });
+
+    return toState;
+  }
+
+  /**
+   * Jumps directly to a specific target state (forward or backward).
+   * Use with caution – skipping stages may leave artifacts in an inconsistent state.
+   *
+   * @param {string} targetState - The WorkflowState to jump to
+   * @param {string} [reason]    - Human-readable reason for the jump
+   * @returns {string} The new current state
+   * @throws {Error} If targetState is not a valid WorkflowState
+   */
+  async jumpTo(targetState, reason = '') {
+    if (!STATE_ORDER.includes(targetState)) {
+      throw new Error(`[StateMachine] Invalid target state: "${targetState}". Valid states: ${STATE_ORDER.join(', ')}`);
+    }
+
+    const fromState = this.getState();
+    if (fromState === targetState) {
+      console.warn(`[StateMachine] jumpTo: already in state "${targetState}". No-op.`);
+      return targetState;
+    }
+
+    const direction = STATE_ORDER.indexOf(targetState) < STATE_ORDER.indexOf(fromState) ? '⏪' : '⏩';
+    console.warn(`[StateMachine] ${direction} Jump: ${fromState} → ${targetState}${reason ? ` (reason: ${reason})` : ''}`);
+
+    await this.hookEmitter(HOOK_EVENTS.BEFORE_STATE_TRANSITION, { fromState, toState: targetState, jump: true, reason });
+
+    const entry = createHistoryEntry(fromState, targetState, null, `[JUMP] ${reason}`);
+    this.manifest.history.push(entry);
+    this.manifest.currentState = targetState;
+    this.manifest.updatedAt = new Date().toISOString();
+
+    this._writeManifest();
+
+    await this.hookEmitter(HOOK_EVENTS.AFTER_STATE_TRANSITION, { fromState, toState: targetState, jump: true, manifest: this.manifest });
+
+    return targetState;
   }
 
   // ─── Risk Recording ───────────────────────────────────────────────────────────

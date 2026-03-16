@@ -217,7 +217,9 @@ Now generate the complete test suite for the requirements provided above.
     }
 
     // Async Chinese translation – non-blocking, does not affect main flow
-    translateMdFile(outputPath, this._llmCall).catch(() => {});
+    translateMdFile(outputPath, this._llmCall).catch((err) => {
+      console.warn(`[TestCaseGenerator] ⚠️  Chinese translation failed (non-fatal): ${err.message}`);
+    });
 
     return { path: outputPath, caseCount, skipped: false };
   }
