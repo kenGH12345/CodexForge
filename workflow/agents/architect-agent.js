@@ -53,12 +53,25 @@ Produce a Markdown document with the following sections:
 6. **Non-Functional Requirements** – Performance, scalability, security considerations
 7. **Risk Assessment** – Technical risks and mitigation strategies
 8. **Open Architecture Questions** – Decisions that need further input
+9. **Architecture Design** *(mandatory)* – Explicit record of the key architectural decisions made:
+   - Which architectural pattern was chosen (e.g. layered, microservices, event-driven) and WHY
+   - Which technology stack was selected and the concrete reasons for each choice
+   - Which design trade-offs were made (e.g. consistency vs availability, simplicity vs extensibility)
+   - How the architecture satisfies each non-functional requirement
+   - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
+10. **Execution Plan** *(mandatory)* – Step-by-step plan for implementing this architecture:
+    - Ordered list of implementation phases (Phase 1: ..., Phase 2: ..., etc.)
+    - For each phase: what components to build, in what order, and why that order
+    - Dependencies between phases (what must be done before what)
+    - Estimated complexity for each phase (Low / Medium / High)
+    - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
 
 ## Requirement Document
 ${inputContent}
 ${expSection}
 ## Instructions
-Write the architecture.md document now. Remember: NO code, NO implementation, design decisions ONLY.`;
+Write the architecture.md document now. Remember: NO code, NO implementation, design decisions ONLY.
+**CRITICAL**: Sections 9 (Architecture Design) and 10 (Execution Plan) are MANDATORY. Do not omit them.`;
   }
 
   /**
@@ -80,6 +93,16 @@ Write the architecture.md document now. Remember: NO code, NO implementation, de
         break;
       }
     }
+
+    // ── Mandatory section compliance check ──────────────────────────────────
+    const mandatorySections = ['Architecture Design', 'Execution Plan'];
+    const missingSections = mandatorySections.filter(s => !llmResponse.includes(s));
+    if (missingSections.length > 0) {
+      console.warn(`[ArchitectAgent] ⚠️  COMPLIANCE: Missing mandatory section(s): ${missingSections.join(', ')}. The agent output specification requires these sections.`);
+    } else {
+      console.log(`[ArchitectAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan.`);
+    }
+
     return llmResponse;
   }
 }

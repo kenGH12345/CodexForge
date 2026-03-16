@@ -217,7 +217,7 @@ async function _runArchitect() {
       tags: ['architecture-review', 'passed', 'stable'],
     });
   } else if (archReviewResult.needsHumanReview) {
-    console.warn(`[Orchestrator] ⚠️  ${archReviewResult.failed} high-severity architecture issue(s) remain. Recorded as risks.`);
+    console.warn(`[Orchestrator] ⚠️  ${archReviewResult.failed} high-severity architecture issue(s) remain. Attempting rollback to ANALYSE stage.`);
     const archFailTitle = 'Architecture review: high-severity issues unresolved after self-correction';
     const failedNotes = archReviewResult.riskNotes.slice(0, 3).join('; ');
     const failContent = `After ${archReviewResult.rounds ?? 'N/A'} self-correction round(s), ${archReviewResult.failed} high-severity issue(s) remained. Issues: ${failedNotes}`;
@@ -230,6 +230,29 @@ async function _runArchitect() {
         skill: 'architecture-design',
         tags: ['architecture-review', 'failed', 'pitfall'],
       });
+    }
+    // ── Rollback to ANALYSE stage (Defect #1 fix) ─────────────────────────────
+    // Previously: rollback() existed but was never called. The workflow would
+    // just record a risk and continue to CODE stage with a broken architecture.
+    // Now: when high-severity issues remain after all review rounds, we roll
+    // back to ANALYSE so the analyst can re-clarify requirements before the
+    // architect tries again. This is capped at 1 rollback to prevent infinite loops.
+    const rollbackKey = `_archRollbackCount_${this.projectId}`;
+    const rollbackCount = (this[rollbackKey] || 0);
+    if (rollbackCount < 1) {
+      this[rollbackKey] = rollbackCount + 1;
+      try {
+        const rollbackReason = `Architecture review failed: ${failedNotes.slice(0, 200)}`;
+        await this.stateMachine.rollback(rollbackReason);
+        console.warn(`[Orchestrator] ⏪ Rolled back to ANALYSE stage. Re-running analyst with failure context.`);
+        // Re-run analyst with the failure context injected
+        const failureContext = `[ARCHITECTURE REVIEW FAILED – RETRY ${rollbackCount + 1}]\n\nThe previous architecture attempt failed review with these issues:\n${failedNotes}\n\nPlease re-analyse the requirements with these constraints in mind.`;
+        return await _runAnalyst.call(this, failureContext);
+      } catch (rollbackErr) {
+        console.warn(`[Orchestrator] Rollback failed (non-fatal): ${rollbackErr.message}. Proceeding with risks recorded.`);
+      }
+    } else {
+      console.warn(`[Orchestrator] ⚠️  Rollback limit reached (max 1). Proceeding to CODE stage with ${archReviewResult.failed} unresolved issue(s).`);
     }
   } else {
     console.log(`[Orchestrator] ℹ️  ${archReviewResult.failed} minor architecture issue(s) remain. Proceeding automatically.`);

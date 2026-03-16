@@ -30,6 +30,12 @@ class StageContextStore {
     this._store = new Map();
     this._outputDir = opts.outputDir || null;
     this._verbose   = opts.verbose   ?? false;
+
+    // Auto-load persisted context on construction so workflow resumption
+    // (e.g. after a crash mid-CODE stage) can see ANALYSE + ARCHITECT summaries.
+    if (this._outputDir) {
+      this._load();
+    }
   }
 
   // ─── Write ────────────────────────────────────────────────────────────────
@@ -172,23 +178,41 @@ class StageContextStore {
       return { summary: `Could not read ${stageName} output.`, keyDecisions: [] };
     }
 
-    // Extract headings as key decisions (## and ### level)
-    const headings = (content.match(/^#{2,3}\s+.+$/gm) || [])
-      .map(h => h.replace(/^#+\s+/, '').trim())
-      .filter(h => h.length > 3 && h.length < 100)
-      .slice(0, 8);
+    // ── Key Decisions: extract CONTENT under decision-relevant headings ────────
+    // Previously we extracted heading titles (e.g. "## Technology Stack") which
+    // had zero information value. Now we extract the CONTENT under each heading
+    // (e.g. "Express.js + PostgreSQL chosen for..." under "## Technology Stack").
+    const keyDecisions = [];
+    const headingContentRegex = /^#{2,3}\s+(.+)$([\s\S]*?)(?=^#{1,3}\s|$(?!\n))/gm;
+    let hMatch;
+    while ((hMatch = headingContentRegex.exec(content)) !== null && keyDecisions.length < 6) {
+      const heading = hMatch[1].trim();
+      const body = (hMatch[2] || '')
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 10 && !l.startsWith('```') && !l.startsWith('|') && !l.startsWith('#'))
+        .slice(0, 2)
+        .join(' ');
+      if (body.length > 15) {
+        // Format: "Heading: first meaningful sentence"
+        keyDecisions.push(`${heading}: ${body.slice(0, 150)}`);
+      } else if (heading.length > 3) {
+        // Fallback: heading only if no useful body found
+        keyDecisions.push(heading);
+      }
+    }
 
-    // Extract first non-empty paragraph as summary
+    // ── Summary: first substantive paragraph (not a heading, not a code block) ─
     const paragraphs = content
       .split(/\n{2,}/)
       .map(p => p.replace(/^#+\s+/, '').trim())
-      .filter(p => p.length > 20 && !p.startsWith('```') && !p.startsWith('|'));
+      .filter(p => p.length > 30 && !p.startsWith('```') && !p.startsWith('|') && !p.startsWith('-'));
 
     const summary = paragraphs[0]
-      ? paragraphs[0].slice(0, 400).replace(/\n/g, ' ')
+      ? paragraphs[0].slice(0, 500).replace(/\n/g, ' ')
       : `${stageName} stage completed.`;
 
-    return { summary, keyDecisions: headings };
+    return { summary, keyDecisions };
   }
 
   // ─── Persistence ──────────────────────────────────────────────────────────
@@ -200,6 +224,34 @@ class StageContextStore {
       const outPath = path.join(this._outputDir, 'stage-context.json');
       fs.writeFileSync(outPath, JSON.stringify(data, null, 2), 'utf-8');
     } catch { /* non-fatal */ }
+  }
+
+  /**
+   * Loads persisted stage context from stage-context.json.
+   * Called automatically on construction to support workflow resumption:
+   * if the workflow crashed mid-CODE stage, the ANALYSE + ARCHITECT contexts
+   * are restored so downstream agents still see the full upstream history.
+   *
+   * Only loads entries that are NOT already in the in-memory store
+   * (in-memory always wins over persisted data).
+   */
+  _load() {
+    try {
+      const outPath = path.join(this._outputDir, 'stage-context.json');
+      if (!fs.existsSync(outPath)) return;
+      const raw = fs.readFileSync(outPath, 'utf-8');
+      const data = JSON.parse(raw);
+      let loaded = 0;
+      for (const [stageName, entry] of Object.entries(data)) {
+        if (!this._store.has(stageName)) {
+          this._store.set(stageName, entry);
+          loaded++;
+        }
+      }
+      if (loaded > 0 && this._verbose) {
+        console.log(`[StageContextStore] Restored ${loaded} stage context(s) from stage-context.json (workflow resumption).`);
+      }
+    } catch { /* non-fatal – missing or corrupt file is fine */ }
   }
 }
 

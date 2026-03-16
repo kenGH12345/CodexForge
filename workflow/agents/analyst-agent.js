@@ -49,12 +49,23 @@ Produce a Markdown document with the following sections:
 3. **Acceptance Criteria** – Numbered list of verifiable conditions (WHEN/THEN/IF format)
 4. **Out of Scope** – Explicit list of things NOT included in this requirement
 5. **Open Questions** – Any ambiguities that need clarification before implementation
+6. **Architecture Design** *(mandatory)* – High-level analysis of the problem domain:
+   - Key entities and their relationships
+   - Major functional boundaries (what subsystems are implied by the requirements)
+   - Constraints and non-functional requirements identified from the user's request
+   - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
+7. **Execution Plan** *(mandatory)* – Ordered list of analysis steps taken and decisions made:
+   - What clarifications were applied to the raw requirement
+   - What assumptions were made and why
+   - What risks or ambiguities remain unresolved
+   - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
 
 ## User Requirement
 ${inputContent}
 ${expSection}
 ## Instructions
-Write the requirement.md document now. Remember: NO technical details, NO code, NO architecture.`;
+Write the requirement.md document now. Remember: NO technical details, NO code, NO architecture.
+**CRITICAL**: Sections 6 (Architecture Design) and 7 (Execution Plan) are MANDATORY. Do not omit them.`;
   }
 
   /**
@@ -73,6 +84,18 @@ Write the requirement.md document now. Remember: NO technical details, NO code, 
         break;
       }
     }
+
+    // ── Mandatory section compliance check ──────────────────────────────────
+    // Verify that the mandatory "Architecture Design" and "Execution Plan" sections
+    // are present in the output. These are required by the agent output specification.
+    const mandatorySections = ['Architecture Design', 'Execution Plan'];
+    const missingSections = mandatorySections.filter(s => !llmResponse.includes(s));
+    if (missingSections.length > 0) {
+      console.warn(`[AnalystAgent] ⚠️  COMPLIANCE: Missing mandatory section(s): ${missingSections.join(', ')}. The agent output specification requires these sections.`);
+    } else {
+      console.log(`[AnalystAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan.`);
+    }
+
     return llmResponse;
   }
 }

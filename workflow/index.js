@@ -418,7 +418,14 @@ class Orchestrator {
 
     let decompositionResult = null;
     try {
-      const llmResponse = await this._rawLlmCall(decompositionPrompt);
+      // ── Timeout protection: LLM decomposition call capped at 30s ─────────────
+      // Without this, a hung LLM service would block runAuto() indefinitely.
+      // On timeout, we fall back to sequential mode gracefully.
+      const DECOMPOSITION_TIMEOUT_MS = 30_000;
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`LLM decomposition timed out after ${DECOMPOSITION_TIMEOUT_MS}ms`)), DECOMPOSITION_TIMEOUT_MS)
+      );
+      const llmResponse = await Promise.race([this._rawLlmCall(decompositionPrompt), timeoutPromise]);
       decompositionResult = this._parseDecompositionResponse(llmResponse, rawRequirement);
     } catch (err) {
       console.warn(`[Orchestrator] ⚠️  Task decomposition LLM call failed: ${err.message}. Falling back to sequential.`);
@@ -951,7 +958,11 @@ class Orchestrator {
     if (role === AgentRole.ARCHITECT && output && output.length > 200) {
       try {
         const { ArchitectureReviewAgent } = require('./core/architecture-review-agent');
-        const tmpPath = require('path').join(PATHS.OUTPUT_DIR, `arch-task-${task.id}.tmp.md`);
+        // ── UUID-named temp file to avoid parallel worker file conflicts ─────────
+        // Previously used task.id which could collide if two workers process tasks
+        // with the same id simultaneously. crypto.randomUUID() guarantees uniqueness.
+        const uid = require('crypto').randomUUID();
+        const tmpPath = require('path').join(PATHS.OUTPUT_DIR, `arch-task-${uid}.tmp.md`);
         require('fs').writeFileSync(tmpPath, output, 'utf-8');
         const reviewer = new ArchitectureReviewAgent(this._rawLlmCall, { maxRounds: 1, verbose: false, outputDir: PATHS.OUTPUT_DIR });
         const reviewResult = await reviewer.review(tmpPath, null);
@@ -970,7 +981,8 @@ class Orchestrator {
     } else if (role === AgentRole.DEVELOPER && output && output.length > 200) {
       try {
         const { CodeReviewAgent } = require('./core/code-review-agent');
-        const tmpPath = require('path').join(PATHS.OUTPUT_DIR, `code-task-${task.id}.tmp.md`);
+        const uid = require('crypto').randomUUID();
+        const tmpPath = require('path').join(PATHS.OUTPUT_DIR, `code-task-${uid}.tmp.md`);
         require('fs').writeFileSync(tmpPath, output, 'utf-8');
         const reviewer = new CodeReviewAgent(this._rawLlmCall, { maxRounds: 1, verbose: false, outputDir: PATHS.OUTPUT_DIR });
         const reviewResult = await reviewer.review(tmpPath, null);

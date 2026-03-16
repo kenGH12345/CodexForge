@@ -63,11 +63,32 @@ Rules:
 - Group related changes in the same file together
 - Add new files with \`--- /dev/null\` and \`+++ b/new-file.js\`
 
+## Mandatory Preamble Sections
+Before the diff output, you MUST include the following two sections:
+
+### Architecture Design *(mandatory)*
+A concise record of the implementation design decisions made for this coding task:
+- Which modules/files were created or modified and why
+- Which design patterns were applied (e.g. factory, singleton, middleware chain)
+- How the implementation maps to the architecture document's component breakdown
+- Any deviations from the architecture and the justification for each deviation
+- ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
+
+### Execution Plan *(mandatory)*
+An ordered list of the implementation steps taken:
+- Step 1: [what was done first and why]
+- Step 2: [what was done next]
+- ... (continue for all significant steps)
+- What was intentionally deferred or left as TODO and why
+- ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
+
 ## Architecture Document
 ${inputContent}
 ${expSection}
 ## Instructions
-Generate the code.diff now. Output ONLY the diff content, no explanations outside the diff blocks.`;
+First write the "Architecture Design" and "Execution Plan" sections.
+Then generate the code.diff. Output the diff content inside a \`\`\`diff block.
+**CRITICAL**: Both preamble sections are MANDATORY. Do not omit them.`;
   }
 
   /**
@@ -78,6 +99,15 @@ Generate the code.diff now. Output ONLY the diff content, no explanations outsid
    * @returns {string}
    */
   parseResponse(llmResponse) {
+    // ── Mandatory section compliance check ────────────────────────────────────
+    const mandatorySections = ['Architecture Design', 'Execution Plan'];
+    const missingSections = mandatorySections.filter(s => !llmResponse.includes(s));
+    if (missingSections.length > 0) {
+      console.warn(`[DeveloperAgent] ⚠️  COMPLIANCE: Missing mandatory section(s): ${missingSections.join(', ')}. The agent output specification requires these sections.`);
+    } else {
+      console.log(`[DeveloperAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan.`);
+    }
+
     // Extract content from ```diff ... ``` block if present (handle optional diff and \r\n)
     const diffBlockMatch = llmResponse.match(/```(?:diff)?\r?\n([\s\S]*?)```/);
     if (diffBlockMatch) {

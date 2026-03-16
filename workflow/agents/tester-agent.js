@@ -110,6 +110,18 @@ Produce a Markdown test report with the following sections:
 6. **Risk Assessment** – Areas of the code that carry the highest risk of failure
 7. **Recommendations** – Specific, actionable fixes for each defect found
 8. **Regression Checklist** – Items to verify after fixes are applied
+9. **Architecture Design** *(mandatory)* – The testing strategy and design decisions made for this test run:
+   - Which testing approach was chosen (black-box / white-box / boundary analysis / equivalence partitioning)
+   - Which risk areas were prioritised and why
+   - How the test cases map to the architecture components
+   - What testing gaps exist and why they could not be covered
+   - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
+10. **Execution Plan** *(mandatory)* – The ordered sequence of testing activities performed:
+    - Step 1: [what was tested first and why]
+    - Step 2: [what was tested next]
+    - ... (continue for all significant testing steps)
+    - What was intentionally deferred or left untested and why
+    - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
 
 ## Severity Definitions
 - **Critical**: System crash, data loss, security vulnerability
@@ -124,7 +136,8 @@ ${inputContent}
 ${expSection}
 ## Instructions
 Write the test-report.md now. Be thorough, objective, and cite evidence from the diff.
-Pay special attention to Coverage Analysis – every acceptance criterion must be explicitly verified.`;
+Pay special attention to Coverage Analysis – every acceptance criterion must be explicitly verified.
+**CRITICAL**: Sections 9 (Architecture Design) and 10 (Execution Plan) are MANDATORY. Do not omit them.`;
   }
 
   /**
@@ -139,6 +152,15 @@ Pay special attention to Coverage Analysis – every acceptance criterion must b
     const missingSections = requiredSections.filter(s => !llmResponse.includes(s));
     if (missingSections.length > 0) {
       console.warn(`[TesterAgent] WARNING: Test report missing sections: ${missingSections.join(', ')}`);
+    }
+
+    // ── Mandatory section compliance check ────────────────────────────────────
+    const mandatorySections = ['Architecture Design', 'Execution Plan'];
+    const missingMandatory = mandatorySections.filter(s => !llmResponse.includes(s));
+    if (missingMandatory.length > 0) {
+      console.warn(`[TesterAgent] ⚠️  COMPLIANCE: Missing mandatory section(s): ${missingMandatory.join(', ')}. The agent output specification requires these sections.`);
+    } else {
+      console.log(`[TesterAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan.`);
     }
 
     // Verify that pre-planned test case IDs appear in the report

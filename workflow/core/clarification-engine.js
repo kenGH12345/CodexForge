@@ -50,7 +50,10 @@ const SIGNAL_PATTERNS = [
     label: '🚨 Unmitigated Risk',
     layer: 'What-if',
     severity: 'high',
-    patterns: [/\b(might fail|could fail|risk|concern|potential issue|风险|隐患|警告)\b/i],
+    // Negative lookahead: skip phrases where the risk is already mitigated or negated.
+    // e.g. "mitigates the risk", "no risk", "without risk", "addresses concerns",
+    //      "reduces potential issues", "risk is low/minimal/acceptable"
+    patterns: [/(?<!mitigat(?:es?|ed|ing)\s{0,20}(?:the\s)?)(?<!no\s)(?<!without\s)(?<!address(?:es?|ed|ing)\s{0,20}(?:the\s)?)(?<!reduc(?:es?|ed|ing)\s{0,20}(?:the\s)?)\b(might fail|could fail|risk|concern|potential issue|风险|隐患|警告)\b(?!\s+(?:is\s+)?(?:low|minimal|acceptable|mitigated|addressed|resolved|handled|managed))/i],
     instruction: (match) => `The risk "${match}" is mentioned without a mitigation plan. Add a concrete mitigation strategy.`,
   },
   {
