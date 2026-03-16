@@ -15,6 +15,7 @@
 
 const { BaseAgent } = require('./base-agent');
 const { AgentRole } = require('../core/types');
+const { buildJsonBlockInstruction } = require('../core/agent-output-schema');
 
 class ArchitectAgent extends BaseAgent {
   constructor(llmCall, hookEmitter) {
@@ -33,8 +34,13 @@ class ArchitectAgent extends BaseAgent {
     const expSection = expContext
       ? `\n## Accumulated Experience (Reference Before Designing)\n${expContext}\n`
       : '';
+    // P0-NEW-1: inject structured JSON output instruction
+    const jsonInstruction = buildJsonBlockInstruction('architect');
 
-    return `You are an **Architecture Design Agent** – a technical planner.
+    return `You are **Martin Fowler** – Chief Scientist at ThoughtWorks, author of *Patterns of Enterprise Application Architecture*, *Refactoring*, and *UML Distilled*.
+You have spent three decades identifying, naming, and documenting the patterns that separate good software architecture from accidental complexity.
+Your hallmark: you choose the simplest architecture that could possibly work, name every decision explicitly, and document trade-offs with surgical precision.
+You are acting as the **Architecture Design Agent** for this workflow.
 
 ## Your Role
 - Read the requirement document and produce a comprehensive architecture design.
@@ -66,11 +72,14 @@ Produce a Markdown document with the following sections:
     - Estimated complexity for each phase (Low / Medium / High)
     - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
 
+${jsonInstruction}
+
 ## Requirement Document
 ${inputContent}
 ${expSection}
 ## Instructions
-Write the architecture.md document now. Remember: NO code, NO implementation, design decisions ONLY.
+First output the JSON metadata block (as instructed above), then write the full Markdown document.
+Remember: NO code, NO implementation, design decisions ONLY.
 **CRITICAL**: Sections 9 (Architecture Design) and 10 (Execution Plan) are MANDATORY. Do not omit them.`;
   }
 
@@ -82,6 +91,20 @@ Write the architecture.md document now. Remember: NO code, NO implementation, de
    * @returns {string}
    */
   parseResponse(llmResponse) {
+    // P0-NEW-1: validate JSON block presence
+    const { extractJsonBlock, validateJsonBlock } = require('../core/agent-output-schema');
+    const jsonBlock = extractJsonBlock(llmResponse);
+    if (!jsonBlock) {
+      console.warn(`[ArchitectAgent] ⚠️  No structured JSON block found in output. Downstream agents will use regex-based extraction (degraded mode).`);
+    } else {
+      const check = validateJsonBlock(jsonBlock, 'architect');
+      if (!check.valid) {
+        console.warn(`[ArchitectAgent] ⚠️  JSON block validation failed: ${check.reason}`);
+      } else {
+        console.log(`[ArchitectAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
+      }
+    }
+
     // Detect implementation code (multi-line code blocks with logic)
     const codeBlockPattern = /```[\w]*\n([\s\S]*?)```/g;
     let match;

@@ -56,14 +56,27 @@ const SIGNAL_PATTERNS = [
     //         already-mitigated risks (e.g. "mitigates the risk", "no risk", "risk is low").
     // This approach is compatible with ALL Node.js versions (no lookbehind at all).
     patterns: [/\b(might fail|could fail|risk|concern|potential issue|风险|隐患|警告)\b(?!\s+(?:is\s+)?(?:low|minimal|acceptable|mitigated|addressed|resolved|handled|managed))/i],
-    // Filter: returns false (skip signal) if the match is preceded by a mitigation phrase.
-    // Uses a simple substring search on the 40 chars before the match – no regex lookbehind.
+    // Filter: returns false (skip signal) if ALL occurrences of the match are preceded
+    // by a mitigation phrase. If ANY occurrence is NOT mitigated, the signal is kept.
+    // Scan ALL occurrences; return true if any is unmitigated. see CHANGELOG: P2-5/risk-filter
     filter: (match, fullText) => {
-      const idx = fullText.toLowerCase().indexOf(match.toLowerCase());
-      if (idx < 0) return true; // can't locate, keep signal
-      const prefix = fullText.slice(Math.max(0, idx - 40), idx).toLowerCase();
+      const lowerText = fullText.toLowerCase();
+      const lowerMatch = match.toLowerCase();
       const mitigationPrefixes = ['mitigates ', 'mitigated ', 'mitigating ', 'no ', 'without ', 'addresses ', 'addressed ', 'reduces ', 'reduced '];
-      return !mitigationPrefixes.some(p => prefix.endsWith(p) || prefix.includes(p + 'the '));
+      let searchFrom = 0;
+      let foundUnmitigated = false;
+      while (true) {
+        const idx = lowerText.indexOf(lowerMatch, searchFrom);
+        if (idx < 0) break;
+        const prefix = lowerText.slice(Math.max(0, idx - 40), idx);
+        const isMitigated = mitigationPrefixes.some(p => prefix.endsWith(p) || prefix.includes(p + 'the '));
+        if (!isMitigated) {
+          foundUnmitigated = true;
+          break;
+        }
+        searchFrom = idx + 1;
+      }
+      return foundUnmitigated;
     },
     instruction: (match) => `The risk "${match}" is mentioned without a mitigation plan. Add a concrete mitigation strategy.`,
   },
@@ -135,8 +148,24 @@ function detectSignals(text) {
  * @returns {string} prompt
  */
 function buildSemanticDetectionPrompt(text, stageLabel) {
+  // Cap document at 6000 chars to stay within LLM context window. see CHANGELOG: P1-4/buildSemanticDetectionPrompt
+  const MAX_DOC_CHARS = 6000;
+  let docText = text;
+  if (text.length > MAX_DOC_CHARS) {
+    const half = MAX_DOC_CHARS / 2;
+    const head = text.slice(0, half);
+    const tail = text.slice(-half);
+    const omitted = text.length - MAX_DOC_CHARS;
+    docText = `${head}\n\n... [${omitted} chars omitted for token budget] ...\n\n${tail}`;
+    // Only log in non-test environments to avoid noise in unit tests
+    if (typeof console !== 'undefined' && process.env.NODE_ENV !== 'test') {
+      console.log(`[SelfCorrectionEngine] 📏 Document truncated for semantic detection: ${text.length} → ${docText.length} chars (${omitted} omitted).`);
+    }
+  }
+
   return [
-    `You are a senior technical reviewer performing a semantic signal analysis on a ${stageLabel} document.`,
+    `You are **W. Edwards Deming** – the father of quality management, creator of the PDCA (Plan-Do-Check-Act) cycle, and the statistician who transformed post-war Japanese manufacturing into a quality powerhouse.
+You believe that quality must be built in, not inspected in. You are performing a semantic signal analysis on a ${stageLabel} document to identify the quality defects that will cause rework downstream.`,
     ``,
     `## Your Task`,
     ``,
@@ -179,7 +208,7 @@ function buildSemanticDetectionPrompt(text, stageLabel) {
     ``,
     `## Document to Analyse`,
     ``,
-    text,
+    docText,
     ``,
     `## Output Format`,
     ``,
@@ -192,6 +221,76 @@ function buildSemanticDetectionPrompt(text, stageLabel) {
     `- "instruction": one concrete instruction for the author to fix this issue`,
     ``,
     `If NO real issues are found, return an empty array: []`,
+    ``,
+    `Return ONLY the JSON array. No markdown fences, no extra text.`,
+  ].join('\n');
+}
+
+/**
+ * Builds an adversarial verification prompt for the final signal check.
+ *
+ * Independence principle (P1-A fix):
+ *   The standard detection prompt asks the LLM to "find issues". After self-correction,
+ *   the same LLM tends to confirm its own fixes ("I fixed it, so it must be fine").
+ *   This verification prompt uses a DIFFERENT persona – a sceptical second reviewer
+ *   who is specifically looking for issues that a previous reviewer might have missed
+ *   or glossed over. This breaks the self-validation loop.
+ *
+ * @param {string} text        - Document text to verify
+ * @param {string} stageLabel  - e.g. 'Architecture', 'Test Report'
+ * @returns {string} prompt
+ */
+function buildSemanticVerificationPrompt(text, stageLabel) {
+  const MAX_DOC_CHARS = 6000;
+  let docText = text;
+  if (text.length > MAX_DOC_CHARS) {
+    const half = MAX_DOC_CHARS / 2;
+    const omitted = text.length - MAX_DOC_CHARS;
+    docText = `${text.slice(0, half)}\n\n... [${omitted} chars omitted for token budget] ...\n\n${text.slice(-half)}`;
+  }
+
+  return [
+    `You are **Nassim Nicholas Taleb** – author of *The Black Swan* and *Antifragile*, and the world's foremost expert on hidden risks, tail events, and the fragility of systems that look robust on the surface.
+You are performing a final adversarial quality gate check on a ${stageLabel} document. Your job is to find the risks that the previous reviewer normalised away.`,
+    ``,
+    `## Context`,
+    ``,
+    `This document has already been reviewed and self-corrected by another reviewer.`,
+    `Your job is to act as an independent adversarial checker: assume the previous reviewer`,
+    `may have been too lenient or may have missed subtle issues.`,
+    ``,
+    `## Your Task`,
+    ``,
+    `Look specifically for issues that are easy to overlook after self-correction:`,
+    ``,
+    `1. **Residual ambiguity** – Terms that are still vague after correction (e.g. "reasonable", "appropriate", "sufficient")`,
+    `2. **Unverified assumptions** – Premises stated as facts without evidence or justification`,
+    `3. **Unmitigated risks** – Risks mentioned but with no concrete mitigation plan (not just "we will handle it")`,
+    `4. **Logical contradictions** – Two statements that cannot both be true, even if they use different words`,
+    `5. **Undecided alternatives** – Multiple options still present with no final decision`,
+    `6. **Logic errors** – Flows or dependencies that are internally inconsistent`,
+    ``,
+    `## Critical Rules`,
+    ``,
+    `- Be MORE strict than the original reviewer. If something is borderline, report it.`,
+    `- A risk with only a vague mitigation ("we will monitor it") is still an unmitigated risk.`,
+    `- An assumption with only a weak justification ("it is generally accepted that...") is still unverified.`,
+    `- Maximum 5 signals. Focus on the most impactful issues.`,
+    `- If the document is genuinely clean, return an empty array.`,
+    ``,
+    `## Document to Verify`,
+    ``,
+    docText,
+    ``,
+    `## Output Format`,
+    ``,
+    `Return a JSON array. Each element must have:`,
+    `- "type": one of: ambiguity | assumption | risk | contradiction | alternative | logic_error`,
+    `- "severity": "high" | "medium" | "low"`,
+    `- "label": short descriptive label`,
+    `- "layer": "What" | "Why" | "How" | "What-if"`,
+    `- "evidence": one sentence quoting the specific text that triggered this signal`,
+    `- "instruction": one concrete instruction to fix this issue`,
     ``,
     `Return ONLY the JSON array. No markdown fences, no extra text.`,
   ].join('\n');
@@ -260,7 +359,8 @@ function buildRefinementPrompt(originalContent, signals, stageLabel) {
     .join('\n\n');
 
   return [
-    `You are performing a self-correction pass on the following ${stageLabel} artifact.`,
+    `You are **W. Edwards Deming** – father of quality management and the PDCA cycle.
+You are performing a self-correction pass on the following ${stageLabel} artifact. Apply the same rigour you would to a quality audit: fix every defect completely, verify the fix does not introduce new defects, and leave the artifact in a better state than you found it.`,
     ``,
     `## Issues Detected`,
     ``,
@@ -323,6 +423,13 @@ class SelfCorrectionEngine {
     // by the failed round, so re-detecting signals on the original content would
     // incorrectly escalate a transient LLM error into "needs human review".
     let llmFailed = false;
+    // P1-NEW-1 fix: oscillation detection – track signal label sets across rounds.
+    // If two consecutive rounds produce the same (or highly overlapping) signal set,
+    // the correction loop is oscillating: fixing one issue re-introduces another.
+    // In that case we terminate early and mark needsHumanReview rather than burning
+    // all maxRounds on a loop that will never converge.
+    let prevSignalKey = null;
+    let oscillationDetected = false;
 
     this._log(`\n╔══════════════════════════════════════════════════════════╗`);
     this._log(`║  🤖 SELF-CORRECTION  –  ${stageLabel.padEnd(33)}║`);
@@ -339,6 +446,47 @@ class SelfCorrectionEngine {
         return { content: current, rounds: round - 1, signals: [], history, needsHumanReview: false };
       }
 
+      // P2-C fix: use signal.type (enum value) as the oscillation fingerprint instead
+      // of signal.label (LLM-generated natural language). The same underlying issue can
+      // be described with different labels across rounds (e.g. "Unmitigated network
+      // timeout risk" vs "Network timeout risk without mitigation" vs "Missing retry
+      // strategy for network failures"), causing the string-equality check to miss
+      // oscillation. signal.type is a stable enum ('risk', 'assumption', 'ambiguity',
+      // etc.) that is invariant to LLM phrasing variation.
+      //
+      // Fingerprint format: sorted type list joined by '|'
+      // e.g. "assumption|risk|risk" (duplicates kept to detect count changes)
+      const currentSignalKey = signals.map(s => s.type).sort().join('|');
+      if (prevSignalKey !== null && currentSignalKey === prevSignalKey) {
+        this._log(`\n[SelfCorrection] 🔁 Round ${round}: Signal type-set identical to previous round – oscillation detected. Terminating early.`);
+        oscillationDetected = true;
+        break;
+      }
+      // Partial-overlap check: if ≥80% of signal types are shared, treat as oscillation.
+      // Uses type counts (not just unique types) so "2×risk + 1×assumption" vs
+      // "2×risk + 1×ambiguity" correctly scores as 2/3 = 67% overlap (not 100%).
+      if (prevSignalKey !== null) {
+        const prevTypes = prevSignalKey.split('|');
+        const curTypes  = signals.map(s => s.type);
+        // Count how many (type, position) pairs match after sorting both lists
+        const prevSorted = [...prevTypes].sort();
+        const curSorted  = [...curTypes].sort();
+        let matchCount = 0;
+        let pi = 0, ci = 0;
+        while (pi < prevSorted.length && ci < curSorted.length) {
+          if (prevSorted[pi] === curSorted[ci]) { matchCount++; pi++; ci++; }
+          else if (prevSorted[pi] < curSorted[ci]) { pi++; }
+          else { ci++; }
+        }
+        const overlapRatio = matchCount / Math.max(prevSorted.length, curSorted.length);
+        if (overlapRatio >= 0.8) {
+          this._log(`\n[SelfCorrection] 🔁 Round ${round}: ${Math.round(overlapRatio * 100)}% signal-type overlap with previous round – oscillation detected. Terminating early.`);
+          oscillationDetected = true;
+          break;
+        }
+      }
+      prevSignalKey = currentSignalKey;
+
       this._log(`\n[SelfCorrection] 🔍 Round ${round}/${this.maxRounds}: ${signals.length} issue(s) detected:`);
       signals.forEach(s => this._log(`  • [${s.severity}] ${s.label}${s.evidence ? ` – "${s.evidence.slice(0, 60)}"` : ''}`))
       this._log(`[SelfCorrection] 🔄 Sending refinement prompt to Agent...`);
@@ -352,23 +500,30 @@ class SelfCorrectionEngine {
         this._log(`[SelfCorrection] ✏️  Round ${round} complete. Artifact updated.`);
       } catch (err) {
         this._log(`[SelfCorrection] ❌ Round ${round} failed: ${err.message}. Keeping previous version.`);
-        // N38 fix: the round counter was already incremented before the LLM call failed,
-        // so decrement it back to reflect the number of SUCCESSFUL correction rounds.
-        round--;
-        // N56 fix: mark that we exited due to LLM failure so the final signal
-        // detection pass is skipped (see below).
-        llmFailed = true;
+      // Decrement round to reflect successful rounds only. see CHANGELOG: N38
+      round--;
+      // see CHANGELOG: N56
+      llmFailed = true;
         break;
       }
     }
 
-    // N56 fix: if the loop exited because the LLM call failed (not because maxRounds
-    // was reached), skip the final signal detection pass entirely.
-    // The content was NOT changed by the failed round – re-detecting signals on the
-    // unchanged content would find the same issues that were already present BEFORE
-    // the correction attempt, and incorrectly escalate a transient LLM error into
-    // "needs human review". Instead, return a clean result with the last successfully
-    // corrected content and a note that the LLM failed.
+    // P1-NEW-1: if oscillation was detected, skip the normal final-check path and
+    // return immediately with needsHumanReview=true so the caller can escalate.
+    if (oscillationDetected) {
+      this._log(`\n[SelfCorrection] ⚠️  Oscillation detected after ${round} round(s). Marking for human review.`);
+      const lastSignals = await this._detectSignals(current, stageLabel).catch(() => []);
+      return {
+        content: current,
+        rounds: round,
+        signals: lastSignals,
+        history,
+        needsHumanReview: true,
+        oscillation: true,
+      };
+    }
+
+    // Skip final signal detection when LLM failed – avoids false escalation. see CHANGELOG: N56
     if (llmFailed) {
       this._log(`\n[SelfCorrection] ⚠️  Exiting due to LLM failure after ${round} successful round(s). Skipping final signal check.`);
       return {
@@ -381,8 +536,12 @@ class SelfCorrectionEngine {
       };
     }
 
-    // Final check after all rounds
-    let remainingSignals = await this._detectSignals(current, stageLabel);
+    // Final check after all rounds.
+    // Independence principle: use a VERIFICATION prompt (adversarial reviewer persona)
+    // rather than the same detection prompt, so the LLM cannot simply confirm its own
+    // previous corrections. This breaks the self-validation loop where the same model
+    // that fixed an issue also declares it fixed. see CHANGELOG: P1-A
+    let remainingSignals = await this._detectSignals(current, stageLabel, { verificationMode: true });
     let highSeverityRemaining = remainingSignals.filter(s => s.severity === 'high');
 
     // If high-severity issues remain, attempt deep investigation before giving up
@@ -405,13 +564,13 @@ class SelfCorrectionEngine {
       }
 
       // Re-evaluate after investigation-driven correction
-      // N24 fix: wrap final _detectSignals in try/catch; if LLM fails here,
-      // fall back to regex so we don't falsely mark resolved issues as still present.
+      // Use enrichedContent as fallback when post-investigation correction failed. see CHANGELOG: P1-4/contentForFinalDetection, N24
+      const contentForFinalDetection = current !== content ? current : (investigationResult.enrichedContent || current);
       try {
-        remainingSignals = await this._detectSignals(current, stageLabel);
+        remainingSignals = await this._detectSignals(contentForFinalDetection, stageLabel);
       } catch (err) {
         this._log(`[SelfCorrection] ⚠️  Final signal detection failed (${err.message}). Falling back to regex.`);
-        remainingSignals = detectSignals(current);
+        remainingSignals = detectSignals(contentForFinalDetection);
       }
       highSeverityRemaining = remainingSignals.filter(s => s.severity === 'high');
 
@@ -453,6 +612,12 @@ class SelfCorrectionEngine {
   async _deepInvestigate(content, highSignals, stageLabel) {
     const findings = [];
     const tools = this.investigationTools;
+    // P1-1 / P2-5 fix: readSource returns the same content for every signal because
+    // it is keyed by stageLabel (not signalType). Calling it once per signal produces
+    // N identical "Source Code Context" blocks in findings, wasting tokens and
+    // potentially confusing the LLM. Fix: call readSource at most once per
+    // _deepInvestigate invocation and share the result across all signals.
+    let sourceContextAdded = false;
 
     for (const signal of highSignals) {
       this._log(`  [Investigate] 🔍 Signal: ${signal.label} (${signal.type})`);
@@ -460,8 +625,20 @@ class SelfCorrectionEngine {
       // 1. Search – look for related patterns, docs, or prior solutions
       if (typeof tools.search === 'function') {
         try {
-          this._log(`  [Investigate] 🌐 Running search for: "${signal.type} ${stageLabel}"`);
-          const searchResult = await tools.search(`${signal.type} ${stageLabel} solution best practice`);
+          // P1-5 fix: build a precise search query from signal.evidence and signal.instruction
+          // instead of the generic "${signal.type} ${stageLabel} solution best practice".
+          // The generic query returns unrelated best-practice articles that have nothing
+          // to do with the specific issue. Using the actual evidence text and instruction
+          // produces targeted results that are directly actionable for this signal.
+          const evidenceSnippet = (signal.evidence || '').slice(0, 80).trim();
+          const instructionSnippet = (signal.instruction || '').slice(0, 80).trim();
+          const searchQuery = evidenceSnippet
+            ? `${signal.type} fix: ${evidenceSnippet}`
+            : instructionSnippet
+              ? `${signal.type} ${stageLabel}: ${instructionSnippet}`
+              : `${signal.type} ${stageLabel} solution best practice`;
+          this._log(`  [Investigate] 🌐 Running search for: "${searchQuery.slice(0, 100)}"`);
+          const searchResult = await tools.search(searchQuery);
           if (searchResult) {
             findings.push(`### Search Findings for [${signal.label}]\n${searchResult}`);
             this._log(`  [Investigate] ✅ Search returned results.`);
@@ -474,17 +651,21 @@ class SelfCorrectionEngine {
       }
 
       // 2. Read source – scan relevant source files for context
-      if (typeof tools.readSource === 'function') {
+      // P1-1 / P2-5 fix: only call readSource once across all signals (see above).
+      if (typeof tools.readSource === 'function' && !sourceContextAdded) {
         try {
-          this._log(`  [Investigate] 📂 Reading source files related to: ${signal.type}`);
+          this._log(`  [Investigate] 📂 Reading source files (shared across all signals)`);
           const sourceResult = await tools.readSource(signal.type, content);
           if (sourceResult) {
-            findings.push(`### Source Code Context for [${signal.label}]\n${sourceResult}`);
+            findings.push(`### Source Code Context\n${sourceResult}`);
+            sourceContextAdded = true;
             this._log(`  [Investigate] ✅ Source reading returned context.`);
           }
         } catch (err) {
           this._log(`  [Investigate] ⚠️  Source reading failed: ${err.message}`);
         }
+      } else if (typeof tools.readSource === 'function' && sourceContextAdded) {
+        this._log(`  [Investigate] ⏭️  Source context already added – skipping duplicate readSource call.`);
       } else {
         this._log(`  [Investigate] ⏭️  No readSource tool configured. Skipping.`);
       }
@@ -529,33 +710,41 @@ class SelfCorrectionEngine {
    * Detects signals in the given text.
    * Uses semantic (LLM) mode if enabled, falls back to regex on failure.
    *
-   * @param {string} text
-   * @param {string} stageLabel
+   * @param {string}  text
+   * @param {string}  stageLabel
+   * @param {object}  [opts]
+   * @param {boolean} [opts.verificationMode=false] - When true, uses an adversarial
+   *   reviewer persona instead of the standard detection prompt. This breaks the
+   *   self-validation loop: the same LLM that corrected the artifact cannot simply
+   *   confirm its own corrections – it must now act as a sceptical second reviewer.
    * @returns {Promise<object[]>} signals
    */
-  async _detectSignals(text, stageLabel) {
+  async _detectSignals(text, stageLabel, { verificationMode = false } = {}) {
     if (!this.semanticMode) {
       // Regex mode: fast, no LLM call
       return detectSignals(text);
     }
 
     // Semantic mode: LLM understands context
-    this._log(`[SelfCorrection] 🧠 Running semantic signal detection (LLM)...`);
+    const modeLabel = verificationMode ? 'verification (adversarial)' : 'detection';
+    this._log(`[SelfCorrection] 🧠 Running semantic signal ${modeLabel} (LLM)...`);
     try {
-      const prompt = buildSemanticDetectionPrompt(text, stageLabel);
+      const prompt = verificationMode
+        ? buildSemanticVerificationPrompt(text, stageLabel)
+        : buildSemanticDetectionPrompt(text, stageLabel);
       const response = await this.llmCall(prompt);
       const signals = parseSemanticSignals(response);
 
       if (signals.length > 0) {
-        this._log(`[SelfCorrection] 🧠 Semantic detection found ${signals.length} real issue(s).`);
+        this._log(`[SelfCorrection] 🧠 Semantic ${modeLabel} found ${signals.length} real issue(s).`);
       } else {
-        this._log(`[SelfCorrection] 🧠 Semantic detection: no real issues found.`);
+        this._log(`[SelfCorrection] 🧠 Semantic ${modeLabel}: no real issues found.`);
       }
 
       return signals;
     } catch (err) {
       // Fallback to regex on LLM failure
-      this._log(`[SelfCorrection] ⚠️  Semantic detection failed (${err.message}). Falling back to regex.`);
+      this._log(`[SelfCorrection] ⚠️  Semantic ${modeLabel} failed (${err.message}). Falling back to regex.`);
       return detectSignals(text);
     }
   }
@@ -638,6 +827,7 @@ module.exports = {
   ClarificationEngine,
   detectSignals,
   buildSemanticDetectionPrompt,
+  buildSemanticVerificationPrompt,
   parseSemanticSignals,
   formatClarificationReport,
 };

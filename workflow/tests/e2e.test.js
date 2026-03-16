@@ -79,7 +79,55 @@ function cleanupTestFiles() {
 
 // ─── Test Cases ───────────────────────────────────────────────────────────────
 
+// ─── Smoke Test: Module Load Validation ─────────────────────────────────────
+// P0 fix: Verify ALL core modules can be loaded (parsed) before running any test.
+// If a module has a SyntaxError, this will throw immediately and abort the suite
+// instead of silently failing individual tests downstream.
+
+function smokeTestModuleLoad() {
+  console.log('\n  🔥 Smoke Test: Loading all core modules...\n');
+  const coreDir = path.join(__dirname, '..', 'core');
+  const agentsDir = path.join(__dirname, '..', 'agents');
+  const dirs = [coreDir, agentsDir];
+  let loaded = 0;
+  let errors = 0;
+
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.js'));
+    for (const file of files) {
+      const fullPath = path.join(dir, file);
+      try {
+        require(fullPath);
+        loaded++;
+      } catch (err) {
+        console.error(`  💀 FATAL: Failed to load ${path.relative(path.join(__dirname, '..'), fullPath)}`);
+        console.error(`     ${err.message}`);
+        if (err.stack) {
+          // Show the relevant line from the stack trace
+          const relevantLine = err.stack.split('\n').find(l => l.includes(fullPath));
+          if (relevantLine) console.error(`     ${relevantLine.trim()}`);
+        }
+        errors++;
+      }
+    }
+  }
+
+  console.log(`  📦 Loaded ${loaded} module(s), ${errors} error(s)\n`);
+
+  if (errors > 0) {
+    console.error('\n  ❌ SMOKE TEST FAILED: One or more core modules cannot be loaded.');
+    console.error('     Fix the SyntaxError(s) above before running tests.\n');
+    process.exit(2);
+  }
+
+  console.log('  ✅ Smoke test passed: all modules loaded successfully.\n');
+}
+
 async function runTests() {
+  // Run smoke test FIRST – abort immediately if any module fails to load
+  smokeTestModuleLoad();
+
   console.log('\n' + '='.repeat(60));
   console.log('  Multi-Agent Workflow – End-to-End Test Suite');
   console.log('='.repeat(60) + '\n');

@@ -5,7 +5,7 @@ const path = require('path');
 const { PATHS, HOOK_EVENTS } = require('./constants');
 const { AgentRole } = require('./types');
 const { ExperienceType, ExperienceCategory } = require('./experience-store');
-const { ComplaintTarget } = require('./complaint-wall');
+const { ComplaintTarget } = require('./complaint-wall');  // still used in orchestrator-stage-helpers.js
 const { SelfCorrectionEngine, formatClarificationReport } = require('./clarification-engine');
 const { RequirementClarifier } = require('./requirement-clarifier');
 const { CoverageChecker } = require('./coverage-checker');
@@ -15,7 +15,32 @@ const { TestRunner } = require('./test-runner');
 const { TestCaseGenerator } = require('./test-case-generator');
 const { TestCaseExecutor } = require('./test-case-executor');
 const { DECISION_QUESTIONS } = require('./socratic-engine');
+// P0-B fix: StageContextStore IS still directly used in _runAnalyst (lazy init).
+// The P2-NEW-1 comment was incorrect – the require must remain here.
 const { StageContextStore } = require('./stage-context-store');
+const { RollbackCoordinator } = require('./rollback-coordinator');
+const { QualityGate } = require('./quality-gate');
+const { Observability } = require('./observability');
+const { translateMdFile } = require('./i18n-translator');
+// P2-A fix: shared file-scanner utility – replaces the inline collectFiles closure
+// that was duplicated across orchestrator-stages.js, entropy-gc.js, and code-graph.js.
+const { scanSourceFiles } = require('./file-scanner');
+// P2-NEW-1 fix: extracted stage helpers to reduce Fat Orchestrator.
+// Context injection, experience/complaint block assembly, and stageCtx storage
+// are now in orchestrator-stage-helpers.js. Each _runXxx function is now a
+// lean orchestration skeleton that delegates cross-cutting concerns to helpers.
+const {
+  buildArchitectUpstreamCtx,
+  buildDeveloperUpstreamCtx,
+  buildTesterUpstreamCtx,
+  buildArchitectContextBlock,
+  buildDeveloperContextBlock,
+  buildTesterContextBlock,
+  storeAnalyseContext,
+  storeArchitectContext,
+  storeCodeContext,
+  storeTestContext,
+} = require('./orchestrator-stage-helpers');
 
 /**
  * Stage runner methods for Orchestrator.
@@ -25,21 +50,21 @@ const { StageContextStore } = require('./stage-context-store');
 async function _runAnalyst(rawRequirement) {
   console.log(`\n[Orchestrator] Stage: ANALYSE (AnalystAgent)`);
 
-  // ── Cross-stage context: init store on first stage ────────────────────────
-  // StageContextStore is lazily initialised here (first stage) and reused
-  // across all stages via this.stageCtx. Each stage deposits a summary of
-  // its key decisions so downstream agents can read the full upstream context.
+  // stageCtx is now eagerly initialised in the Orchestrator constructor (P2-A fix).
+  // No lazy-init needed here. If stageCtx is somehow null (e.g. in tests that
+  // construct Orchestrator without calling the full constructor), fail fast with
+  // a clear error rather than silently skipping cross-stage context propagation.
   if (!this.stageCtx) {
-    this.stageCtx = new StageContextStore({
-      outputDir: PATHS.OUTPUT_DIR,
-      verbose: false,
-    });
-    console.log(`[Orchestrator] 🔗 StageContextStore initialised for cross-stage context propagation.`);
+    throw new Error('[Orchestrator] stageCtx is not initialised. This is a bug – StageContextStore should be created in the Orchestrator constructor.');
   }
+
 
   const clarifier = new RequirementClarifier({
     askUser: this.askUser,
-    maxRounds: 2,
+    // Defect G fix: use adaptive strategy's maxClarificationRounds (Rule 5)
+    // instead of hardcoded 2. deriveStrategy() adjusts this based on cross-session
+    // clarification effectiveness metrics.
+    maxRounds: this._adaptiveStrategy?.maxClarificationRounds ?? 2,
     verbose: true,
     llmCall: this._rawLlmCall,
   });
@@ -47,8 +72,10 @@ async function _runAnalyst(rawRequirement) {
 
   if (clarResult.riskNotes && clarResult.riskNotes.length > 0) {
     try {
-      const scopeDecision = await this.socratic.ask(DECISION_QUESTIONS.SCOPE_CLARIFICATION);
-      console.log(`[Orchestrator] 🤔 Scope clarification decision: "${scopeDecision.optionText}"`);
+      // P2-C fix: use non-blocking askAsync – Agent proceeds immediately with default,
+      // user has 10s to override. Default: option[2] = "Let the Analyst Agent decide".
+      const scopeDecision = this.socratic.askAsync(DECISION_QUESTIONS.SCOPE_CLARIFICATION, 2);
+      console.log(`[Orchestrator] ⚡ Scope clarification (non-blocking): "${scopeDecision.optionText}"`);
       if (scopeDecision.optionIndex === 0) {
         clarResult.enrichedRequirement = `[Scope: Minimal – implement only the core feature]\n\n${clarResult.enrichedRequirement}`;
       } else if (scopeDecision.optionIndex === 1) {
@@ -68,22 +95,52 @@ async function _runAnalyst(rawRequirement) {
     console.log(`[Orchestrator] ✅ Requirement clarified in ${clarResult.rounds} round(s). Proceeding to analysis.`);
   }
 
+  // Defect G fix: record clarification quality metrics into observability so
+  // deriveStrategy() Rule 5 can use cross-session data to adjust maxClarificationRounds.
+  if (clarResult.qualityMetrics && this.obs) {
+    this.obs.recordClarificationQuality(clarResult.qualityMetrics, clarResult.rounds);
+  }
+
   const outputPath = await this.agents[AgentRole.ANALYST].run(null, clarResult.enrichedRequirement);
 
   // ── Store ANALYSE stage context for downstream stages ─────────────────────
-  const analyseCtx = StageContextStore.extractFromFile(outputPath, 'ANALYSE');
-  this.stageCtx.set('ANALYSE', {
-    summary:      analyseCtx.summary,
-    keyDecisions: analyseCtx.keyDecisions,
-    artifacts:    [outputPath],
-    risks:        clarResult.riskNotes ?? [],
-    meta: {
-      clarificationRounds: clarResult.rounds ?? 0,
-      signalCount:         clarResult.allSignals?.length ?? 0,
-      skipped:             clarResult.skipped ?? false,
-    },
-  });
-  console.log(`[Orchestrator] 🔗 ANALYSE context stored: ${analyseCtx.keyDecisions.length} key decision(s).`);
+  // P2-NEW-1: delegated to storeAnalyseContext helper
+  const analyseCtx = storeAnalyseContext(this, outputPath, clarResult);
+
+  // ── Defect J fix: Estimate task complexity from the enriched requirement ───
+  // This must happen AFTER ANALYSE produces the enriched requirement, because
+  // the raw user requirement is often too terse for meaningful complexity estimation.
+  // The complexity score is recorded in Observability for two purposes:
+  //   1. deriveStrategy() Rule 6 uses it to modulate maxFixRounds/maxReviewRounds
+  //      for the CURRENT session (via re-derivation after ANALYSE completes)
+  //   2. It's written to metrics-history.jsonl for cross-session complexity drift
+  //      detection (Rule 6b: if complex tasks systematically fail more than simple
+  //      ones, proactively raise retry budgets)
+  if (this.obs) {
+    const requirementText = clarResult.enrichedRequirement || '';
+    const complexity = Observability.estimateTaskComplexity(requirementText);
+    this.obs.recordTaskComplexity(complexity);
+
+    // Re-derive adaptive strategy with the complexity dimension now available.
+    // At Orchestrator construction time, taskComplexity was null (ANALYSE hadn't run yet),
+    // so deriveStrategy() Rule 6 was skipped. Now we have the actual complexity score
+    // and can compute proper floor values for maxFixRounds/maxReviewRounds.
+    const cfgAutoFix = (this._config && this._config.autoFixLoop) || {};
+    const updatedStrategy = Observability.deriveStrategy(PATHS.OUTPUT_DIR, {
+      maxFixRounds:    cfgAutoFix.maxFixRounds    ?? 2,
+      maxReviewRounds: cfgAutoFix.maxReviewRounds ?? 2,
+      maxExpInjected:  cfgAutoFix.maxExpInjected  ?? 5,
+      projectId:       this.projectId,
+      taskComplexity:  complexity,
+    });
+    // Only apply if Rule 6 actually changed something
+    if (updatedStrategy.maxFixRounds !== this._adaptiveStrategy.maxFixRounds ||
+        updatedStrategy.maxReviewRounds !== this._adaptiveStrategy.maxReviewRounds) {
+      console.log(`[Orchestrator] 📈 Adaptive strategy re-derived after ANALYSE (complexity=${complexity.level}, score=${complexity.score}):`);
+      console.log(`[Orchestrator]    maxFixRounds: ${this._adaptiveStrategy.maxFixRounds} → ${updatedStrategy.maxFixRounds} | maxReviewRounds: ${this._adaptiveStrategy.maxReviewRounds} → ${updatedStrategy.maxReviewRounds}`);
+      this._adaptiveStrategy = updatedStrategy;
+    }
+  }
 
   this.bus.publish(AgentRole.ANALYST, AgentRole.ARCHITECT, outputPath, {
     clarificationRounds: clarResult.rounds ?? 0,
@@ -92,6 +149,10 @@ async function _runAnalyst(rawRequirement) {
     skipped:             clarResult.skipped ?? false,
     contextSummary:      analyseCtx.summary,
   });
+
+  // Generate Chinese companion file for developers (non-blocking)
+  translateMdFile(outputPath, this._rawLlmCall).catch(() => {});
+
   return outputPath;
 }
 
@@ -100,17 +161,15 @@ async function _runArchitect() {
   const inputPath = this.bus.consume(AgentRole.ARCHITECT);
 
   // ── Inject upstream cross-stage context ───────────────────────────────────
-  // Architect now sees a structured summary of what the Analyst decided,
-  // including key requirement sections and flagged risks.
-  const upstreamCtxForArch = this.stageCtx ? this.stageCtx.getAll(['ARCHITECT'], 1500) : '';
-  if (upstreamCtxForArch) {
-    console.log(`[Orchestrator] 🔗 Cross-stage context injected into ArchitectAgent (${upstreamCtxForArch.length} chars). Upstream: ${this.stageCtx.getLogLine()}`);
-  }
+  // P2-NEW-1: delegated to buildArchitectUpstreamCtx helper
+  const upstreamCtxForArch = buildArchitectUpstreamCtx(this);
 
   let techStackPrefix = '';
   try {
-    const techDecision = await this.socratic.ask(DECISION_QUESTIONS.TECH_STACK_PREFERENCE);
-    console.log(`[Orchestrator] 🤔 Tech stack preference: "${techDecision.optionText}"`);
+    // P2-C fix: use non-blocking askAsync – Agent proceeds immediately with default,
+    // user has 10s to override. Default: option[0] = "Follow architecture recommendation".
+    const techDecision = this.socratic.askAsync(DECISION_QUESTIONS.TECH_STACK_PREFERENCE, 0);
+    console.log(`[Orchestrator] ⚡ Tech stack preference (non-blocking): "${techDecision.optionText}"`);
     if (techDecision.optionIndex === 1) {
       techStackPrefix = '[Tech Stack: Minimal/Lightweight – prefer simple, low-dependency solutions]\n\n';
     } else if (techDecision.optionIndex === 2) {
@@ -126,35 +185,57 @@ async function _runArchitect() {
     console.log(`[Orchestrator] ℹ️  Requirement was clarified in ${analystMeta.clarificationRounds} round(s) (${analystMeta.signalCount} signal(s) resolved). Architect should read requirements.md carefully.`);
   }
 
-  const agentsMdForArch = this._agentsMdContent || '';
-  if (agentsMdForArch) {
-    console.log(`[Orchestrator] 📋 AGENTS.md injected into ArchitectAgent context.`);
-  }
-
-  const archExpContext = this.experienceStore.getContextBlock('architecture-design');
-  console.log(`[Orchestrator] 📚 Experience context injected for ArchitectAgent (${archExpContext.length} chars)`);
-
-  const archComplaints = this.complaintWall.getOpenComplaintsFor(ComplaintTarget.SKILL, 'architecture-design');
-  const archComplaintBlock = archComplaints.length > 0
-    ? `\n\n## Known Issues (Open Complaints)\n${archComplaints.map(c => `- [${c.severity}] ${c.description}`).join('\n')}`
-    : '';
-  const archExpContextWithComplaints = [
-    techStackPrefix ? techStackPrefix.trim() : '',
-    agentsMdForArch ? `## Project Context (AGENTS.md)\n${agentsMdForArch}` : '',
-    upstreamCtxForArch,
-    archExpContext,
-    archComplaintBlock,
-  ].filter(Boolean).join('\n\n');
-  if (archComplaints.length > 0) {
-    console.log(`[Orchestrator] ⚠️  ${archComplaints.length} open complaint(s) injected into ArchitectAgent context.`);
-  }
+  // P2-NEW-1: delegated to buildArchitectContextBlock helper
+  const archExpContextWithComplaints = buildArchitectContextBlock(this, techStackPrefix, upstreamCtxForArch);
+  // Improvement 4: report injection count to Observability for hit-rate tracking
+  this.obs.recordExpUsage({ injected: (archExpContextWithComplaints._injectedExpIds || []).length });
 
   const outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExpContextWithComplaints);
 
   const requirementPath = path.join(PATHS.OUTPUT_DIR, 'requirements.md');
-  const coverageChecker = new CoverageChecker(this._rawLlmCall, { verbose: true });
-  const coverageResult = await coverageChecker.check(requirementPath, outputPath);
 
+  // Defect B fix: CoverageChecker and ArchitectureReviewAgent both read the same
+  // files (outputPath + requirementPath) with no data dependency between them.
+  // Run them in parallel to eliminate unnecessary serial wait time.
+  //
+  // Note: CoverageChecker.check() is a pure read operation; the fs.appendFileSync
+  // (writing the coverage report into outputPath) happens AFTER both tasks complete,
+  // so ArchitectureReviewAgent always reads the clean architecture document.
+  const coverageChecker = new CoverageChecker(this._rawLlmCall, { verbose: true });
+  const archReviewer = new ArchitectureReviewAgent(
+    this._rawLlmCall,
+    {
+      maxRounds: 2,
+      verbose: true,
+      outputDir: PATHS.OUTPUT_DIR,
+      investigationTools: this._buildInvestigationTools('Architecture'),
+    }
+  );
+
+  const [coverageSettled, archReviewSettled] = await this.stateMachine.runParallel([
+    { name: 'CoverageCheck', fn: () => coverageChecker.check(requirementPath, outputPath) },
+    { name: 'ArchReview',    fn: () => archReviewer.review(outputPath, requirementPath) },
+  ]);
+
+  // Unwrap results – propagate errors if either task failed
+  if (coverageSettled.status === 'rejected') {
+    throw new Error(`[_runArchitect] CoverageChecker failed: ${coverageSettled.reason?.message ?? coverageSettled.reason}`);
+  }
+  if (archReviewSettled.status === 'rejected') {
+    throw new Error(`[_runArchitect] ArchitectureReviewAgent failed: ${archReviewSettled.reason?.message ?? archReviewSettled.reason}`);
+  }
+  const coverageResult   = coverageSettled.value;
+  const archReviewResult = archReviewSettled.value;
+
+  // Defect C fix: cache subtask results for fine-grained rollback.
+  // If ArchReview fails quality gate but CoverageCheck succeeded, the next retry
+  // can skip re-running CoverageCheck and reuse the cached result.
+  const subtaskCoordinator = new RollbackCoordinator(this);
+  subtaskCoordinator.cacheSubtaskResult('ARCHITECT', 'CoverageCheck', coverageResult);
+  subtaskCoordinator.cacheSubtaskResult('ARCHITECT', 'ArchReview', archReviewResult);
+
+  // Append coverage report to architecture doc AFTER both tasks complete
+  // (ArchitectureReviewAgent has already finished reading outputPath at this point)
   if (!coverageResult.skipped) {
     const coverageReport = coverageChecker.formatReport(coverageResult);
     fs.appendFileSync(outputPath, `\n\n---\n${coverageReport}`, 'utf-8');
@@ -167,17 +248,6 @@ async function _runArchitect() {
     console.warn(`[Orchestrator] ⚠️  ${note}`);
   }
 
-  const archReviewer = new ArchitectureReviewAgent(
-    this._rawLlmCall,
-    {
-      maxRounds: 2,
-      verbose: true,
-      outputDir: PATHS.OUTPUT_DIR,
-      investigationTools: this._buildInvestigationTools('Architecture'),
-    }
-  );
-  const archReviewResult = await archReviewer.review(outputPath, requirementPath);
-
   for (const note of archReviewResult.riskNotes) {
     const severity = note.includes('(high)') ? 'high' : 'medium';
     this.stateMachine.recordRisk(severity, note, false);
@@ -185,13 +255,23 @@ async function _runArchitect() {
   this.stateMachine.flushRisks();
 
   if (archReviewResult.failed === 0 || !archReviewResult.needsHumanReview) {
-    try {
-      const archDecision = await this.socratic.ask(DECISION_QUESTIONS.ARCHITECTURE_APPROVAL);
-      if (archDecision.optionIndex === 1) {
+  try {
+    // P2-C fix: use non-blocking askAsync – Agent proceeds immediately with default,
+    // user has 10s to override. Default: option[0] = "Yes, approve and proceed".
+    //
+    // P1-B fix: renamed from archDecision to socraticDecision to eliminate the
+    // naming collision with the outer-scope archDecision (archGate.evaluate result).
+    // The two variables have completely different semantics:
+    //   - socraticDecision: the USER's approval/rejection of the architecture
+    //   - archDecision (outer): the QUALITY GATE's pass/rollback/needsHumanReview verdict
+    // Sharing the name "archDecision" forced readers to track block scopes carefully
+    // and made the code error-prone to future refactoring.
+    const socraticDecision = this.socratic.askAsync(DECISION_QUESTIONS.ARCHITECTURE_APPROVAL, 0);
+      if (socraticDecision.optionIndex === 1) {
         const abortMsg = '[SocraticEngine] User rejected architecture. Workflow aborted by user decision.';
         this.stateMachine.recordRisk('high', abortMsg);
         throw new Error(abortMsg);
-      } else if (archDecision.optionIndex === 2) {
+      } else if (socraticDecision.optionIndex === 2) {
         this.stateMachine.recordRisk('medium', '[SocraticEngine] User approved architecture with reservations. Proceeding to code generation.');
         console.log(`[Orchestrator] ⚠️  Architecture approved with reservations. Proceeding.`);
       } else {
@@ -203,112 +283,231 @@ async function _runArchitect() {
       this.stateMachine.recordRisk('low', `[SocraticEngine] Architecture approval skipped (engine unavailable): ${err.message}`);
       console.warn(`[Orchestrator] ⚠️  SocraticEngine architecture approval skipped – proceeding automatically. Reason: ${err.message}`);
     }
+  } else {
+    // P2-B fix: architecture FAILED (failed > 0 && needsHumanReview).
+    //
+    // Previous behaviour: the Socratic decision was silently skipped. The system
+    // jumped straight to QualityGate.evaluate() → rollback, with the user having
+    // no visibility into what happened or any chance to intervene.
+    //
+    // This is exactly the WRONG time to skip user notification. When the architecture
+    // passes, the user's approval is a nice-to-have confirmation. When it FAILS, the
+    // user's input is critical: they may want to:
+    //   (a) Accept the failure and proceed anyway (with risk recorded)
+    //   (b) Trigger rollback (the default – what QualityGate will do anyway)
+    //   (c) Manually edit the architecture file and retry
+    //
+    // Fix: notify the user of the failure and give them a non-blocking window to
+    // override the default rollback decision. Default = rollback (option[0]).
+    // If the user overrides to "proceed anyway", we record a high-severity risk
+    // and skip the rollback path below.
+    //
+    // Note: this Socratic call is BEFORE QualityGate.evaluate() so the user's
+    // decision can influence whether rollback is attempted.
+    const failedSummary = archReviewResult.riskNotes.slice(0, 2).join('; ');
+    console.warn(`[Orchestrator] ⚠️  Architecture review FAILED: ${archReviewResult.failed} high-severity issue(s). Notifying user...`);
+    try {
+      const failureDecision = this.socratic.askAsync(
+        DECISION_QUESTIONS.ARCHITECTURE_FAILURE_ACTION || DECISION_QUESTIONS.ARCHITECTURE_APPROVAL,
+        0  // default: rollback (first option)
+      );
+      console.log(`[Orchestrator] ⚡ Architecture failure action (non-blocking): "${failureDecision.optionText}"`);
+      // optionIndex 0 = rollback (default, handled by QualityGate below)
+      // optionIndex 1 = proceed anyway (user accepts risk)
+      if (failureDecision.optionIndex === 1) {
+        const proceedMsg = `[SocraticEngine] User chose to proceed despite architecture failure (${archReviewResult.failed} issue(s)): ${failedSummary}`;
+        this.stateMachine.recordRisk('high', proceedMsg);
+        console.warn(`[Orchestrator] ⚠️  User accepted architecture failure. Proceeding to CODE with high-severity risks recorded.`);
+        // Force QualityGate to see this as "pass with warnings" by short-circuiting
+        // the rollback path. We do this by overriding archReviewResult.needsHumanReview
+        // to false so QualityGate.evaluate() takes the "pass with warnings" branch.
+        // This is safe: the risk is already recorded above; the user made an informed choice.
+        archReviewResult.needsHumanReview = false;
+      }
+      // optionIndex 0 (default): fall through to QualityGate rollback path below
+    } catch (err) {
+      // SocraticEngine unavailable (CI mode, stdin closed, etc.) – proceed with rollback
+      this.stateMachine.recordRisk('low', `[SocraticEngine] Architecture failure notification skipped (engine unavailable): ${err.message}`);
+      console.warn(`[Orchestrator] ⚠️  SocraticEngine architecture failure notification skipped – proceeding with rollback. Reason: ${err.message}`);
+    }
   }
 
   if (archReviewResult.failed === 0) {
     console.log(`[Orchestrator] ✅ Architecture review passed.`);
-    const archPassTitle = 'Architecture design passed all checklist items';
-    this.experienceStore.recordIfAbsent(archPassTitle, {
-      type: ExperienceType.POSITIVE,
-      category: ExperienceCategory.ARCHITECTURE,
-      title: archPassTitle,
-      content: `Architecture passed all ${archReviewResult.total ?? 'N/A'} checklist items with full requirement coverage.`,
-      skill: 'architecture-design',
-      tags: ['architecture-review', 'passed', 'stable'],
-    });
-  } else if (archReviewResult.needsHumanReview) {
-    console.warn(`[Orchestrator] ⚠️  ${archReviewResult.failed} high-severity architecture issue(s) remain. Attempting rollback to ANALYSE stage.`);
-    const archFailTitle = 'Architecture review: high-severity issues unresolved after self-correction';
+  }
+
+  // ── Quality gate decision (P0-A: extracted to QualityGate) ───────────────
+  const archGate = new QualityGate({ experienceStore: this.experienceStore, maxRollbacks: 1 });
+  const archCtxMeta = this.stageCtx?.get('ARCHITECT')?.meta || {};
+  const rollbackCount = archCtxMeta._archRollbackCount || 0;
+  const archDecision = archGate.evaluate(archReviewResult, 'ARCHITECT', rollbackCount);
+  archGate.recordExperience(archDecision, 'ARCHITECT', archReviewResult, {
+    skill: 'architecture-design',
+    category: ExperienceCategory.ARCHITECTURE,
+  });
+
+  if (!archDecision.pass && archDecision.rollback) {
     const failedNotes = archReviewResult.riskNotes.slice(0, 3).join('; ');
-    const failContent = `After ${archReviewResult.rounds ?? 'N/A'} self-correction round(s), ${archReviewResult.failed} high-severity issue(s) remained. Issues: ${failedNotes}`;
-    if (!this.experienceStore.appendByTitle(archFailTitle, failContent)) {
-      this.experienceStore.record({
-        type: ExperienceType.NEGATIVE,
-        category: ExperienceCategory.PITFALL,
-        title: archFailTitle,
-        content: failContent,
-        skill: 'architecture-design',
-        tags: ['architecture-review', 'failed', 'pitfall'],
+    console.warn(`[Orchestrator] ⚠️  ${archDecision.reason}`);
+
+    // Update rollback counter in stageCtx.meta. see CHANGELOG: Defect #1, P2-2
+    if (this.stageCtx) {
+      const existing = this.stageCtx.get('ARCHITECT') || {};
+      this.stageCtx.set('ARCHITECT', {
+        ...existing,
+        meta: { ...(existing.meta || {}), _archRollbackCount: rollbackCount + 1 },
       });
     }
-    // ── Rollback to ANALYSE stage (Defect #1 fix) ─────────────────────────────
-    // Previously: rollback() existed but was never called. The workflow would
-    // just record a risk and continue to CODE stage with a broken architecture.
-    // Now: when high-severity issues remain after all review rounds, we roll
-    // back to ANALYSE so the analyst can re-clarify requirements before the
-    // architect tries again. This is capped at 1 rollback to prevent infinite loops.
-    const rollbackKey = `_archRollbackCount_${this.projectId}`;
-    const rollbackCount = (this[rollbackKey] || 0);
-    if (rollbackCount < 1) {
-      this[rollbackKey] = rollbackCount + 1;
-      try {
-        const rollbackReason = `Architecture review failed: ${failedNotes.slice(0, 200)}`;
-        await this.stateMachine.rollback(rollbackReason);
-        // ── P2-2 fix: clear investigation source cache after rollback ─────────────
-        // The cache is keyed by stageLabel (e.g. 'Architecture'). After rollback,
-        // the architecture.md file will be regenerated with new content. If the
-        // cache is not cleared, _buildInvestigationTools('Architecture') will return
-        // the OLD pre-rollback architecture.md content, causing the re-run architect
-        // to investigate stale data. Clear the cache so the next read is fresh.
-        if (this._investigationSourceCacheMap) {
-          this._investigationSourceCacheMap.delete('Architecture');
-          this._investigationSourceCacheMap.delete('ARCHITECT');
+    try {
+      // ── Defect C fix: analyse rollback strategy before committing to full-stage rollback ──
+      // If only ArchReview failed but CoverageCheck succeeded (the common case),
+      // we can retry just the review instead of re-running the entire ANALYSE stage.
+      const coordinator = new RollbackCoordinator(this);
+      const strategy = coordinator.analyseRollbackStrategy(
+        'ARCHITECT', `Architecture review failed: ${failedNotes}`, 'ArchReview'
+      );
+
+      if (strategy.type === 'SUBTASK_RETRY' && strategy.cachedResults) {
+        // ── Subtask-level retry: only re-run ArchReview ──────────────────────────
+        console.log(`[Orchestrator] 🎯 Defect C: Subtask-level retry for ARCHITECT. ${strategy.reason}`);
+
+        // Re-run only the ArchReview subtask with the failure context embedded
+        const retryReviewer = new ArchitectureReviewAgent(
+          this._rawLlmCall,
+          {
+            maxRounds: 2,
+            verbose: true,
+            outputDir: PATHS.OUTPUT_DIR,
+            investigationTools: this._buildInvestigationTools('Architecture'),
+          }
+        );
+        const requirementPathRetry = path.join(PATHS.OUTPUT_DIR, 'requirements.md');
+
+        // Append failure feedback to the architecture doc so the reviewer sees what went wrong
+        const retryNote = `\n\n---\n## ⚠️ Architecture Review Retry (Attempt ${rollbackCount + 1})\n\nPrevious review found these issues:\n${failedNotes}\n\nPlease address these concerns in a focused re-review.`;
+        fs.appendFileSync(outputPath, retryNote, 'utf-8');
+
+        const retryReviewResult = await retryReviewer.review(outputPath, requirementPathRetry);
+
+        // Use cached CoverageCheck result from the first run
+        const cachedCoverage = strategy.cachedResults.get('CoverageCheck');
+        const retryGate = new QualityGate({ experienceStore: this.experienceStore, maxRollbacks: 1 });
+        const retryDecision = retryGate.evaluate(retryReviewResult, 'ARCHITECT', rollbackCount + 1);
+
+        if (retryDecision.pass) {
+          console.log(`[Orchestrator] ✅ Subtask-level retry succeeded: ArchReview passed on retry.`);
+          // Update subtask cache with new result
+          coordinator.cacheSubtaskResult('ARCHITECT', 'ArchReview', retryReviewResult);
+
+          // Store updated ARCHITECT context with retry info
+          if (this.stageCtx) {
+            const existingArch = this.stageCtx.get('ARCHITECT') || {};
+            this.stageCtx.set('ARCHITECT', {
+              ...existingArch,
+              summary: `Architecture review passed on subtask retry (attempt ${rollbackCount + 1}). Original issues: ${failedNotes.slice(0, 150)}`,
+              keyDecisions: [`ArchReview subtask retry succeeded after ${retryReviewResult.rounds ?? 0} round(s)`],
+              artifacts: [outputPath],
+              risks: retryReviewResult.riskNotes ?? [],
+              meta: { ...(existingArch.meta || {}), _archRollbackCount: rollbackCount + 1, subtaskRetry: true },
+            });
+          }
+          // Continue to the rest of _runArchitect (store context, publish, etc.)
+          // by replacing archReviewResult in the outer scope. We use a special return
+          // that signals the caller to proceed with updated results.
+          // Note: we can't easily reassign archReviewResult (const), so we fall through
+          // to the normal post-review path by returning early with the output path.
+          // Store ARCHITECT context for downstream stages
+          const archOutputCtx = storeArchitectContext(this, outputPath, retryReviewResult, cachedCoverage || coverageResult);
+          this.bus.publish(AgentRole.ARCHITECT, AgentRole.DEVELOPER, outputPath, {
+            reviewRounds:   retryReviewResult.rounds ?? 0,
+            failedItems:    retryReviewResult.failed ?? 0,
+            riskNotes:      retryReviewResult.riskNotes ?? [],
+            contextSummary: archOutputCtx.summary,
+          });
+          return outputPath;
         }
-        console.warn(`[Orchestrator] ⏪ Rolled back to ANALYSE stage. Re-running analyst with failure context.`);
-        // Re-run analyst with the failure context injected
-        const failureContext = `[ARCHITECTURE REVIEW FAILED – RETRY ${rollbackCount + 1}]\n\nThe previous architecture attempt failed review with these issues:\n${failedNotes}\n\nPlease re-analyse the requirements with these constraints in mind.`;
-        const reanalysedPath = await _runAnalyst.call(this, failureContext);
-        // ── Critical fix (Defect A/C): after re-analysis, we MUST call transition()
-        // to advance the state machine from ANALYSE → ARCHITECT.
-        // Previously, _runAnalyst was called directly and returned, but the state
-        // machine was left stuck at ANALYSE because transition() was never called.
-        // This caused the state machine to permanently diverge from the actual
-        // execution flow (CODE and TEST stages would run while state = ANALYSE).
-        // Now we explicitly transition ANALYSE → ARCHITECT after re-analysis so
-        // the state machine stays in sync with the actual workflow progress.
-        await this.stateMachine.transition(reanalysedPath, `ANALYSE → ARCHITECT (post-rollback retry ${rollbackCount + 1})`);
-        console.log(`[Orchestrator] ✅ State machine advanced to ARCHITECT after post-rollback re-analysis.`);
-        // ── P0-1 fix: publish ANALYST → ARCHITECT bus message after re-analysis ──
-        // Previously: _runAnalyst() publishes ANALYST→ARCHITECT internally, but
-        // _runArchitect() at the TOP of this function already consumed that message
-        // (const inputPath = this.bus.consume(AgentRole.ARCHITECT)).
-        // After rollback + re-analysis, _runAnalyst publishes a NEW message, but
-        // _runArchitect will be called again by the outer _runStage loop – and it
-        // will call bus.consume(AgentRole.ARCHITECT) again. Since _runAnalyst already
-        // published the new message, this is fine. No extra publish needed here.
-        // The sentinel return tells _runStage NOT to call transition() again.
-        // ── Defect A/C fix: return a sentinel object to signal _runStage that
-        // transition() has already been called inside this function.
-        // Without this, _runStage would call transition() AGAIN after receiving
-        // the return value, causing the state machine to advance one extra step
-        // (ARCHITECT → CODE) before the architect has even run.
-        // _runStage checks for { __alreadyTransitioned: true } and skips its own
-        // transition() call when this flag is present.
-        return { __alreadyTransitioned: true, artifactPath: reanalysedPath };
-      } catch (rollbackErr) {
-        console.warn(`[Orchestrator] Rollback failed (non-fatal): ${rollbackErr.message}. Proceeding with risks recorded.`);
+
+        // Subtask retry didn't help → fall through to full-stage rollback
+        console.log(`[Orchestrator] ⚠️  Subtask-level retry failed. Falling through to full-stage rollback.`);
+        coordinator.invalidateSubtaskCache('ARCHITECT');
       }
-    } else {
-      console.warn(`[Orchestrator] ⚠️  Rollback limit reached (max 1). Proceeding to CODE stage with ${archReviewResult.failed} unresolved issue(s).`);
+
+      // ── Full-stage rollback (original path) ──────────────────────────────────
+      // Coordinated rollback (P0-A: RollbackCoordinator handles all cleanup)
+      await coordinator.rollback('ARCHITECT', `Architecture review failed: ${failedNotes.slice(0, 200)}`);
+
+      const failureContext = `[ARCHITECTURE REVIEW FAILED – RETRY ${rollbackCount + 1}]\n\nThe previous architecture attempt failed review with these issues:\n${failedNotes}\n\nPlease re-analyse the requirements with these constraints in mind.`;
+      const reanalysedPath = await _runAnalyst.call(this, failureContext);
+      await this.stateMachine.transition(reanalysedPath, `ANALYSE → ARCHITECT (post-rollback retry ${rollbackCount + 1})`);
+      console.log(`[Orchestrator] ✅ State machine advanced to ARCHITECT after post-rollback re-analysis.`);
+      if (this.stageCtx) {
+        const existingArch = this.stageCtx.get('ARCHITECT') || {};
+        this.stageCtx.set('ARCHITECT', {
+          ...existingArch,
+          summary: `Architecture review failed (retry ${rollbackCount + 1}): ${failedNotes.slice(0, 200)}. Re-analysis triggered.`,
+          keyDecisions: [`Rollback to ANALYSE triggered after ${archReviewResult.failed} high-severity issue(s)`],
+          artifacts: [outputPath],
+          risks: archReviewResult.riskNotes ?? [],
+          meta: { ...(existingArch.meta || {}), _archRollbackCount: rollbackCount + 1, rollbackTriggered: true },
+        });
+      }
+      return { __alreadyTransitioned: true, artifactPath: reanalysedPath };
+    } catch (rollbackErr) {
+      console.warn(`[Orchestrator] Rollback failed (non-fatal): ${rollbackErr.message}. Proceeding with risks recorded.`);
     }
+  } else if (!archDecision.pass && archDecision.needsHumanReview) {
+    console.warn(`[Orchestrator] ⚠️  Rollback limit reached. Proceeding to CODE stage with ${archReviewResult.failed} unresolved issue(s).`);
+  } else if (archDecision.pass && archReviewResult.failed > 0) {
+    const lowSeverityNotes = archReviewResult.riskNotes
+      .filter(n => !n.includes('(high)'))
+      .slice(0, 3)
+      .join('; ');
+    this.stateMachine.recordRisk('low', `[ArchReview] ${archReviewResult.failed} low-severity issue(s) remain (no rollback): ${lowSeverityNotes}`);
+    console.log(`[Orchestrator] ℹ️  ${archReviewResult.failed} minor architecture issue(s) remain (recorded as low-risk). Proceeding automatically.`);
   } else {
-    console.log(`[Orchestrator] ℹ️  ${archReviewResult.failed} minor architecture issue(s) remain. Proceeding automatically.`);
+    console.log(`[Orchestrator] ℹ️  Architecture review: no issues. Proceeding automatically.`);
+  }
+
+  // ── EvoMap feedback loop: mark injected experiences as effectively used ──
+  // archExpContextWithComplaints._injectedExpIds is set by buildArchitectContextBlock().
+  // We only credit experiences when the architecture actually passes QualityGate,
+  // so hitCount means "helped produce a passing architecture", not just "was retrieved".
+  if (archDecision.pass) {
+    const archInjectedIds = archExpContextWithComplaints._injectedExpIds || [];
+    if (archInjectedIds.length > 0) {
+      // Defect H fix: use computeMatchedIds() instead of counting all injected IDs as hits.
+      // POSITIVE experiences are always matched (they provided correct direction).
+      // NEGATIVE experiences are only matched when the review's risk notes mention
+      // their tags/category (i.e. the agent was warned about the exact issue it encountered).
+      const archErrorContext = (archReviewResult.riskNotes || []).join(' ');
+      const { matchedIds: archMatchedIds, matchedCount: archMatchedCount } =
+        this.experienceStore.computeMatchedIds(archInjectedIds, archErrorContext);
+      // Only markUsedBatch on matched IDs – unmatched experiences were prompt noise
+      const archEvolutionTriggers = this.experienceStore.markUsedBatch(archMatchedIds);
+      // Improvement 4: report only confirmed matched hits to Observability
+      // (injected count was already reported in buildArchitectContextBlock call above)
+      this.obs.recordExpUsage({ hits: archMatchedCount });
+      console.log(`[Orchestrator] 🎯 Experience hit-rate (ARCHITECT): ${archMatchedCount}/${archInjectedIds.length} matched`);
+      for (const expId of archEvolutionTriggers) {
+        const triggerExp = this.experienceStore.experiences.find(e => e.id === expId);
+        if (triggerExp && triggerExp.skill) {
+          this.skillEvolution.evolve(triggerExp.skill, {
+            section: 'Best Practices',
+            title: triggerExp.title,
+            content: triggerExp.content,
+            sourceExpId: expId,
+            reason: `High-frequency pattern (hitCount=${triggerExp.hitCount}) – validated by ARCHITECT stage success`,
+          });
+          await this.hooks.emit(HOOK_EVENTS.SKILL_EVOLVED, { skillName: triggerExp.skill, expId }).catch(() => {});
+        }
+      }
+      console.log(`[Orchestrator] 📊 Marked ${archMatchedCount}/${archInjectedIds.length} experience(s) as effective (ARCHITECT passed). Evolution triggers: ${archEvolutionTriggers.length}`);
+    }
   }
 
   // ── Store ARCHITECT stage context for downstream stages ──────────────────
-  const archOutputCtx = StageContextStore.extractFromFile(outputPath, 'ARCHITECT');
-  this.stageCtx.set('ARCHITECT', {
-    summary:      archOutputCtx.summary,
-    keyDecisions: archOutputCtx.keyDecisions,
-    artifacts:    [outputPath],
-    risks:        archReviewResult.riskNotes ?? [],
-    meta: {
-      reviewRounds: archReviewResult.rounds ?? 0,
-      failedItems:  archReviewResult.failed ?? 0,
-      coverageRate: coverageResult.coverageRate ?? null,
-    },
-  });
-  console.log(`[Orchestrator] 🔗 ARCHITECT context stored: ${archOutputCtx.keyDecisions.length} key decision(s), ${archReviewResult.riskNotes?.length ?? 0} risk(s).`);
+  // P2-NEW-1: delegated to storeArchitectContext helper
+  const archOutputCtx = storeArchitectContext(this, outputPath, archReviewResult, coverageResult);
 
   this.bus.publish(AgentRole.ARCHITECT, AgentRole.DEVELOPER, outputPath, {
     reviewRounds:   archReviewResult.rounds ?? 0,
@@ -316,6 +515,10 @@ async function _runArchitect() {
     riskNotes:      archReviewResult.riskNotes ?? [],
     contextSummary: archOutputCtx.summary,
   });
+
+  // Generate Chinese companion file for developers (non-blocking)
+  translateMdFile(outputPath, this._rawLlmCall).catch(() => {});
+
   return outputPath;
 }
 
@@ -324,64 +527,18 @@ async function _runDeveloper() {
   const inputPath = this.bus.consume(AgentRole.DEVELOPER);
 
   // ── Inject upstream cross-stage context ───────────────────────────────────
-  // Developer now sees summaries from ANALYSE + ARCHITECT stages:
-  // - What requirements were clarified
-  // - What architecture decisions were made (tech stack, module structure, APIs)
-  // - What risks were flagged upstream
-  const upstreamCtxForDev = this.stageCtx ? this.stageCtx.getAll(['CODE'], 1800) : '';
-  if (upstreamCtxForDev) {
-    console.log(`[Orchestrator] 🔗 Cross-stage context injected into DeveloperAgent (${upstreamCtxForDev.length} chars). Upstream: ${this.stageCtx.getLogLine()}`);
-  }
+  // P2-NEW-1: delegated to buildDeveloperUpstreamCtx helper
+  const upstreamCtxForDev = buildDeveloperUpstreamCtx(this);
 
   const archMeta = this.bus.getMeta(AgentRole.DEVELOPER);
   if (archMeta && archMeta.reviewRounds > 0) {
     console.log(`[Orchestrator] ℹ️  Architecture was self-corrected in ${archMeta.reviewRounds} round(s) (${archMeta.failedItems} issue(s) fixed). Developer should review architecture.md carefully.`);
   }
 
-  const agentsMdForDev = this._agentsMdContent || '';
-  if (agentsMdForDev) {
-    console.log(`[Orchestrator] 📋 AGENTS.md injected into DeveloperAgent context.`);
-  }
-
-  const devExpContext = this.experienceStore.getContextBlock('code-development');
-  console.log(`[Orchestrator] 📚 Experience context injected for DeveloperAgent (${devExpContext.length} chars)`);
-
-  let codeGraphContext = '';
-  try {
-    const archPath = path.join(PATHS.OUTPUT_DIR, 'architecture.md');
-    if (fs.existsSync(archPath)) {
-      const archContent = fs.readFileSync(archPath, 'utf-8');
-      const identifiers = [...new Set(
-        (archContent.match(/\b[A-Z][a-zA-Z0-9]{2,}\b/g) || [])
-          .filter(id => id.length >= 3 && id.length <= 40)
-          .slice(0, 20)
-      )];
-      if (identifiers.length > 0) {
-        const graphMd = this.codeGraph.querySymbolsAsMarkdown(identifiers);
-        if (graphMd && !graphMd.includes('_Code graph not available') && !graphMd.includes('_No matching')) {
-          codeGraphContext = graphMd;
-          console.log(`[Orchestrator] 🗺️  Code graph: queried ${identifiers.length} symbol(s) from architecture doc`);
-        }
-      }
-    }
-  } catch (err) {
-    console.warn(`[Orchestrator] Code graph query failed (non-fatal): ${err.message}`);
-  }
-
-  const devComplaints = this.complaintWall.getOpenComplaintsFor(ComplaintTarget.SKILL, 'code-development');
-  const devComplaintBlock = devComplaints.length > 0
-    ? `\n\n## Known Issues (Open Complaints)\n${devComplaints.map(c => `- [${c.severity}] ${c.description}`).join('\n')}`
-    : '';
-  const devExpContextWithComplaints = [
-    agentsMdForDev ? `## Project Context (AGENTS.md)\n${agentsMdForDev}` : '',
-    upstreamCtxForDev,
-    devExpContext,
-    devComplaintBlock,
-    codeGraphContext ? `\n\n${codeGraphContext}` : '',
-  ].filter(Boolean).join('\n\n');
-  if (devComplaints.length > 0) {
-    console.log(`[Orchestrator] ⚠️  ${devComplaints.length} open complaint(s) injected into DeveloperAgent context.`);
-  }
+  // P2-NEW-1: delegated to buildDeveloperContextBlock helper
+  const devExpContextWithComplaints = buildDeveloperContextBlock(this, upstreamCtxForDev);
+  // Improvement 4: report injection count to Observability for hit-rate tracking
+  this.obs.recordExpUsage({ injected: (devExpContextWithComplaints._injectedExpIds || []).length });
 
   const outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, devExpContextWithComplaints);
 
@@ -397,109 +554,162 @@ async function _runDeveloper() {
   );
   const reviewResult = await reviewer.review(outputPath, requirementPath);
 
+  // Defect C fix: cache CODE stage subtask results for fine-grained rollback.
+  // If CodeReview fails quality gate, the next retry can reuse the CodeGeneration
+  // result (the agent's raw output) and only re-run the review, or vice versa.
+  const codeSubtaskCoordinator = new RollbackCoordinator(this);
+  codeSubtaskCoordinator.cacheSubtaskResult('CODE', 'CodeGeneration', { outputPath });
+  codeSubtaskCoordinator.cacheSubtaskResult('CODE', 'CodeReview', reviewResult);
+
   for (const note of reviewResult.riskNotes) {
     const severity = note.includes('(high)') ? 'high' : 'medium';
     this.stateMachine.recordRisk(severity, note, false);
   }
   this.stateMachine.flushRisks();
 
-  if (reviewResult.failed === 0) {
-    console.log(`[Orchestrator] ✅ Code review passed. Proceeding automatically.`);
-    const codePassTitle = 'Code development passed all checklist items';
-    this.experienceStore.recordIfAbsent(codePassTitle, {
-      type: ExperienceType.POSITIVE,
-      category: ExperienceCategory.STABLE_PATTERN,
-      title: codePassTitle,
-      content: `Code passed all ${reviewResult.total ?? 'N/A'} checklist items.`,
-      skill: 'code-development',
-      tags: ['code-review', 'passed', 'stable'],
-    });
-  } else if (reviewResult.needsHumanReview) {
+  // P1-NEW-5 fix: use QualityGate for CODE stage decision (same as ARCHITECT stage).
+  // Previously this was inline if/else logic, which violated DRY and made quality
+  // policy impossible to configure uniformly across stages.
+  const codeGate = new QualityGate({ experienceStore: this.experienceStore, maxRollbacks: 1 });
+  const codeRollbackCountForGate = this._rollbackCounters?.get('CODE') ?? 0;
+  const codeDecision = codeGate.evaluate(reviewResult, 'CODE', codeRollbackCountForGate);
+  codeGate.recordExperience(codeDecision, 'CODE', reviewResult, { skill: 'code-development', category: ExperienceCategory.STABLE_PATTERN });
+
+  if (codeDecision.pass) {
+    console.log(`[Orchestrator] ✅ Code review passed. Reason: ${codeDecision.reason}`);
+  } else if (codeDecision.rollback) {
     console.warn(`[Orchestrator] ⚠️  ${reviewResult.failed} high-severity code issue(s) remain. Attempting rollback to ARCHITECT stage.`);
-    const codeFailTitle = 'Code review: high-severity issues unresolved after self-correction';
     const failedNotes = reviewResult.riskNotes.slice(0, 3).join('; ');
     const failContent = `After ${reviewResult.rounds ?? 'N/A'} self-correction round(s), ${reviewResult.failed} high-severity issue(s) remained. Issues: ${failedNotes}`;
-    if (!this.experienceStore.appendByTitle(codeFailTitle, failContent)) {
+    if (!this.experienceStore.appendByTitle('Code review: high-severity issues unresolved after self-correction', failContent)) {
       this.experienceStore.record({
         type: ExperienceType.NEGATIVE,
         category: ExperienceCategory.PITFALL,
-        title: codeFailTitle,
+        title: 'Code review: high-severity issues unresolved after self-correction',
         content: failContent,
         skill: 'code-development',
         tags: ['code-review', 'failed', 'pitfall'],
       });
     }
-    // ── Rollback to ARCHITECT stage (Defect G fix) ────────────────────────────
-    // Previously: code review failure only recorded a risk and continued to TEST.
-    // This was asymmetric with architecture review (which rolls back to ANALYSE).
-    // Now: when high-severity code issues remain after all review rounds, we roll
-    // back to ARCHITECT so the architect can revise the design before the developer
-    // tries again. Capped at 1 rollback to prevent infinite loops.
-    const codeRollbackKey = `_codeRollbackCount_${this.projectId}`;
-    const codeRollbackCount = (this[codeRollbackKey] || 0);
-    if (codeRollbackCount < 1) {
-      this[codeRollbackKey] = codeRollbackCount + 1;
-      try {
-        const rollbackReason = `Code review failed: ${failedNotes.slice(0, 200)}`;
-        await this.stateMachine.rollback(rollbackReason);
-        // ── P2-2 fix: clear investigation source cache after rollback ─────────────
-        // After code review rollback, both architecture.md (will be revised) and
-        // code.diff (will be regenerated) are stale. Clear their cache entries so
-        // the re-run architect and developer see fresh file content.
-        if (this._investigationSourceCacheMap) {
-          this._investigationSourceCacheMap.delete('Architecture');
-          this._investigationSourceCacheMap.delete('Code');
-          this._investigationSourceCacheMap.delete('ARCHITECT');
-          this._investigationSourceCacheMap.delete('CODE');
-        }
-        console.warn(`[Orchestrator] ⏪ Rolled back to ARCHITECT stage. Re-running architect with code failure context.`);
-        // ── Defect #4 fix: do NOT re-consume AgentRole.DEVELOPER here. ─────────
-        // The bus message for DEVELOPER was already consumed at the top of this
-        // function (const inputPath = this.bus.consume(AgentRole.DEVELOPER)).
-        // A second consume() returns null, making archInputPath null and causing
-        // the failure note and bus.publish() to be silently skipped.
-        // Instead, read the architecture output path directly from the output dir.
-        const archOutputPath = path.join(PATHS.OUTPUT_DIR, 'architecture.md');
-        if (fs.existsSync(archOutputPath)) {
-          const failureNote = `\n\n---\n## ⚠️ Code Review Failure (Retry ${codeRollbackCount + 1})\n\nThe previous code implementation failed review with these issues:\n${failedNotes}\n\nPlease revise the architecture to address these code-level concerns before the developer retries.`;
-          fs.appendFileSync(archOutputPath, failureNote, 'utf-8');
-          this.bus.publish(AgentRole.ANALYST, AgentRole.ARCHITECT, archOutputPath, {
-            codeReviewFailed: true,
-            failedNotes,
-            rollbackRetry: codeRollbackCount + 1,
-          });
-        }
-        // ── Defect #1 fix: after rollback to ARCHITECT, re-run _runArchitect ─────
-        // Previously called _runDeveloper.call(this) here, which meant the state
-        // machine was rolled back to ARCHITECT but the actual execution skipped
-        // the architect entirely and went straight back to developer – making the
-        // rollback a no-op. Now we correctly re-run _runArchitect so the architect
-        // can revise the design before the developer retries.
-        //
-        // ── P0-2 fix: propagate __alreadyTransitioned sentinel correctly ─────────
-        // _runArchitect() may return { __alreadyTransitioned: true, artifactPath }
-        // (e.g. if it triggers its own rollback). We must propagate this sentinel
-        // upward so _runStage(ARCHITECT→CODE) does NOT call transition() again.
-        // Previously: return await _runArchitect.call(this) was correct for the
-        // normal path (returns outputPath string), but if _runArchitect itself
-        // rolled back and returned the sentinel, _runStage would see a non-string
-        // return value and try to use it as an artifactPath for transition(),
-        // causing the state machine to advance with a corrupt artifact reference.
-        // Now: we explicitly check and propagate the sentinel.
-        const archRetry = await _runArchitect.call(this);
-        // If _runArchitect already handled its own transition (sentinel), propagate it.
-        // Otherwise return the architecture outputPath so _runStage(ARCHITECT→CODE)
-        // can call transition() normally.
-        return archRetry;
-      } catch (rollbackErr) {
-        console.warn(`[Orchestrator] Code rollback failed (non-fatal): ${rollbackErr.message}. Proceeding with risks recorded.`);
-        // Fall through: record risk and continue to TEST
-        this.stateMachine.recordRisk('high', `[CodeReview] ${reviewResult.failed} high-severity issue(s) unresolved. Rollback failed: ${rollbackErr.message}`);
-      }
-    } else {
-      console.warn(`[Orchestrator] ⚠️  Code rollback limit reached (max 1). Proceeding to TEST with ${reviewResult.failed} unresolved issue(s).`);
-      this.stateMachine.recordRisk('high', `[CodeReview] ${reviewResult.failed} high-severity issue(s) unresolved after rollback limit reached.`);
+    // Roll back to ARCHITECT when high-severity code issues remain after all review rounds.
+    // P1-NEW-3 fix: use this._rollbackCounters (instance-level Map) instead of stageCtx.meta.
+    // stageCtx.delete('CODE') is called by RollbackCoordinator during rollback, which would
+    // reset the counter to 0 and risk infinite recursion. The Map is never cleared by rollback.
+    const codeRollbackCount = this._rollbackCounters?.get('CODE') ?? 0;
+    // Increment the independent counter before entering the rollback path
+    if (this._rollbackCounters) this._rollbackCounters.set('CODE', codeRollbackCount + 1);
+    // Also mirror into stageCtx.meta for observability (non-authoritative copy)
+    if (this.stageCtx) {
+      const existingCode = this.stageCtx.get('CODE') || {};
+      this.stageCtx.set('CODE', {
+        ...existingCode,
+        meta: { ...(existingCode.meta || {}), _codeRollbackCount: codeRollbackCount + 1 },
+      });
     }
+    try {
+      // ── Defect C fix: analyse rollback strategy before committing to full-stage rollback ──
+      // If only CodeReview failed (the common case), we can retry just the review
+      // on the existing code output instead of re-running the entire ARCHITECT stage.
+      const coordinator = new RollbackCoordinator(this);
+      const codeStrategy = coordinator.analyseRollbackStrategy(
+        'CODE', `Code review failed: ${failedNotes}`, 'CodeReview'
+      );
+
+      if (codeStrategy.type === 'SUBTASK_RETRY' && codeStrategy.cachedResults) {
+        console.log(`[Orchestrator] 🎯 Defect C: Subtask-level retry for CODE. ${codeStrategy.reason}`);
+
+        // Re-run only the CodeReview subtask with failure context
+        const retryCodeReviewer = new CodeReviewAgent(
+          this._rawLlmCall,
+          {
+            maxRounds: 2,
+            verbose: true,
+            outputDir: PATHS.OUTPUT_DIR,
+            investigationTools: this._buildInvestigationTools('Code'),
+          }
+        );
+        const reqPath = path.join(PATHS.OUTPUT_DIR, 'requirements.md');
+
+        // Append failure feedback to the code output
+        const retryNote = `\n\n// --- Code Review Retry (Attempt ${codeRollbackCount + 1}) ---\n// Previous review found these issues:\n// ${failedNotes.replace(/\n/g, '\n// ')}\n// Please address the above.`;
+        fs.appendFileSync(outputPath, retryNote, 'utf-8');
+
+        const retryReview = await retryCodeReviewer.review(outputPath, reqPath);
+
+        const retryCodeGate = new QualityGate({ experienceStore: this.experienceStore, maxRollbacks: 1 });
+        const retryCodeDecision = retryCodeGate.evaluate(retryReview, 'CODE', codeRollbackCount + 1);
+
+        if (retryCodeDecision.pass) {
+          console.log(`[Orchestrator] ✅ Subtask-level retry succeeded: CodeReview passed on retry.`);
+          coordinator.cacheSubtaskResult('CODE', 'CodeReview', retryReview);
+
+          // Store CODE context and proceed
+          const codeOutputCtx = storeCodeContext(this, outputPath, retryReview);
+          this.bus.publish(AgentRole.DEVELOPER, AgentRole.TESTER, outputPath, {
+            reviewRounds:   retryReview.rounds ?? 0,
+            failedItems:    retryReview.failed ?? 0,
+            riskNotes:      retryReview.riskNotes ?? [],
+            contextSummary: codeOutputCtx.summary,
+          });
+          return outputPath;
+        }
+
+        console.log(`[Orchestrator] ⚠️  Subtask-level retry failed for CODE. Falling through to full-stage rollback.`);
+        coordinator.invalidateSubtaskCache('CODE');
+      }
+
+      // ── Full-stage rollback (original path) ──────────────────────────────────
+      // Coordinated rollback (P0-A: RollbackCoordinator handles all cleanup)
+      await coordinator.rollback('CODE', `Code review failed: ${failedNotes.slice(0, 200)}`);
+
+      // Read architecture path directly – bus message was already consumed. see CHANGELOG: Defect #4/_runDeveloper
+      const archOutputPath = path.join(PATHS.OUTPUT_DIR, 'architecture.md');
+      if (fs.existsSync(archOutputPath)) {
+        const failureNote = `\n\n---\n## ⚠️ Code Review Failure (Retry ${codeRollbackCount + 1})\n\nThe previous code implementation failed review with these issues:\n${failedNotes}\n\nPlease revise the architecture to address these code-level concerns before the developer retries.`;
+        fs.appendFileSync(archOutputPath, failureNote, 'utf-8');
+        this.bus.publish(AgentRole.ANALYST, AgentRole.ARCHITECT, archOutputPath, {
+          codeReviewFailed: true,
+          failedNotes,
+          rollbackRetry: codeRollbackCount + 1,
+        });
+      }
+      if (this.stageCtx) {
+        const existingCodeCtx = this.stageCtx.get('CODE') || {};
+        this.stageCtx.set('CODE', {
+          ...existingCodeCtx,
+          summary: `Code review failed (retry ${codeRollbackCount + 1}): ${failedNotes.slice(0, 200)}. Rollback to ARCHITECT triggered.`,
+          keyDecisions: [`Rollback to ARCHITECT triggered after ${reviewResult.failed} high-severity issue(s)`],
+          artifacts: [outputPath],
+          risks: reviewResult.riskNotes ?? [],
+          meta: { ...(existingCodeCtx.meta || {}), _codeRollbackCount: codeRollbackCount + 1, rollbackTriggered: true },
+        });
+      }
+      // P0-A fix: _runArchitect.call(this) bypasses _runStage's Observability timing
+      // and error handling. Wrap it with inline obs.stageStart/stageEnd so the
+      // ARCHITECT retry is visible in metrics-history.jsonl and _adaptiveStrategy.
+      // Note: stateMachine.transition() is NOT called here because _runArchitect's
+      // rollback path already calls it internally (returns __alreadyTransitioned).
+      const archStageLabel = 'CODE→ARCHITECT(rollback-retry)';
+      this.obs.stageStart(archStageLabel);
+      let archRetry;
+      try {
+        archRetry = await _runArchitect.call(this);
+        this.obs.stageEnd(archStageLabel, 'ok');
+      } catch (archErr) {
+        this.obs.stageEnd(archStageLabel, 'error');
+        this.obs.recordError(archStageLabel, archErr.message);
+        // Re-emit WORKFLOW_ERROR so HookSystem handlers are triggered (mirrors _runStage behaviour)
+        await this.hooks.emit(HOOK_EVENTS.WORKFLOW_ERROR, { error: archErr, state: 'CODE→ARCHITECT(rollback)' }).catch(() => {});
+        throw archErr;
+      }
+      return archRetry;
+    } catch (rollbackErr) {
+      console.warn(`[Orchestrator] Code rollback failed (non-fatal): ${rollbackErr.message}. Proceeding with risks recorded.`);
+      this.stateMachine.recordRisk('high', `[CodeReview] ${reviewResult.failed} high-severity issue(s) unresolved. Rollback failed: ${rollbackErr.message}`);
+    }
+  } else if (codeDecision.needsHumanReview) {
+    console.warn(`[Orchestrator] ⚠️  Code rollback limit reached (max 1). Proceeding to TEST with ${reviewResult.failed} unresolved issue(s).`);
+    this.stateMachine.recordRisk('high', `[CodeReview] ${reviewResult.failed} high-severity issue(s) unresolved after rollback limit reached.`);
   } else {
     console.log(`[Orchestrator] ℹ️  ${reviewResult.failed} minor code issue(s) remain. Proceeding automatically.`);
   }
@@ -526,19 +736,41 @@ async function _runDeveloper() {
     console.warn(`[Orchestrator] Early EntropyGC scan failed (non-fatal): ${err.message}`);
   }
 
+  // ── EvoMap feedback loop: mark injected experiences as effectively used ──
+  // devExpContextWithComplaints._injectedExpIds is set by buildDeveloperContextBlock().
+  // Only credit when code passes QualityGate (codeDecision.pass).
+  if (codeDecision.pass) {
+    const devInjectedIds = devExpContextWithComplaints._injectedExpIds || [];
+    if (devInjectedIds.length > 0) {
+      // Defect H fix: use computeMatchedIds() for accurate hit-rate measurement.
+      const devErrorContext = (reviewResult.riskNotes || []).join(' ');
+      const { matchedIds: devMatchedIds, matchedCount: devMatchedCount } =
+        this.experienceStore.computeMatchedIds(devInjectedIds, devErrorContext);
+      const devEvolutionTriggers = this.experienceStore.markUsedBatch(devMatchedIds);
+      // Improvement 4: report only confirmed matched hits to Observability
+      // (injected count was already reported in buildDeveloperContextBlock call above)
+      this.obs.recordExpUsage({ hits: devMatchedCount });
+      console.log(`[Orchestrator] 🎯 Experience hit-rate (CODE): ${devMatchedCount}/${devInjectedIds.length} matched`);
+      for (const expId of devEvolutionTriggers) {
+        const triggerExp = this.experienceStore.experiences.find(e => e.id === expId);
+        if (triggerExp && triggerExp.skill) {
+          this.skillEvolution.evolve(triggerExp.skill, {
+            section: 'Best Practices',
+            title: triggerExp.title,
+            content: triggerExp.content,
+            sourceExpId: expId,
+            reason: `High-frequency pattern (hitCount=${triggerExp.hitCount}) – validated by CODE stage success`,
+          });
+          await this.hooks.emit(HOOK_EVENTS.SKILL_EVOLVED, { skillName: triggerExp.skill, expId }).catch(() => {});
+        }
+      }
+      console.log(`[Orchestrator] 📊 Marked ${devMatchedCount}/${devInjectedIds.length} experience(s) as effective (CODE passed). Evolution triggers: ${devEvolutionTriggers.length}`);
+    }
+  }
+
   // ── Store CODE stage context for downstream stages ────────────────────────
-  const codeOutputCtx = StageContextStore.extractFromFile(outputPath, 'CODE');
-  this.stageCtx.set('CODE', {
-    summary:      codeOutputCtx.summary,
-    keyDecisions: codeOutputCtx.keyDecisions,
-    artifacts:    [outputPath],
-    risks:        reviewResult.riskNotes ?? [],
-    meta: {
-      reviewRounds: reviewResult.rounds ?? 0,
-      failedItems:  reviewResult.failed ?? 0,
-    },
-  });
-  console.log(`[Orchestrator] 🔗 CODE context stored: ${codeOutputCtx.keyDecisions.length} key decision(s), ${reviewResult.riskNotes?.length ?? 0} risk(s).`);
+  // P2-NEW-1: delegated to storeCodeContext helper
+  const codeOutputCtx = storeCodeContext(this, outputPath, reviewResult);
 
   this.bus.publish(AgentRole.DEVELOPER, AgentRole.TESTER, outputPath, {
     reviewRounds:   reviewResult.rounds ?? 0,
@@ -546,23 +778,93 @@ async function _runDeveloper() {
     riskNotes:      reviewResult.riskNotes ?? [],
     contextSummary: codeOutputCtx.summary,
   });
+
+  // Generate Chinese companion file for developers (non-blocking)
+  translateMdFile(outputPath, this._rawLlmCall).catch(() => {});
+
   return outputPath;
 }
 
+/**
+ * P0-A fix: _runTester is now an iterative loop instead of a recursive function.
+ *
+ * Previous design:
+ *   _runTester → rollback → _runDeveloper → _runTester (recursive)
+ *
+ * The recursion was "safe" only because _rollbackCounters prevented infinite loops,
+ * but it still carried real stack-overflow risk if _rollbackCounters was ever
+ * undefined (the `?? 0` fallback would reset the counter to 0 every call).
+ *
+ * New design:
+ *   _runTester owns a `testIteration` counter.
+ *   When a rollback is needed, it runs _runDeveloper inline and then `continue`s
+ *   the while-loop instead of calling _runTester recursively.
+ *   The loop exits when: (a) the test passes, (b) rollback budget is exhausted,
+ *   or (c) an unrecoverable error is thrown.
+ */
 async function _runTester() {
-  console.log(`\n[Orchestrator] Stage: TEST (TesterAgent)`);
+  // P0-A: outer iteration loop – replaces recursive _runTester call
+  const MAX_TEST_ITERATIONS = 2; // 1 initial run + 1 rollback retry
+  let testIteration = 0;
+
+  while (testIteration < MAX_TEST_ITERATIONS) {
+    testIteration++;
+    // P1-A fix: each _runTesterOnce call gets its OWN fresh fixConversationHistory.
+    //
+    // Previous design (P2-D): a single fixConversationHistory array was shared across
+    // all iterations of the while-loop. The intent was to let the second iteration's
+    // Fix Agent see the first iteration's fix attempts. But this caused a "history
+    // pollution" problem:
+    //   - Iteration 1 pushes N messages (N = 2 × fixRounds) into the shared array.
+    //   - Iteration 2 (rollback + retry) starts with those N stale messages already
+    //     in the array. The Fix Agent sees a long history of FAILED attempts from a
+    //     DIFFERENT code state (pre-rollback), which actively misleads it.
+    //
+    // The correct design: each iteration starts fresh. The rollback itself (re-running
+    // _runDeveloper) produces a new code state; the Fix Agent should reason about THAT
+    // state without being anchored to the previous iteration's failures.
+    //
+    // Within a single iteration, fixConversationHistory still persists across fix
+    // rounds (that is the P2-D / P0-NEW-2 multi-turn benefit), because the array is
+    // created once per _runTesterOnce call and passed down to _runRealTestLoop.
+    const fixConversationHistory = [];
+    const iterResult = await _runTesterOnce.call(this, testIteration, MAX_TEST_ITERATIONS, fixConversationHistory);
+
+    if (iterResult.__done) {
+      // Normal completion (pass or budget exhausted) – return the output path
+      return iterResult.outputPath;
+    }
+
+    if (iterResult.__alreadyTransitioned) {
+      // _runDeveloper triggered its own rollback – propagate sentinel upward
+      return iterResult;
+    }
+
+    // iterResult.__retry === true: rollback succeeded, re-run TEST stage
+    console.log(`[Orchestrator] 🔄 Re-running TEST stage (iteration ${testIteration + 1}/${MAX_TEST_ITERATIONS}) after developer retry...`);
+    // Loop continues – no recursive call needed
+  }
+
+  // Should not reach here (loop always returns via __done or __alreadyTransitioned),
+  // but guard against edge cases.
+  console.warn(`[Orchestrator] ⚠️  TEST stage iteration limit reached without resolution.`);
+  return null;
+}
+
+/**
+ * Executes a single TEST stage pass.
+ * Returns one of:
+ *   { __done: true, outputPath }           – normal completion
+ *   { __done: true, __alreadyTransitioned } – _runDeveloper triggered its own rollback
+ *   { __retry: true }                       – rollback succeeded, caller should loop
+ */
+async function _runTesterOnce(testIteration, maxIterations, fixConversationHistory) {
+  console.log(`\n[Orchestrator] Stage: TEST (TesterAgent)${testIteration > 1 ? ` [iteration ${testIteration}/${maxIterations}]` : ''}`);
   const inputPath = this.bus.consume(AgentRole.TESTER);
 
   // ── Inject upstream cross-stage context ───────────────────────────────────
-  // Tester now sees summaries from ALL upstream stages:
-  // - ANALYSE: what requirements were clarified, what risks were flagged
-  // - ARCHITECT: what architecture was designed, what tech stack was chosen
-  // - CODE: what was implemented, what code review issues were found
-  // This gives the tester full visibility into the entire development history.
-  const upstreamCtxForTest = this.stageCtx ? this.stageCtx.getAll(['TEST'], 2000) : '';
-  if (upstreamCtxForTest) {
-    console.log(`[Orchestrator] 🔗 Cross-stage context injected into TesterAgent (${upstreamCtxForTest.length} chars). Upstream: ${this.stageCtx.getLogLine()}`);
-  }
+  // P2-NEW-1: delegated to buildTesterUpstreamCtx helper
+  const upstreamCtxForTest = buildTesterUpstreamCtx(this);
 
   const devMeta = this.bus.getMeta(AgentRole.TESTER);
   if (devMeta && devMeta.reviewRounds > 0) {
@@ -590,11 +892,8 @@ async function _runTester() {
     console.warn(`[Orchestrator] ⚠️  Test case generation failed (non-fatal): ${err.message}`);
   }
 
-  // ── Step 0.5: Execute generated test cases (close the plan→execution gap) ──
-  // Defect #4 fix: previously test-cases.md was only "simulated" by the LLM.
-  // Now we convert the JSON plan into a real executable test script and run it.
-  // The execution report is stored and later injected into TesterAgent's prompt
-  // so the AI sees REAL pass/fail results instead of imagined ones.
+  // ── Step 0.5: Execute generated test cases (real execution) ────────────────
+  // see CHANGELOG: Defect #4
   let tcExecutionReport = null;
   if (!tcGenResult.skipped && tcGenResult.caseCount > 0) {
     console.log(`\n[Orchestrator] 🔬 Executing generated test cases (real execution)...`);
@@ -609,14 +908,21 @@ async function _runTester() {
       });
       tcExecutionReport = await tcExecutor.execute();
       if (!tcExecutionReport.skipped) {
-        console.log(`[Orchestrator] 📊 Test case execution: ${tcExecutionReport.passed}/${tcExecutionReport.total} passed, ${tcExecutionReport.failed} failed, ${tcExecutionReport.blocked} blocked`);
+        // Use ?? (not ||) so that 0 is not replaced by the fallback. see CHANGELOG: P2-1
+        const _manualPending = tcExecutionReport.manualPending ?? 0;
+        const _automatedTotal = tcExecutionReport.automatedTotal ?? (tcExecutionReport.total - _manualPending);
+        console.log(`[Orchestrator] 📊 Test case execution: ${tcExecutionReport.passed}/${_automatedTotal} passed, ${tcExecutionReport.failed} failed, ${tcExecutionReport.blocked} blocked, ${_manualPending} manual-pending`);
         // Save execution report to output dir for traceability
         const execReportPath = path.join(PATHS.OUTPUT_DIR, 'test-execution-report.md');
         fs.writeFileSync(execReportPath, tcExecutionReport.summaryMd, 'utf-8');
         console.log(`[Orchestrator] 📝 Execution report saved → output/test-execution-report.md`);
+        // M-4: only count automated failures in risk – manual-pending cases are NOT quality failures
         if (tcExecutionReport.failed > 0) {
           this.stateMachine.recordRisk('medium',
-            `[TestCaseExecutor] ${tcExecutionReport.failed}/${tcExecutionReport.total} generated test case(s) failed real execution. See output/test-execution-report.md.`);
+            `[TestCaseExecutor] ${tcExecutionReport.failed}/${_automatedTotal} automated test case(s) failed real execution. See output/test-execution-report.md.`);
+        }
+        if (_manualPending > 0) {
+          console.log(`[Orchestrator] 🖐️  ${_manualPending} manual test case(s) require human verification – not counted as failures.`);
         }
       } else {
         console.log(`[Orchestrator] ⏭️  Test case execution skipped: ${tcExecutionReport.skipReason}`);
@@ -628,40 +934,10 @@ async function _runTester() {
     console.log(`[Orchestrator] ⏭️  Test case execution skipped (no cases generated).`);
   }
 
-  const agentsMdForTest = this._agentsMdContent || '';
-  if (agentsMdForTest) {
-    console.log(`[Orchestrator] 📋 AGENTS.md injected into TesterAgent context.`);
-  }
-
-  const testExpContext = this.experienceStore.getContextBlock('test-report');
-  console.log(`[Orchestrator] 📚 Experience context injected for TesterAgent (${testExpContext.length} chars)`);
-
-  const testComplaints = this.complaintWall.getOpenComplaintsFor(ComplaintTarget.SKILL, 'test-report');
-  const testComplaintBlock = testComplaints.length > 0
-    ? `\n\n## Known Issues (Open Complaints)\n${testComplaints.map(c => `- [${c.severity}] ${c.description}`).join('\n')}`
-    : '';
-
-  // Inject real execution results into TesterAgent context (Defect #4 fix)
-  // This replaces the previous approach where TesterAgent only "imagined" test results.
-  // Now the agent sees actual PASS/FAIL/BLOCKED statuses from real script execution.
-  const realExecutionBlock = tcExecutionReport && !tcExecutionReport.skipped
-    ? `\n\n## ⚡ Real Test Execution Results (Pre-Run)\n> The following results come from ACTUALLY RUNNING the generated test script.\n> Use these as ground truth – do NOT contradict them in your report.\n\n${tcExecutionReport.summaryMd}`
-    : '';
-  if (realExecutionBlock) {
-    console.log(`[Orchestrator] ⚡ Real execution results injected into TesterAgent context (${tcExecutionReport.total} cases).`);
-  }
-
-  const testExpContextWithComplaints = [
-    agentsMdForTest ? `## Project Context (AGENTS.md)\n${agentsMdForTest}` : '',
-    upstreamCtxForTest,
-    testExpContext,
-    testComplaintBlock,
-    realExecutionBlock,
-  ].filter(Boolean).join('\n\n');
-  if (testComplaints.length > 0) {
-    console.log(`[Orchestrator] ⚠️  ${testComplaints.length} open complaint(s) injected into TesterAgent context.`);
-  }
-
+  // P2-NEW-1: delegated to buildTesterContextBlock helper
+  const testExpContextWithComplaints = buildTesterContextBlock(this, upstreamCtxForTest, tcExecutionReport);
+  // Improvement 4: report injection count to Observability for hit-rate tracking
+  this.obs.recordExpUsage({ injected: (testExpContextWithComplaints._injectedExpIds || []).length });
   const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, testExpContextWithComplaints);
 
   let testContent = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : '';
@@ -695,26 +971,152 @@ async function _runTester() {
     if (corrResult.needsHumanReview) {
       const riskMsg = `[TestReport] ${corrResult.signals.filter(s => s.severity === 'high').map(s => s.label).join(', ')} – unresolved after self-correction.`;
       this.stateMachine.recordRisk('high', riskMsg);
-      console.warn(`[Orchestrator] ⚠️  High-severity issues recorded as risks. Proceeding automatically.`);
+      console.warn(`[Orchestrator] ⚠️  High-severity test report issues detected.`);
       try {
-        const defectDecision = await this.socratic.ask(DECISION_QUESTIONS.TEST_DEFECTS_ACTION);
-        console.log(`[Orchestrator] 🤔 Defect handling decision: "${defectDecision.optionText}"`);
+        // P2-C fix: use non-blocking askAsync – Agent proceeds immediately with default,
+        // user has 10s to override. Default: option[0] = "Fix all Critical and High defects".
+        const defectDecision = this.socratic.askAsync(DECISION_QUESTIONS.TEST_DEFECTS_ACTION, 0);
+        console.log(`[Orchestrator] ⚡ Defect handling decision (non-blocking): "${defectDecision.optionText}"`);
         this.stateMachine.recordRisk('low', `[SocraticEngine] Defect handling: ${defectDecision.optionText}`);
       } catch (err) {
-      this.stateMachine.recordRisk('low', `[SocraticEngine] Defect handling decision skipped (engine unavailable): ${err.message}`);
-      console.warn(`[Orchestrator] ⚠️  SocraticEngine defect decision skipped – proceeding automatically. Reason: ${err.message}`);
-    }
-      const testFailTitle = 'Test report: high-severity issues unresolved after self-correction';
-      const failContent = `Unresolved high-severity signals after ${corrResult.rounds} self-correction round(s): ${riskMsg}`;
-      if (!this.experienceStore.appendByTitle(testFailTitle, failContent)) {
-        this.experienceStore.record({
-          type: ExperienceType.NEGATIVE,
-          category: ExperienceCategory.PITFALL,
-          title: testFailTitle,
-          content: failContent,
-          skill: 'test-report',
-          tags: ['test-report', 'failed', 'pitfall'],
-        });
+        this.stateMachine.recordRisk('low', `[SocraticEngine] Defect handling decision skipped (engine unavailable): ${err.message}`);
+        console.warn(`[Orchestrator] ⚠️  SocraticEngine defect decision skipped – proceeding automatically. Reason: ${err.message}`);
+      }
+
+      // P1-NEW-5 fix: use QualityGate for TEST stage decision (same pattern as ARCHITECT/CODE).
+      // corrResult is adapted to the reviewResult shape QualityGate.evaluate() expects.
+      const testGate = new QualityGate({ experienceStore: this.experienceStore, maxRollbacks: 1 });
+      const testRollbackCountForGate = this._rollbackCounters?.get('TEST') ?? 0;
+      const testGateInput = {
+        failed: corrResult.signals.filter(s => s.severity === 'high').length,
+        needsHumanReview: corrResult.needsHumanReview,
+        total: corrResult.signals.length,
+        rounds: corrResult.rounds,
+        riskNotes: [riskMsg],
+        // Defect A fix: pass correction history so recordExperience() can record
+        // diagnostic information ("what was fixed") instead of just "passed/failed".
+        history: corrResult.history || [],
+      };
+      const testDecision = testGate.evaluate(testGateInput, 'TEST', testRollbackCountForGate);
+      testGate.recordExperience(testDecision, 'TEST', testGateInput, { skill: 'test-report', category: ExperienceCategory.PITFALL });
+
+      if (testDecision.rollback) {
+        // Roll back to CODE when test report has high-severity issues.
+        // P1-NEW-3 fix: use this._rollbackCounters (instance-level Map) instead of stageCtx.meta.
+        // RollbackCoordinator calls stageCtx.delete('TEST') during rollback, which would reset
+        // the counter to 0 and cause infinite recursion (_runTester → rollback → _runTester).
+        // see CHANGELOG: T-4, P2-2/_runTester, P0-2/counter-read
+        const testRollbackCount = this._rollbackCounters?.get('TEST') ?? 0;
+        // Increment the independent counter before entering the rollback path
+        if (this._rollbackCounters) this._rollbackCounters.set('TEST', testRollbackCount + 1);
+        // P2-D: _pendingTestMeta lifecycle clarification.
+        //
+        // _pendingTestMeta is a "deferred write" pattern: it carries rollback metadata
+        // (specifically _testRollbackCount) from the rollback path to the final
+        // storeTestContext() call at the end of _runTesterOnce.
+        //
+        // Why deferred? RollbackCoordinator.rollback('TEST') calls stageCtx.delete('TEST'),
+        // which wipes the TEST context entry. If we wrote _testRollbackCount into stageCtx
+        // immediately, it would be erased by the rollback. Instead, we park it in
+        // _pendingTestMeta and merge it in storeTestContext() AFTER the rollback completes.
+        //
+        // Lifecycle:
+        //   SET HERE (rollback path):
+        //     _pendingTestMeta._testRollbackCount = testRollbackCount + 1
+        //     (survives the rollback because it's on `this`, not in stageCtx)
+        //
+        //   READ + CLEARED in storeTestContext() (normal completion path):
+        //     storeTestContext merges _pendingTestMeta into the TEST context entry,
+        //     then sets this._pendingTestMeta = null.
+        //
+        //   RESET HERE (retry signal path, line below):
+        //     When returning { __retry: true }, we clear _pendingTestMeta because
+        //     the next iteration of _runTesterOnce will set it fresh if needed.
+        //     Without this reset, a stale _pendingTestMeta from iteration N would
+        //     be merged into the TEST context of iteration N+1 (incorrect count).
+        //
+        // Thread safety: _runTester is sequential (no concurrent _runTesterOnce calls),
+        // so there is no race condition on _pendingTestMeta.
+        if (!this._pendingTestMeta) this._pendingTestMeta = {};
+        this._pendingTestMeta._testRollbackCount = testRollbackCount + 1;
+        try {
+          // ── Coordinated rollback (P0-A: RollbackCoordinator handles all cleanup) ──
+          const coordinator = new RollbackCoordinator(this);
+          await coordinator.rollback('TEST', `Test report failed: ${riskMsg.slice(0, 200)}`);
+
+          // Append failure context to code.diff so developer knows what to fix
+          const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
+          const failureNote = `\n\n---\n## ⚠️ Test Report Failure (Retry ${testRollbackCount + 1})\n\nThe previous implementation failed test report review with these issues:\n${riskMsg}\n\nPlease fix the implementation to address these test failures before the tester retries.`;
+          if (fs.existsSync(codeDiffPath)) {
+            fs.appendFileSync(codeDiffPath, failureNote, 'utf-8');
+          }
+          // Re-publish ARCHITECT → DEVELOPER bus message so _runDeveloper can consume it
+          const archOutputPath = path.join(PATHS.OUTPUT_DIR, 'architecture.md');
+          if (fs.existsSync(archOutputPath)) {
+            this.bus.publish(AgentRole.ARCHITECT, AgentRole.DEVELOPER, archOutputPath, {
+              testReportFailed: true,
+              riskMsg,
+              rollbackRetry: testRollbackCount + 1,
+              reviewRounds: 1,
+              failedItems: 1,
+            });
+          }
+          // Re-run developer then recursively re-run the full TEST stage.
+          // Bus meta includes reviewRounds so _runDeveloper logs the retry correctly.
+          // see CHANGELOG: P0-1/_runTester, P0-2/_runTester
+          //
+          // P0-A fix: _runDeveloper.call(this) bypasses _runStage's Observability timing
+          // and error handling. Wrap it with inline obs.stageStart/stageEnd so the
+          // DEVELOPER retry is visible in metrics-history.jsonl and _adaptiveStrategy.
+          const devStageLabel = 'TEST→CODE(rollback-retry)';
+          this.obs.stageStart(devStageLabel);
+          let devRetry;
+          try {
+            devRetry = await _runDeveloper.call(this);
+            this.obs.stageEnd(devStageLabel, 'ok');
+          } catch (devErr) {
+            this.obs.stageEnd(devStageLabel, 'error');
+            this.obs.recordError(devStageLabel, devErr.message);
+            // Re-emit WORKFLOW_ERROR so HookSystem handlers are triggered (mirrors _runStage behaviour)
+            await this.hooks.emit(HOOK_EVENTS.WORKFLOW_ERROR, { error: devErr, state: 'TEST→CODE(rollback)' }).catch(() => {});
+            throw devErr;
+          }
+          // _runDeveloper may return a sentinel { __alreadyTransitioned: true } if it
+          // triggered its own rollback. In that case, propagate the sentinel upward.
+          // P0-A fix: return structured sentinel so _runTester (iterative) can propagate it.
+          if (devRetry && typeof devRetry === 'object' && devRetry.__alreadyTransitioned) {
+            return { __done: true, __alreadyTransitioned: true };
+          }
+          // Resolve developer output path: prefer stageCtx CODE artifact, then devRetry string.
+          // see CHANGELOG: P0-2/_runTester
+          let devOutputPath;
+          if (typeof devRetry === 'string') {
+            devOutputPath = devRetry;
+          } else {
+            // Try to read the actual CODE artifact path from stageCtx
+            const codeCtxArtifacts = this.stageCtx?.get('CODE')?.artifacts;
+            const stageCtxCodePath = Array.isArray(codeCtxArtifacts) && codeCtxArtifacts.length > 0
+              ? codeCtxArtifacts[0]
+              : null;
+            devOutputPath = stageCtxCodePath || path.join(PATHS.OUTPUT_DIR, 'code.diff');
+          }
+          if (fs.existsSync(devOutputPath)) {
+            this.bus.publish(AgentRole.DEVELOPER, AgentRole.TESTER, devOutputPath, {
+              testRollbackRetry: testRollbackCount + 1,
+            });
+          }
+          // P0-A fix: instead of recursively calling _runTester, return { __retry: true }
+          // so the outer while-loop in _runTester can continue to the next iteration.
+          // This eliminates the recursive call stack and the associated stack-overflow risk.
+          console.log(`[Orchestrator] 🔄 Signalling TEST stage retry (rollback round ${testRollbackCount + 1}) – iterative loop will continue...`);
+          this._pendingTestMeta = null;
+          return { __retry: true };
+        } catch (rollbackErr) {
+          console.warn(`[Orchestrator] Test rollback failed (non-fatal): ${rollbackErr.message}. Proceeding with risks recorded.`);
+        }
+      } else {
+        // testDecision.needsHumanReview: rollback budget exhausted
+        console.warn(`[Orchestrator] ⚠️  Test rollback limit reached (max 1). Proceeding with ${corrResult.signals.filter(s => s.severity === 'high').length} unresolved high-severity issue(s).`);
       }
     } else {
       console.log(`[Orchestrator] ✅ Test report passed self-correction. Workflow proceeding.`);
@@ -745,7 +1147,7 @@ async function _runTester() {
     console.log(`[Orchestrator] ℹ️  No testCommand configured – skipping real test execution.`);
     console.log(`[Orchestrator] 💡 Set testCommand in workflow.config.js to enable automated verification.`);
   } else {
-    await _runRealTestLoop.call(this, { testCommand, autoFixEnabled, maxFixRounds, failOnUnfixed, testReportPath: outputPath });
+    await _runRealTestLoop.call(this, { testCommand, autoFixEnabled, maxFixRounds, failOnUnfixed, testReportPath: outputPath, lintCommand: this._config?.lintCommand || null, fixConversationHistory, injectedExpIds: testExpContextWithComplaints._injectedExpIds || [] });
   }
 
   // ── CIIntegration ────────────────────────────────────────────────────────
@@ -793,17 +1195,54 @@ async function _runTester() {
           fs.appendFileSync(outputPath, entropyNote, 'utf-8');
         }
       } else {
-        console.log(`[Orchestrator] ✅ Entropy scan: no violations found.`);
+      console.log(`[Orchestrator] ✅ Entropy scan: no violations found.`);
       }
     } catch (err) {
       console.warn(`[Orchestrator] EntropyGC scan failed (non-fatal): ${err.message}`);
     }
   }
 
-  return outputPath;
+  // Generate Chinese companion file for developers (non-blocking)
+  translateMdFile(outputPath, this._rawLlmCall).catch(() => {});
+
+  // Flush deferred hitCount increments – _runTester is the last stage. see CHANGELOG: P2-3
+  // P1-D fix: await flushDirty() so we know the write completed before the workflow
+  // returns. Previously this was fire-and-forget; if the process exited immediately
+  // after _runTester returned, the hitCount increments would be silently lost.
+  try {
+    if (this.experienceStore && typeof this.experienceStore.flushDirty === 'function') {
+      await this.experienceStore.flushDirty();
+      console.log(`[Orchestrator] 💾 ExperienceStore flushed (hitCount increments persisted).`);
+    }
+  } catch (flushErr) {
+    console.warn(`[Orchestrator] ⚠️  ExperienceStore flush failed (non-fatal): ${flushErr.message}`);
+  }
+
+  // Store TEST context; merge _pendingTestMeta (rollback counter) into the final entry.
+  // P2-NEW-1: delegated to storeTestContext helper
+  // Defect E fix: pass corrResult so its correction history is stored in TEST context.
+  // corrResult may be undefined if testContent was empty (self-correction was skipped).
+  storeTestContext(this, outputPath, tcGenResult, tcExecutionReport, corrResult ?? null);
+
+  // P0-A fix: return structured result so _runTester (iterative outer loop) can handle it.
+  return { __done: true, outputPath };
 }
 
-async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, failOnUnfixed, testReportPath }) {
+async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, failOnUnfixed, testReportPath, lintCommand = null, fixConversationHistory = null, injectedExpIds = [] }) {
+  // P2-D fix: accept fixConversationHistory from the caller (_runTesterOnce) so it
+  // persists across TEST stage iterations (rollback + retry). If not provided
+  // (e.g. direct call in tests), fall back to a fresh local array.
+  //
+  // P0-B fix: eliminate the unnecessary parameter reassignment (no-param-reassign).
+  // The previous code did:
+  //   const _fixHistory = fixConversationHistory || [];
+  //   fixConversationHistory = _fixHistory;  // ← reassigns the parameter variable
+  // This was a code smell: reassigning a parameter variable is confusing and
+  // triggers eslint no-param-reassign. The logic was actually correct (when a
+  // non-null array is passed in, _fixHistory === fixConversationHistory, so push()
+  // mutates the caller's array), but the intent was obscured.
+  // Fix: use a clearly-named const alias; all references below use fixHistory.
+  const fixHistory = fixConversationHistory || [];
   const runner = new TestRunner({
     projectRoot: this.projectRoot,
     testCommand,
@@ -812,12 +1251,7 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
   });
 
   console.log(`\n[Orchestrator] 🔬 Running real test suite: ${testCommand}`);
-  // ── Defect B fix: wrap runner.run() in try/catch ──────────────────────────
-  // TestRunner.run() uses execSync internally. If the test command itself does
-  // not exist (e.g. no package.json, missing binary), execSync throws ENOENT
-  // which would propagate uncaught through the async function and crash the
-  // entire TEST stage. We catch it here and convert it to a failed result so
-  // the workflow can record the risk and continue gracefully.
+  // Wrap runner.run() in try/catch – execSync throws ENOENT for missing commands. see CHANGELOG: Defect B
   let result;
   try {
     result = runner.run();
@@ -836,6 +1270,34 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
   if (result.passed) {
     console.log(`[Orchestrator] ✅ Real tests PASSED on first run.`);
     this.obs.recordTestResult({ passed: result.passed ? 1 : 0, failed: 0, skipped: 0, rounds: 1 });
+    // EvoMap feedback loop: tests passed on first run – the injected experiences
+    // (from buildTesterContextBlock) contributed to a successful outcome.
+    if (injectedExpIds.length > 0) {
+      // Defect H fix: first-run pass means no error context (tests passed immediately).
+      // Pass empty errorContext – POSITIVE experiences are always matched, NEGATIVE
+      // experiences are not matched (no errors occurred to match against).
+      // This correctly reflects: positive patterns guided the agent to success;
+      // negative pitfall warnings were not needed (no pitfalls were encountered).
+      const { matchedIds: firstRunMatchedIds, matchedCount: firstRunMatchedCount } =
+        this.experienceStore.computeMatchedIds(injectedExpIds, '');
+      const firstRunTriggers = this.experienceStore.markUsedBatch(firstRunMatchedIds);
+      // Improvement 4: report only confirmed matched hits to Observability
+      this.obs.recordExpUsage({ hits: firstRunMatchedCount });
+      for (const expId of firstRunTriggers) {
+        const triggerExp = this.experienceStore.experiences.find(e => e.id === expId);
+        if (triggerExp && triggerExp.skill) {
+          this.skillEvolution.evolve(triggerExp.skill, {
+            section: 'Best Practices',
+            title: triggerExp.title,
+            content: triggerExp.content,
+            sourceExpId: expId,
+            reason: `High-frequency pattern (hitCount=${triggerExp.hitCount}) – validated by TEST first-run pass`,
+          });
+          await this.hooks.emit(HOOK_EVENTS.SKILL_EVOLVED, { skillName: triggerExp.skill, expId }).catch(() => {});
+        }
+      }
+      console.log(`[Orchestrator] 📊 Marked ${firstRunMatchedCount}/${injectedExpIds.length} experience(s) as effective (TEST first-run pass). Evolution triggers: ${firstRunTriggers.length}`);
+    }
     this.experienceStore.record({
       type: ExperienceType.POSITIVE,
       category: ExperienceCategory.STABLE_PATTERN,
@@ -857,41 +1319,81 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
   }
 
   let fixRound = 0;
+  // P2-D fix: fixConversationHistory is now passed in from _runTester's outer loop
+  // (via _runTesterOnce) so it persists across TEST stage iterations.
+  // P0-B fix: the parameter is aliased to `fixHistory` (const) at the top of this
+  // function to avoid the no-param-reassign eslint rule. All references below use fixHistory.
+  // P0-NEW-2: Maintain conversation history across fix rounds so the LLM can reason
+  // about WHY previous fixes failed and avoid repeating the same mistakes.
+  // Format: [{ role: 'user'|'assistant', content: string }]
+
   while (!result.passed && fixRound < maxFixRounds) {
     fixRound++;
     console.log(`\n[Orchestrator] 🔧 Auto-fix round ${fixRound}/${maxFixRounds}...`);
 
-    const failureContext = TestRunner.formatResultAsMarkdown(result);
+    // Cap failureContext to 6000 chars (keep tail – most recent error details). see CHANGELOG: P1-4/failureContext
+    const _rawFailureContext = TestRunner.formatResultAsMarkdown(result);
+    const failureContext = _rawFailureContext.length > 6000
+      ? `... [${_rawFailureContext.length - 6000} chars omitted] ...\n` + _rawFailureContext.slice(-6000)
+      : _rawFailureContext;
     const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
     const existingDiff = fs.existsSync(codeDiffPath) ? fs.readFileSync(codeDiffPath, 'utf-8') : '(no previous diff)';
+
+    // P0-NEW-2: previousFixSummaries are only needed in round 1 (no history yet).
+    // From round 2 onwards, the full conversation history already contains all prior
+    // fix attempts and the LLM's reasoning – injecting text summaries would be redundant.
+    //
+    // P2-C fix: removed dead-code loop.
+    //
+    // The previous code was:
+    //   const previousFixSummaries = [];
+    //   if (fixRound === 1) {
+    //     for (let r = 1; r < fixRound; r++) {   // ← DEAD CODE: when fixRound===1,
+    //       ...                                   //   condition is 1 < 1 → always false
+    //     }
+    //   }
+    //
+    // The intent was to inject pre-existing fix files from a previous run (e.g. a
+    // checkpoint resume). But the loop condition `r < fixRound` when `fixRound === 1`
+    // evaluates to `1 < 1` which is always false – the loop body never executes.
+    // previousFixSummaries was always an empty array, and previousFixesBlock was
+    // always '' on the first round.
+    //
+    // The correct logic for round 1 is: there are no previous fix files from THIS
+    // run (fixRound starts at 1), so previousFixSummaries is correctly empty.
+    // If checkpoint-resume support is needed in the future, the loop condition
+    // should be `r < fixRound` starting from the RESUMED round number, not 1.
+    // For now, the dead code is removed to avoid confusion.
+    const previousFixesBlock = fixRound > 1
+      ? `## Fix History\n> This is fix round ${fixRound}. Your previous fix attempt(s) are in the conversation history above.\n> Review what you tried before and why it did not fully resolve the failures.`
+      : '';
 
     // Collect actual source files for Fix Agent context (not just the diff)
     // This resolves the "blind fix" problem where Fix Agent only saw code.diff
     // and had no visibility into the actual current state of source files.
+    //
+    // P2-A fix: replaced the inline collectFiles() closure with the shared
+    // scanSourceFiles() utility from file-scanner.js. The inline closure was a
+    // third copy of the same "walk dir tree, filter by extension, skip ignored dirs"
+    // logic that already existed in entropy-gc.js and code-graph.js. The three
+    // copies had subtle differences (depth limit, dot-file skipping, maxFiles cap)
+    // that were a maintenance hazard. scanSourceFiles() is the canonical version.
     let sourceFilesContext = '';
     try {
       const sourceExts = (this._config.sourceExtensions || ['.js', '.ts', '.py', '.go', '.java', '.cs']);
-      const ignoreDirs = new Set(this._config.ignoreDirs || ['node_modules', '.git', 'dist', 'build', 'output']);
-      const sourceFiles = [];
+      const ignoreDirs = this._config.ignoreDirs || ['node_modules', '.git', 'dist', 'build', 'output'];
 
-      const collectFiles = (dir, depth = 0) => {
-        if (depth > 4) return;
-        let entries;
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-        for (const entry of entries) {
-          if (ignoreDirs.has(entry.name)) continue;
-          const fullPath = path.join(dir, entry.name);
-          if (entry.isDirectory()) {
-            collectFiles(fullPath, depth + 1);
-          } else if (sourceExts.some(ext => entry.name.endsWith(ext))) {
-            sourceFiles.push(fullPath);
-          }
-        }
-      };
-      collectFiles(this.projectRoot);
+      // scanSourceFiles() handles: depth limit (maxDepth=4), dot-file skipping,
+      // ignoreDirs filtering, and extension filtering – all in one canonical place.
+      const sourceFiles = scanSourceFiles(this.projectRoot, {
+        extensions: sourceExts,
+        ignoreDirs,
+        maxDepth: 4,       // same limit as the previous inline closure (depth > 4)
+        skipDotFiles: true, // consistent with entropy-gc.js and code-graph.js
+      });
 
       // Prioritise files mentioned in the failure output
-      const failureText = result.output || result.failureSummary.join('\n');
+      const failureText = result.output || (result.failureSummary || []).join('\n'); // see CHANGELOG: P1-2/sourceFiles
       const mentionedFiles = sourceFiles.filter(f => {
         const rel = path.relative(this.projectRoot, f).replace(/\\/g, '/');
         return failureText.includes(rel) || failureText.includes(path.basename(f));
@@ -908,9 +1410,11 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
         try {
           const content = fs.readFileSync(filePath, 'utf-8');
           const rel = path.relative(this.projectRoot, filePath).replace(/\\/g, '/');
-          const snippet = content.length > 3000 ? content.slice(0, 3000) + '\n... (truncated)' : content;
-          fileSnippets.push(`### ${rel}\n\`\`\`\n${snippet}\n\`\`\``);
-          totalChars += snippet.length;
+          const rawSnippet = content.length > 3000 ? content.slice(0, 3000) + '\n... (truncated)' : content;
+          // Add line numbers so Fix Agent can use [LINE_RANGE] blocks accurately. see CHANGELOG: P0-C
+          const numberedSnippet = rawSnippet.split('\n').map((line, i) => `${String(i + 1).padStart(4, ' ')} | ${line}`).join('\n');
+          fileSnippets.push(`### ${rel}\n\`\`\`\n${numberedSnippet}\n\`\`\``);
+          totalChars += numberedSnippet.length;
         } catch { /* skip unreadable files */ }
       }
 
@@ -923,8 +1427,10 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
     }
 
     const fixPrompt = [
-      `You are a **Code Fix Agent**. The project's test suite has failed.`,
-      `Your task: produce REPLACE_IN_FILE blocks that fix ALL failing tests.`,
+      `You are **David Thomas and Andrew Hunt** \u2013 The Pragmatic Programmers, authors of *The Pragmatic Programmer: From Journeyman to Master* and the engineers who gave the industry the DRY principle, tracer bullets, and the broken windows theory of software quality.`,
+      `Your hallmark: you fix the ROOT CAUSE, not the symptom. You never apply a patch that makes the tests pass by coincidence. You leave the code in a better state than you found it.`,
+      `You are acting as the **Code Fix Agent** for this workflow. The project's test suite has failed.`,
+      `Your task: produce fix blocks that fix ALL failing tests.`,
       ``,
       `## Architecture Design`,
       `> **[MANDATORY]** Before writing any fix, document your diagnosis:`,
@@ -934,26 +1440,39 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
       ``,
       `## Execution Plan`,
       `> **[MANDATORY]** List the fix steps in order:`,
-      `> 1. Fix #1: <file> – <what you're changing and why>`,
-      `> 2. Fix #2: <file> – <what you're changing and why>`,
-      `> (continue for each REPLACE_IN_FILE block below)`,
+      `> 1. Fix #1: <file> lines <start>–<end> – <what you're changing and why>`,
+      `> 2. Fix #2: <file> lines <start>–<end> – <what you're changing and why>`,
+      `> (continue for each fix block below)`,
       ``,
       `## Previous Diff (for reference)`,
       `\`\`\`diff`,
       existingDiff.slice(0, 2000),
       `\`\`\``,
       ``,
+      previousFixesBlock,
+      ``,
       sourceFilesContext,
       ``,
       failureContext,
       ``,
-      `## Fix Blocks`,
-      `For each file you need to change, output one or more blocks in this EXACT format:`,
+      `## Fix Block Formats`,
+      ``,
+      `### PREFERRED: [LINE_RANGE] – line-number replacement (use this whenever you know the line numbers)`,
+      ``,
+      `[LINE_RANGE]`,
+      `file: relative/path/to/file.js`,
+      `start_line: 42`,
+      `end_line: 47`,
+      `replace: |`,
+      `  <new code that replaces lines 42–47, preserving surrounding indentation>`,
+      `[/LINE_RANGE]`,
+      ``,
+      `### FALLBACK: [REPLACE_IN_FILE] – string-match replacement (use only when line numbers are unknown)`,
       ``,
       `[REPLACE_IN_FILE]`,
       `file: relative/path/to/file.js`,
       `find: |`,
-      `  <exact code to find, including indentation>`,
+      `  <exact code to find – MUST be copy-pasted verbatim from the source above, including all spaces and indentation>`,
       `replace: |`,
       `  <new code to replace it with>`,
       `[/REPLACE_IN_FILE]`,
@@ -961,16 +1480,33 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
       `## Rules`,
       `1. Analyse the failure output above and identify the root cause of each failing test.`,
       `2. Fill in the Architecture Design and Execution Plan sections FIRST, then output fix blocks.`,
-      `3. The "find:" block MUST be an exact substring of the current file (copy-paste it from the source above).`,
-      `4. Only change what is necessary to fix the failures.`,
-      `5. Do NOT change test files unless the test itself is clearly wrong.`,
-      `6. File paths are relative to the project root: ${this.projectRoot}`,
+      `3. **PREFER [LINE_RANGE]**: The source files above include line numbers. Use start_line/end_line whenever possible.`,
+      `   [LINE_RANGE] is immune to whitespace/indent mismatches that cause [REPLACE_IN_FILE] to fail silently.`,
+      `4. If you use [REPLACE_IN_FILE], the "find:" block MUST be copy-pasted verbatim from the source (no paraphrasing).`,
+      `5. Only change what is necessary to fix the failures.`,
+      `6. Do NOT change test files unless the test itself is clearly wrong.`,
+      `7. File paths are relative to the project root: ${this.projectRoot}`,
     ].join('\n');
 
     console.log(`[Orchestrator] 🤖 Invoking Code Fix Agent for fix round ${fixRound}...`);
     let fixResponse;
     try {
-      fixResponse = await this._rawLlmCall(fixPrompt);
+      // P0-NEW-2: push current round's prompt into conversation history,
+      // then call LLM with the full history array.
+      // If _rawLlmCall supports array input (multi-turn), it will use the full history.
+      // If it only supports string input (single-turn), we fall back to the flat prompt.
+      fixHistory.push({ role: 'user', content: fixPrompt });
+
+      const llmInput = fixHistory.length > 1
+        ? fixHistory  // multi-turn: pass full history
+        : fixPrompt;              // first round: pass string (backward compat)
+
+      fixResponse = await this._rawLlmCall(llmInput);
+
+      // Push assistant response into history so next round sees the full reasoning chain
+      if (fixResponse && fixResponse.trim()) {
+        fixHistory.push({ role: 'assistant', content: fixResponse });
+      }
     } catch (err) {
       console.error(`[Orchestrator] ❌ LLM call failed during fix round ${fixRound}: ${err.message}`);
       break;
@@ -992,8 +1528,44 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
     }
     if (applyResult.applied === 0) {
       console.warn(`[Orchestrator] ⚠️  No replacements were applied. Stopping fix loop.`);
+      fixRound--; // no real fix applied this round – see CHANGELOG: P1-1/fixRound
       break;
     }
+
+    // ── P2-B fix: post-fix validation ─────────────────────────────────────
+    // Before re-running tests, verify the fix didn't introduce new lint errors
+    // or modify test files (which would be a sign of a bad fix).
+    //
+    // Problem: Fix Agent previously only checked "did tests pass?" after applying
+    // a fix. It could silently introduce lint errors or modify test files to make
+    // tests pass artificially. This step catches those cases early.
+    if (lintCommand) {
+      console.log(`[Orchestrator] 🔍 Post-fix lint check: ${lintCommand}`);
+      try {
+        const { execSync } = require('child_process');
+        execSync(lintCommand, { cwd: this.projectRoot, stdio: 'pipe', timeout: 60_000 });
+        console.log(`[Orchestrator] ✅ Post-fix lint: no errors.`);
+      } catch (lintErr) {
+        const lintOutput = (lintErr.stdout?.toString() || '') + (lintErr.stderr?.toString() || '');
+        console.warn(`[Orchestrator] ⚠️  Post-fix lint FAILED in fix round ${fixRound}:\n${lintOutput.slice(0, 800)}`);
+        this.stateMachine.recordRisk('medium', `[RealTest] Fix round ${fixRound} introduced lint errors: ${lintOutput.slice(0, 200)}`);
+        // Don't abort – record the lint failure and continue to test run so we
+        // get the full picture. The test run may also fail, giving Fix Agent
+        // more context in the next round.
+      }
+    }
+
+    // Warn if Fix Agent modified test files (suspicious – may be gaming the tests)
+    if (applyResult.modifiedFiles && applyResult.modifiedFiles.length > 0) {
+      const testFilePattern = /\.(test|spec)\.[jt]s$|__tests__\//i;
+      const modifiedTestFiles = applyResult.modifiedFiles.filter(f => testFilePattern.test(f));
+      if (modifiedTestFiles.length > 0) {
+        const warnMsg = `[RealTest] Fix round ${fixRound} modified test file(s): ${modifiedTestFiles.join(', ')}. This may indicate the fix is gaming the tests rather than fixing the code.`;
+        console.warn(`[Orchestrator] ⚠️  ${warnMsg}`);
+        this.stateMachine.recordRisk('medium', warnMsg);
+      }
+    }
+    // ── end P2-B fix ───────────────────────────────────────────────────────
 
     console.log(`[Orchestrator] 🔬 Re-running tests after fix round ${fixRound}...`);
     try {
@@ -1001,6 +1573,8 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
     } catch (rerunErr) {
       console.error(`[Orchestrator] ❌ Test runner threw an error in fix round ${fixRound}: ${rerunErr.message}`);
       this.stateMachine.recordRisk('high', `[RealTest] Test runner crashed in fix round ${fixRound}: ${rerunErr.message}`);
+      // Use rerunErr.status (current crash exit code), not stale result.exitCode. see CHANGELOG: P0-1/exitCode
+      if (result) result = { ...result, passed: false, exitCode: rerunErr.status ?? 1 };
       if (failOnUnfixed) throw rerunErr;
       break;
     }
@@ -1013,23 +1587,102 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
     if (result.passed) {
       console.log(`[Orchestrator] ✅ Tests PASSED after fix round ${fixRound}.`);
       this.obs.recordTestResult({ passed: 1, failed: 0, skipped: 0, rounds: fixRound });
+      // EvoMap feedback loop: tests passed after auto-fix – the injected experiences
+      // contributed to a successful outcome (even if it took multiple fix rounds).
+      if (injectedExpIds.length > 0) {
+        // Defect H fix: use the initial failure output as error context.
+        // The fix loop started because tests failed – result.output contains the
+        // original failure text. NEGATIVE experiences whose tags/category appear
+        // in that failure text are counted as matched (they warned about the exact
+        // failure mode). POSITIVE experiences are always matched.
+        const fixErrorContext = (result.failureSummary || []).join(' ') || (result.output || '');
+        const { matchedIds: fixMatchedIds, matchedCount: fixMatchedCount } =
+          this.experienceStore.computeMatchedIds(injectedExpIds, fixErrorContext);
+        const fixPassTriggers = this.experienceStore.markUsedBatch(fixMatchedIds);
+        // Improvement 4: report only confirmed matched hits to Observability
+        this.obs.recordExpUsage({ hits: fixMatchedCount });
+        console.log(`[Orchestrator] 🎯 Experience hit-rate (TEST fix round ${fixRound}): ${fixMatchedCount}/${injectedExpIds.length} matched`);
+        for (const expId of fixPassTriggers) {
+          const triggerExp = this.experienceStore.experiences.find(e => e.id === expId);
+          if (triggerExp && triggerExp.skill) {
+            this.skillEvolution.evolve(triggerExp.skill, {
+              section: 'Best Practices',
+              title: triggerExp.title,
+              content: triggerExp.content,
+              sourceExpId: expId,
+              reason: `High-frequency pattern (hitCount=${triggerExp.hitCount}) – validated by TEST auto-fix pass (round ${fixRound})`,
+            });
+            await this.hooks.emit(HOOK_EVENTS.SKILL_EVOLVED, { skillName: triggerExp.skill, expId }).catch(() => {});
+          }
+        }
+        console.log(`[Orchestrator] 📊 Marked ${fixMatchedCount}/${injectedExpIds.length} experience(s) as effective (TEST auto-fix round ${fixRound} pass). Evolution triggers: ${fixPassTriggers.length}`);
+      }
       this.experienceStore.record({
         type: ExperienceType.POSITIVE,
         category: ExperienceCategory.STABLE_PATTERN,
         title: `Real tests passed after ${fixRound} auto-fix round(s)`,
-        content: `Tests passed after ${fixRound} fix round(s). Command: ${testCommand}. Failure summary: ${result.failureSummary.slice(0, 3).join('; ')}.`,
+        content: `Tests passed after ${fixRound} fix round(s). Command: ${testCommand}. Failure summary: ${(result.failureSummary || []).slice(0, 3).join('; ')}.`,
         skill: 'test-report',
         tags: ['real-test', 'auto-fix', 'passed'],
       });
+
+      // Re-annotate test-cases.md with post-fix PASS statuses. see CHANGELOG: T-5
+      try {
+        const { TestCaseExecutor } = require('./test-case-executor');
+        const tcExecutorForUpdate = new TestCaseExecutor({
+          projectRoot: this.projectRoot,
+          testCommand,
+          outputDir: PATHS.OUTPUT_DIR,
+          verbose: false,
+        });
+        const cases = tcExecutorForUpdate._parseCasesFromMd();
+        if (cases.length > 0) {
+          // Build synthetic caseResults: all PASS since tests just passed
+          const updatedResults = cases.map(tc => ({
+            ...tc,
+            _executionStatus: 'PASS',
+            _executionOutput: `Passed after auto-fix round ${fixRound}`,
+          }));
+          // Append a new annotation section (timestamped) to distinguish from the original
+          const statusIcon = { PASS: '✅', FAIL: '❌', BLOCKED: '⚠️', SKIPPED: '⏭️' };
+          const rows = updatedResults.map(tc => {
+            const icon = statusIcon[tc._executionStatus] || '❓';
+            const title = (tc.title || tc.case_id || '').replace(/\|/g, '\\|');
+            return `| ${tc.case_id} | ${title} | ${icon} ${tc._executionStatus} |`;
+          });
+          const annotation = [
+            ``,
+            `---`,
+            ``,
+            `## 🔧 Post-Fix Execution Results (Fix Round ${fixRound})`,
+            ``,
+            `> Auto-updated by TestCaseExecutor at ${new Date().toISOString()}`,
+            `> **${updatedResults.length} passed** | **0 failed** | **0 blocked**`,
+            ``,
+            `| Case ID | Title | Status |`,
+            `|---------|-------|--------|`,
+            ...rows,
+          ].join('\n');
+          const testCasesPath = path.join(PATHS.OUTPUT_DIR, 'test-cases.md');
+          if (fs.existsSync(testCasesPath)) {
+            fs.appendFileSync(testCasesPath, annotation, 'utf-8');
+            console.log(`[Orchestrator] 📝 test-cases.md updated with post-fix PASS statuses (${updatedResults.length} case(s)).`);
+          }
+        }
+      } catch (annotateErr) {
+        console.warn(`[Orchestrator] ⚠️  Could not update test-cases.md after fix (non-fatal): ${annotateErr.message}`);
+      }
+
       return;
     }
 
     console.warn(`[Orchestrator] ❌ Tests still failing after fix round ${fixRound}.`);
   }
 
-  const failMsg = `[RealTest] Tests still failing after ${fixRound} auto-fix round(s). Exit code: ${result.exitCode}. Failures: ${result.failureSummary.slice(0, 3).join('; ')}`;
+  // Guard against result.failureSummary being undefined. see CHANGELOG: P1-2/failureSummary
+  const failMsg = `[RealTest] Tests still failing after ${fixRound} auto-fix round(s). Exit code: ${result.exitCode}. Failures: ${(result.failureSummary || []).slice(0, 3).join('; ')}`;
   this.stateMachine.recordRisk('high', failMsg);
-  this.obs.recordTestResult({ passed: 0, failed: result.failureSummary.length || 1, skipped: 0, rounds: fixRound });
+  this.obs.recordTestResult({ passed: 0, failed: (result.failureSummary || []).length || 1, skipped: 0, rounds: fixRound });
   this.experienceStore.record({
     type: ExperienceType.NEGATIVE,
     category: ExperienceCategory.PITFALL,

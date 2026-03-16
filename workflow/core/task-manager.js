@@ -258,6 +258,29 @@ class TaskManager {
   }
 
   /**
+   * Returns all FAILED tasks whose nextRetryAt has passed (i.e. ready to retry now).
+   * Used by _runAgentWorker to distinguish "failed tasks in backoff" from
+   * "failed tasks ready to claim" when deciding whether to keep waiting.
+   *
+   * P0-2 fix: without this method, the worker's hasActive check treated ALL failed
+   * tasks as active, causing it to spin MAX_IDLE times and exit before a backoff
+   * window expired – permanently abandoning retryable tasks.
+   *
+   * @returns {Task[]}
+   */
+  getRetryableTasks() {
+    const now = Date.now();
+    const retryable = [];
+    for (const task of this.tasks.values()) {
+      if (task.status !== TaskStatus.FAILED) continue;
+      if (!task.nextRetryAt || new Date(task.nextRetryAt).getTime() <= now) {
+        retryable.push(task);
+      }
+    }
+    return retryable;
+  }
+
+  /**
    * Returns all tasks as an array, sorted by priority.
    *
    * @returns {Task[]}

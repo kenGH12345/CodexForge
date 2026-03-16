@@ -106,11 +106,10 @@ cd WorkFlowAgent/workflow && npm install
 
 # 2. Initialise for your project (auto-detects tech stack)
 node workflow/init-project.js
-
-# 3. Run a workflow
 ```
 
 ```javascript
+// 3. Run a workflow
 const { Orchestrator } = require('./workflow');
 
 const orchestrator = new Orchestrator({
@@ -130,6 +129,21 @@ const orchestrator = new Orchestrator({
 });
 
 await orchestrator.run('Build a REST API for user management with CRUD operations');
+```
+
+---
+
+### 📦 Migrate to Another Project
+
+```bash
+# 1. Copy the workflow folder
+cp -r WorkFlowAgent/workflow /path/to/your-project/
+
+# 2. Install dependencies
+cd /path/to/your-project/workflow && npm install
+
+# 3. One-command init (auto-detects tech stack)
+node workflow/init-project.js
 ```
 
 ---

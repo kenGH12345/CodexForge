@@ -173,14 +173,102 @@ function _registerBuiltinSkills() {
 }
 
 /**
- * Parses and applies [REPLACE_IN_FILE] blocks from an LLM response.
+ * Parses and applies fix blocks from an LLM response.
+ *
+ * Supports two block formats:
+ *
+ * 1. [REPLACE_IN_FILE] – string-match replacement (original format, kept for compatibility)
+ *    Fails when LLM-generated "find:" text has subtle whitespace/indent differences from
+ *    the actual file. see CHANGELOG: P0-C
+ *
+ * 2. [LINE_RANGE] – line-number replacement (new format, preferred for Fix Agent)
+ *    Replaces lines startLine..endLine (1-based, inclusive) with new content.
+ *    Immune to whitespace/indent mismatches because it uses line numbers, not text search.
+ *    The Fix Agent is instructed to prefer this format when it knows the exact line range.
+ *
  * @this {Orchestrator}
  */
 function _applyFileReplacements(llmResponse) {
   let applied = 0;
   let failed = 0;
   const errors = [];
+  const modifiedFiles = []; // P2-B: track which files were modified
 
+  // ── Format 2: [LINE_RANGE] blocks (preferred – immune to whitespace mismatch) ──
+  const lineRangeRegex = /\[LINE_RANGE\]([\s\S]*?)\[\/LINE_RANGE\]/g;
+  let lrMatch;
+  while ((lrMatch = lineRangeRegex.exec(llmResponse)) !== null) {
+    const blockContent = lrMatch[1];
+    try {
+      const fileMatch      = blockContent.match(/^[ \t]*file:\s*(.+)$/m);
+      const startLineMatch = blockContent.match(/^[ \t]*start_line:\s*(\d+)$/m);
+      const endLineMatch   = blockContent.match(/^[ \t]*end_line:\s*(\d+)$/m);
+      const replaceMatch   = blockContent.match(/^[ \t]*replace:\s*\|\s*\n([\s\S]*)$/m);
+
+      if (!fileMatch)      { errors.push(`[LINE_RANGE] Block missing "file:" field`);       failed++; continue; }
+      if (!startLineMatch) { errors.push(`[LINE_RANGE] Block missing "start_line:" field`); failed++; continue; }
+      if (!endLineMatch)   { errors.push(`[LINE_RANGE] Block missing "end_line:" field`);   failed++; continue; }
+      if (!replaceMatch)   { errors.push(`[LINE_RANGE] Block missing "replace: |" section`); failed++; continue; }
+
+      const relPath   = fileMatch[1].trim();
+      const absPath   = path.isAbsolute(relPath) ? relPath : path.join(this.projectRoot, relPath);
+      const startLine = parseInt(startLineMatch[1], 10);
+      const endLine   = parseInt(endLineMatch[1], 10);
+
+      if (!fs.existsSync(absPath)) {
+        errors.push(`[LINE_RANGE] File not found: ${absPath}`);
+        failed++;
+        continue;
+      }
+      if (startLine < 1 || endLine < startLine) {
+        errors.push(`[LINE_RANGE] Invalid line range ${startLine}..${endLine} in ${relPath}`);
+        failed++;
+        continue;
+      }
+
+      const stripIndent = (text) => {
+        const lines = text.split('\n');
+        const nonEmpty = lines.filter(l => l.trim().length > 0);
+        if (nonEmpty.length === 0) return text;
+        const minIndent = Math.min(...nonEmpty.map(l => l.match(/^(\s*)/)[1].length));
+        return lines.map(l => l.slice(minIndent)).join('\n');
+      };
+
+      const newContent = stripIndent(replaceMatch[1]).replace(/\n$/, '');
+
+      const original = this.dryRun
+        ? (this.sandbox.readFile(absPath) || fs.readFileSync(absPath, 'utf-8'))
+        : fs.readFileSync(absPath, 'utf-8');
+
+      const fileLines = original.split('\n');
+      if (endLine > fileLines.length) {
+        errors.push(`[LINE_RANGE] end_line ${endLine} exceeds file length ${fileLines.length} in ${relPath}`);
+        failed++;
+        continue;
+      }
+
+      // Replace lines [startLine-1 .. endLine-1] (0-based) with new content lines
+      const newLines = newContent.split('\n');
+      fileLines.splice(startLine - 1, endLine - startLine + 1, ...newLines);
+      const updated = fileLines.join('\n');
+
+      if (this.dryRun) {
+        this.sandbox.patchFile(absPath, original, updated);
+        console.log(`[Orchestrator] 🧪 [DryRun] Would patch lines ${startLine}–${endLine}: ${relPath}`);
+      } else {
+        fs.writeFileSync(absPath, updated, 'utf-8');
+        console.log(`[Orchestrator] ✏️  Patched lines ${startLine}–${endLine}: ${relPath}`);
+      }
+      modifiedFiles.push(relPath); // P2-B: track modified file
+      applied++;
+
+    } catch (err) {
+      errors.push(`[LINE_RANGE] Error processing block: ${err.message}`);
+      failed++;
+    }
+  }
+
+  // ── Format 1: [REPLACE_IN_FILE] blocks (string-match, kept for compatibility) ──
   const blockRegex = /\[REPLACE_IN_FILE\]([\s\S]*?)\[\/REPLACE_IN_FILE\]/g;
   let match;
 
@@ -227,7 +315,7 @@ function _applyFileReplacements(llmResponse) {
         return lines.map(l => l.slice(minIndent)).join('\n');
       };
 
-      const findStr  = stripIndent(findMatch[1]).replace(/\n$/, '');
+      const findStr    = stripIndent(findMatch[1]).replace(/\n$/, '');
       const replaceStr = stripIndent(replaceMatch[1]).replace(/\n$/, '');
 
       const original = this.dryRun
@@ -244,19 +332,16 @@ function _applyFileReplacements(llmResponse) {
         this.sandbox.patchFile(absPath, findStr, replaceStr);
         console.log(`[Orchestrator] 🧪 [DryRun] Would patch: ${relPath}`);
       } else {
-        // Use replaceAll (via split+join) to fix ALL occurrences of the same bug pattern,
-        // not just the first one. String.replace() only replaces the first match, which
-        // means identical bug code appearing multiple times in a file would only be
-        // partially fixed, causing the test suite to still fail after the fix round.
+        // Only replace the FIRST occurrence. see CHANGELOG: P1-3
         const occurrences = original.split(findStr).length - 1;
-        const updated = original.split(findStr).join(replaceStr);
         if (occurrences > 1) {
-          console.log(`[Orchestrator] ✏️  Patched: ${relPath} (${occurrences} occurrence(s) replaced)`);
-        } else {
-          console.log(`[Orchestrator] ✏️  Patched: ${relPath}`);
+          console.warn(`[Orchestrator] ⚠️  "${relPath}": find text appears ${occurrences} time(s). Only replacing the FIRST occurrence.`);
         }
+        const updated = original.replace(findStr, replaceStr);
+        console.log(`[Orchestrator] ✏️  Patched: ${relPath}${occurrences > 1 ? ` (1 of ${occurrences} occurrence(s) replaced)` : ''}`);
         fs.writeFileSync(absPath, updated, 'utf-8');
       }
+      modifiedFiles.push(relPath); // P2-B: track modified file
       applied++;
 
     } catch (err) {
@@ -266,11 +351,11 @@ function _applyFileReplacements(llmResponse) {
   }
 
   if (applied === 0 && failed === 0) {
-    errors.push('No [REPLACE_IN_FILE] blocks found in LLM response');
+    errors.push('No [REPLACE_IN_FILE] or [LINE_RANGE] blocks found in LLM response');
     failed++;
   }
 
-  return { applied, failed, errors };
+  return { applied, failed, errors, modifiedFiles };
 }
 
 module.exports = { _buildInvestigationTools, _registerBuiltinSkills, _applyFileReplacements };

@@ -16,6 +16,7 @@
 
 const { BaseAgent } = require('./base-agent');
 const { AgentRole } = require('../core/types');
+const { buildJsonBlockInstruction } = require('../core/agent-output-schema');
 
 class DeveloperAgent extends BaseAgent {
   constructor(llmCall, hookEmitter) {
@@ -34,8 +35,13 @@ class DeveloperAgent extends BaseAgent {
     const expSection = expContext
       ? `\n## Accumulated Experience (Reference Before Coding)\n${expContext}\n`
       : '';
+    // P0-NEW-1: inject structured JSON output instruction
+    const jsonInstruction = buildJsonBlockInstruction('developer');
 
-    return `You are a **Code Development Agent** – a disciplined executor.
+    return `You are **Kent Beck** – inventor of Test-Driven Development (TDD), creator of Extreme Programming (XP), and author of *Test Driven Development: By Example* and *Implementation Patterns*.
+You believe that code is read far more often than it is written, and that the best code is the code that clearly communicates its intent.
+Your hallmark: you write the simplest code that passes the tests, refactor mercilessly, and never introduce a component that the architecture did not ask for.
+You are acting as the **Code Development Agent** for this workflow.
 
 ## Your Role
 - Read the architecture document and implement it faithfully as code.
@@ -82,12 +88,13 @@ An ordered list of the implementation steps taken:
 - What was intentionally deferred or left as TODO and why
 - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
 
+${jsonInstruction}
+
 ## Architecture Document
 ${inputContent}
 ${expSection}
 ## Instructions
-First write the "Architecture Design" and "Execution Plan" sections.
-Then generate the code.diff. Output the diff content inside a \`\`\`diff block.
+First output the JSON metadata block (as instructed above), then write the "Architecture Design" and "Execution Plan" sections, then generate the code.diff inside a \`\`\`diff block.
 **CRITICAL**: Both preamble sections are MANDATORY. Do not omit them.`;
   }
 
@@ -99,6 +106,20 @@ Then generate the code.diff. Output the diff content inside a \`\`\`diff block.
    * @returns {string}
    */
   parseResponse(llmResponse) {
+    // P0-NEW-1: validate JSON block presence
+    const { extractJsonBlock, validateJsonBlock } = require('../core/agent-output-schema');
+    const jsonBlock = extractJsonBlock(llmResponse);
+    if (!jsonBlock) {
+      console.warn(`[DeveloperAgent] ⚠️  No structured JSON block found in output. Downstream agents will use regex-based extraction (degraded mode).`);
+    } else {
+      const check = validateJsonBlock(jsonBlock, 'developer');
+      if (!check.valid) {
+        console.warn(`[DeveloperAgent] ⚠️  JSON block validation failed: ${check.reason}`);
+      } else {
+        console.log(`[DeveloperAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
+      }
+    }
+
     // ── Mandatory section compliance check ────────────────────────────────────
     const mandatorySections = ['Architecture Design', 'Execution Plan'];
     const missingSections = mandatorySections.filter(s => !llmResponse.includes(s));

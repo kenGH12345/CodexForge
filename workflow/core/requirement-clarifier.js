@@ -40,8 +40,10 @@ const { detectSignals, parseSemanticSignals } = require('./clarification-engine'
  */
 function buildRequirementSemanticPrompt(text) {
   return [
-    `You are a senior product manager reviewing a raw requirement written by a human.`,
-    `Your job is to identify points that need clarification BEFORE development begins.`,
+    `You are **Ellen Gottesdiener** – internationally recognised requirements collaboration expert, author of *Requirements by Collaboration* and *The Software Requirements Memory Jogger*, and founder of EBG Consulting.`,
+    `You have spent decades facilitating requirements workshops and teaching teams how to surface the hidden ambiguities that cause projects to fail.`,
+    `Your hallmark: you ask the ONE question that everyone else was afraid to ask, and you never let a vague requirement slip through to development.`,
+    `You are reviewing a raw requirement written by a human. Your job is to identify points that need clarification BEFORE development begins.`,
     ``,
     `## Your Task`,
     ``,
@@ -188,7 +190,8 @@ function buildMergePrompt(requirement, qa) {
     .join('\n\n');
 
   return [
-    `You are a product manager refining a requirement document.`,
+    `You are **Ellen Gottesdiener** – requirements collaboration expert and author of *Requirements by Collaboration*.`,
+    `You are refining a requirement document by integrating stakeholder clarifications.`,
     ``,
     `The following clarification Q&A was collected from the stakeholder.`,
     `Your task is to integrate the answers into the original requirement text,`,
@@ -345,6 +348,13 @@ class RequirementClarifier {
     // that were already addressed by user answers).
     let lastRoundSignalCount = 0;
 
+    // Defect G fix: track first-round signal snapshot for quality metrics.
+    // firstRoundSignals captures the initial signal set BEFORE any clarification.
+    // After the loop, we compare against remaining signals to compute:
+    //   - how many signals were resolved (effective clarification)
+    //   - how many new signals were introduced (regression)
+    let firstRoundSignals = null;
+
     this._log(`\n╔══════════════════════════════════════════════════════════╗`);
     this._log(`║  💬 REQUIREMENT CLARIFICATION                            ║`);
     this._log(`╚══════════════════════════════════════════════════════════╝`);
@@ -363,6 +373,11 @@ class RequirementClarifier {
       signals.forEach(s => this._log(`  • [${s.severity}] ${s.label}`));
       allSignals.push(...signals);
       lastRoundSignalCount = signals.length; // N52 fix: record this round's signal count
+
+      // Defect G fix: capture first-round signals for quality metrics comparison
+      if (firstRoundSignals === null) {
+        firstRoundSignals = signals.map(s => ({ type: s.type, severity: s.severity, label: s.label }));
+      }
 
       const qaPairs = buildClarificationQuestions(signals);
       const questions = qaPairs.map(q => q.question);
@@ -414,12 +429,26 @@ class RequirementClarifier {
       highRemaining.forEach(s => riskNotes.push(`[Requirement] ${s.label} – unresolved after ${round} clarification round(s).`));
     }
 
+    // ── Defect G fix: Compute clarification quality metrics ──────────────────
+    // These metrics quantify "how effective was the clarification?" for deriveStrategy.
+    // Without these, the system has no way to know if clarification is actually
+    // improving requirement quality or just adding noise.
+    const qualityMetrics = _computeClarificationQuality(
+      rawRequirement, current, firstRoundSignals || [], remaining,
+    );
+
+    if (qualityMetrics.textChangePct < 5 && round > 0 && !cleanExit) {
+      this._log(`[RequirementClarifier] ⚠️  Quality concern: text changed only ${qualityMetrics.textChangePct.toFixed(1)}% after ${round} round(s) – clarification may have had little effect.`);
+    }
+    this._log(`[RequirementClarifier] 📊 Quality metrics: textChange=${qualityMetrics.textChangePct.toFixed(1)}%, highResolved=${qualityMetrics.highSeverityResolved}/${qualityMetrics.highSeverityInitial}, newSignals=${qualityMetrics.newSignalsIntroduced}`);
+
     return {
       enrichedRequirement: current,
       rounds: round,
       allSignals,
       riskNotes,
       skipped: false,
+      qualityMetrics,
     };
   }
 
@@ -435,6 +464,117 @@ class RequirementClarifier {
  * @property {object[]} allSignals           - All signals detected across all rounds
  * @property {string[]} riskNotes            - Risk notes for unresolved signals
  * @property {boolean}  skipped              - True if clarification was skipped (non-interactive)
+ * @property {ClarificationQualityMetrics} [qualityMetrics] - Quality metrics (Defect G fix)
  */
+
+/**
+ * @typedef {object} ClarificationQualityMetrics
+ * @property {number} textChangePct         - % of text that changed (0-100). Too low = clarification had no effect.
+ * @property {number} highSeverityInitial   - How many high-severity signals existed BEFORE clarification.
+ * @property {number} highSeverityResolved  - How many high-severity signals were resolved by clarification.
+ * @property {number} totalSignalsInitial   - Total signals detected in round 1.
+ * @property {number} totalSignalsResolved  - Signals resolved (initial - remaining, clamped at 0).
+ * @property {number} newSignalsIntroduced  - Signals in remaining set that weren't in initial set (regression).
+ * @property {number} effectivenessScore    - Composite score 0-100 (higher = better clarification quality).
+ */
+
+// ─── Quality Metrics (Defect G fix) ───────────────────────────────────────────
+
+/**
+ * Defect G fix: Computes quantitative metrics about the clarification process.
+ *
+ * These metrics answer three critical questions:
+ *   1. Did the clarification change anything? (textChangePct)
+ *      - Too low (< 5%) → clarification was superficial or user gave non-answers
+ *      - Too high (> 80%) → requirement was fundamentally rewritten (may need re-review)
+ *
+ *   2. Did it resolve real problems? (highSeverityResolved / totalSignalsResolved)
+ *      - Tracks signal types from initial detection vs remaining signals
+ *      - A clarification that resolves all high-severity signals is effective
+ *
+ *   3. Did it introduce new problems? (newSignalsIntroduced)
+ *      - If new signal types appear in remaining that weren't in initial,
+ *        the clarification may have introduced new ambiguities
+ *
+ * The composite effectivenessScore (0-100) combines these into a single metric
+ * that deriveStrategy() can use to adjust maxClarificationRounds.
+ *
+ * @param {string}   originalText    - Requirement text BEFORE clarification
+ * @param {string}   enrichedText    - Requirement text AFTER clarification
+ * @param {object[]} initialSignals  - Signals from the FIRST detection round
+ * @param {object[]} remainingSignals - Signals still present after clarification
+ * @returns {ClarificationQualityMetrics}
+ */
+function _computeClarificationQuality(originalText, enrichedText, initialSignals, remainingSignals) {
+  // ── 1. Text change percentage ────────────────────────────────────────────
+  // Uses character-level length difference as a proxy for semantic change.
+  // This is intentionally simple: LCS-based diff would be more accurate but
+  // adds complexity. Length difference catches the most common failure mode
+  // (user answers with "ok" / "yes" which barely changes the text).
+  const origLen = originalText.length;
+  const enrichedLen = enrichedText.length;
+  const textChangePct = origLen > 0
+    ? (Math.abs(enrichedLen - origLen) / origLen) * 100
+    : 0;
+
+  // ── 2. Signal resolution tracking ───────────────────────────────────────
+  const highSeverityInitial = initialSignals.filter(s => s.severity === 'high').length;
+  const highSeverityRemaining = remainingSignals.filter(s => s.severity === 'high').length;
+  const highSeverityResolved = Math.max(0, highSeverityInitial - highSeverityRemaining);
+
+  const totalSignalsInitial = initialSignals.length;
+  const totalSignalsRemaining = remainingSignals.length;
+  const totalSignalsResolved = Math.max(0, totalSignalsInitial - totalSignalsRemaining);
+
+  // ── 3. New signals introduced (regression detection) ────────────────────
+  // A "new" signal is one whose type appears in remaining but not in initial.
+  // This catches clarifications that resolve ambiguity but introduce assumptions.
+  const initialTypes = new Set(initialSignals.map(s => s.type));
+  const newSignalsIntroduced = remainingSignals.filter(s => !initialTypes.has(s.type)).length;
+
+  // ── 4. Composite effectiveness score (0-100) ───────────────────────────
+  // Weighted formula:
+  //   40% – signal resolution ratio (resolved / initial)
+  //   30% – high-severity resolution ratio (resolved / initial high)
+  //   20% – text change (capped at 50% to avoid rewarding excessive changes)
+  //   10% – penalty for new signals introduced
+  let score = 0;
+
+  if (totalSignalsInitial > 0) {
+    // Signal resolution component (40%)
+    score += (totalSignalsResolved / totalSignalsInitial) * 40;
+    // High-severity resolution component (30%)
+    if (highSeverityInitial > 0) {
+      score += (highSeverityResolved / highSeverityInitial) * 30;
+    } else {
+      score += 30; // No high-severity signals = full marks for this component
+    }
+  } else {
+    // No signals detected initially = requirement was already clean = perfect score
+    score += 70;
+  }
+
+  // Text change component (20%) – sweet spot is 10-50% change
+  const changeScore = textChangePct <= 5 ? textChangePct * 2  // 0-10 points (too little change)
+    : textChangePct <= 50 ? 20                                // Full marks (healthy range)
+    : Math.max(0, 20 - (textChangePct - 50) * 0.4);          // Decay above 50% (over-change)
+  score += changeScore;
+
+  // New signal penalty (10%) – 0 new signals = +10, each new signal costs 3 points
+  score += Math.max(0, 10 - newSignalsIntroduced * 3);
+
+  // Clamp to [0, 100]
+  const effectivenessScore = Math.round(Math.min(100, Math.max(0, score)));
+
+  return {
+    textChangePct,
+    highSeverityInitial,
+    highSeverityResolved,
+    totalSignalsInitial,
+    totalSignalsResolved,
+    newSignalsIntroduced,
+    effectivenessScore,
+  };
+}
 
 module.exports = { RequirementClarifier, buildClarificationQuestions, mergeAnswers };

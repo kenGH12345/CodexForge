@@ -139,6 +139,164 @@ class SocraticEngine {
   }
 
   /**
+   * Non-blocking async decision point. (P2-C fix)
+   *
+   * Problem it solves:
+   *   The blocking ask() call breaks Agent autonomy. In non-interactive environments
+   *   (CI, batch runs, automated pipelines) the 30s timeout causes unnecessary delays.
+   *   Even in interactive mode, forcing the user to respond before the Agent can
+   *   continue is a poor UX – the Agent should proceed with a sensible default and
+   *   let the user override asynchronously.
+   *
+   * How it works:
+   *   1. Immediately returns `defaultIndex` (the Agent proceeds without waiting).
+   *   2. Prints a non-blocking notification to stdout so the user knows a decision
+   *      was made on their behalf.
+   *   3. If an `onOverride` callback is provided, spawns a background readline prompt.
+   *      If the user responds before `overrideWindowMs`, the callback is invoked with
+   *      the override decision (the caller can use this to adjust behaviour mid-flight).
+   *   4. The decision is persisted to decisions.json so it is visible in the audit trail.
+   *
+   * @param {SocraticQuestion} question
+   * @param {number}   [defaultIndex=0]       - Option index to use immediately
+   * @param {object}   [options]
+   * @param {number}   [options.overrideWindowMs=10000] - How long to wait for override (ms)
+   * @param {Function} [options.onOverride]   - Called with override answer if user responds
+   * @returns {{ optionIndex: number, optionText: string }} Immediate default answer
+   */
+  askAsync(question, defaultIndex = 0, { overrideWindowMs = 10_000, onOverride = null } = {}) {
+    // Check if already answered (idempotent – supports resume)
+    const cached = this._decisions[question.id];
+    if (cached) {
+      console.log(`[Socratic] ⚡ Non-blocking: "${question.id}" already answered: "${cached.optionText}". Using cached.`);
+      return cached;
+    }
+
+    const defaultAnswer = {
+      optionIndex: defaultIndex,
+      optionText:  question.options[defaultIndex],
+      timestamp:   new Date().toISOString(),
+      source:      'auto-default',
+    };
+
+    // Persist the default decision immediately
+    this._decisions[question.id] = defaultAnswer;
+    this._saveDecisions();
+
+    console.log([
+      ``,
+      `╔══════════════════════════════════════════════════════════╗`,
+      `║  ⚡ AUTO-DECISION (Non-blocking Socratic Mode)           ║`,
+      `╚══════════════════════════════════════════════════════════╝`,
+      ``,
+      `❓ ${question.question}`,
+      ``,
+      `  ✅ Auto-selected: [${defaultIndex + 1}] ${question.options[defaultIndex]}`,
+      ``,
+      `  You have ${overrideWindowMs / 1000}s to override. Enter a number to change:`,
+      ...question.options.map((opt, i) => `    [${i + 1}] ${opt}`),
+      `  (Press Enter or wait to accept the auto-selection)`,
+      ``,
+    ].join('\n'));
+
+    // Spawn background override window (fire-and-forget)
+    if (typeof onOverride === 'function') {
+      this._spawnOverrideWindow(question, defaultAnswer, overrideWindowMs, onOverride);
+    }
+
+    return defaultAnswer;
+  }
+
+  /**
+   * Spawns a background readline prompt for the override window.
+   *
+   * P2-NEW-4 fix: guard against CI / non-interactive environments where
+   * process.stdin is closed, piped from /dev/null, or not a TTY.
+   * In those cases readline.createInterface() may hang indefinitely because
+   * rl.question() never fires its callback (stdin EOF is never signalled).
+   * We detect non-interactive stdin early and skip the readline entirely,
+   * letting the auto-default stand without any blocking I/O.
+   *
+   * Detection heuristics (any one is sufficient to skip readline):
+   *   1. process.stdin.isTTY is falsy (piped, redirected, or /dev/null)
+   *   2. CI environment variable is set (GitHub Actions, CircleCI, Jenkins, etc.)
+   *   3. process.env.TERM === 'dumb' (non-interactive terminal)
+   *
+   * @private
+   */
+  _spawnOverrideWindow(question, defaultAnswer, overrideWindowMs, onOverride) {
+    // P2-NEW-4: detect non-interactive / CI environment and skip readline.
+    const isCI = !!(
+      process.env.CI ||
+      process.env.CONTINUOUS_INTEGRATION ||
+      process.env.GITHUB_ACTIONS ||
+      process.env.JENKINS_URL ||
+      process.env.CIRCLECI ||
+      process.env.TRAVIS
+    );
+    const isNonInteractive = !process.stdin.isTTY || isCI || process.env.TERM === 'dumb';
+
+    if (isNonInteractive) {
+      // Non-interactive: auto-confirm the default immediately, no readline needed.
+      console.log(`[Socratic] ℹ️  Non-interactive environment detected (CI=${isCI}, isTTY=${!!process.stdin.isTTY}). Auto-confirming default: "${defaultAnswer.optionText}"`);
+      // Fire onOverride with the default so callers that rely on the callback still work.
+      try { onOverride(defaultAnswer); } catch (_) {}
+      return;
+    }
+
+    let settled = false;
+    let timer = null;
+
+    const settle = (answer) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { rl.close(); } catch (_) {}
+      if (answer.optionIndex !== defaultAnswer.optionIndex) {
+        // User chose a different option – persist override and notify caller
+        this._decisions[question.id] = answer;
+        this._saveDecisions();
+        console.log(`[Socratic] 🔄 Override accepted: "${question.id}" → "${answer.optionText}"`);
+        try { onOverride(answer); } catch (_) {}
+      } else {
+        console.log(`[Socratic] ✅ Override window closed. Auto-selection confirmed: "${defaultAnswer.optionText}"`);
+      }
+    };
+
+    // Wrap readline creation in try/catch: even after the isTTY check, some
+    // environments (e.g. Docker with stdin closed) can throw on createInterface.
+    let rl;
+    try {
+      rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    } catch (err) {
+      console.warn(`[Socratic] ⚠️  Could not create readline interface: ${err.message}. Auto-confirming default.`);
+      try { onOverride(defaultAnswer); } catch (_) {}
+      return;
+    }
+
+    const validChoices = question.options.map((_, i) => String(i + 1));
+
+    timer = setTimeout(() => settle(defaultAnswer), overrideWindowMs);
+
+    const prompt = () => {
+      if (settled) return;
+      rl.question(`Override (${validChoices.join('/')}): `, (answer) => {
+        if (settled) return;
+        const trimmed = answer.trim();
+        if (trimmed === '') { settle(defaultAnswer); return; }
+        if (!validChoices.includes(trimmed)) { prompt(); return; }
+        settle({
+          optionIndex: parseInt(trimmed, 10) - 1,
+          optionText:  question.options[parseInt(trimmed, 10) - 1],
+          timestamp:   new Date().toISOString(),
+          source:      'user-override',
+        });
+      });
+    };
+    prompt();
+  }
+
+  /**
    * Returns all recorded decisions (the externalised knowledge base).
    */
   getDecisions() {
@@ -156,6 +314,19 @@ class SocraticEngine {
   // ─── Private Helpers ────────────────────────────────────────────────────────
 
   async _promptUser(question) {
+    // P2-NEW-4: detect non-interactive / CI environment and skip readline.
+    // Same heuristics as _spawnOverrideWindow.
+    const isCI = !!(
+      process.env.CI || process.env.CONTINUOUS_INTEGRATION ||
+      process.env.GITHUB_ACTIONS || process.env.JENKINS_URL ||
+      process.env.CIRCLECI || process.env.TRAVIS
+    );
+    const isNonInteractive = !process.stdin.isTTY || isCI || process.env.TERM === 'dumb';
+    if (isNonInteractive) {
+      console.log(`[Socratic] ℹ️  Non-interactive environment – auto-selecting option [1]: "${question.options[0]}"`);
+      return { optionIndex: 0, optionText: question.options[0], timestamp: new Date().toISOString(), source: 'ci-auto' };
+    }
+
     const lines = [
       ``,
       `╔══════════════════════════════════════════════════════════╗`,

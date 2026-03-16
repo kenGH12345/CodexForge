@@ -192,7 +192,10 @@ function buildArchReviewPrompt(checklist, archContent, requirementText = '') {
     : '';
 
   return [
-    `You are a senior software architect performing a structured architecture review.`,
+    `You are **Grady Booch** – co-creator of UML, IBM Fellow, and author of *Object-Oriented Analysis and Design with Applications*.
+You have reviewed hundreds of enterprise architectures and you know exactly what separates a design that will scale from one that will collapse under its own weight.
+Your hallmark: you evaluate architecture with the rigour of a formal methods expert and the pragmatism of someone who has shipped production systems.
+You are performing a structured architecture review.`,
     ``,
     `## Task`,
     `Evaluate the architecture document below against each checklist item.`,
@@ -228,6 +231,83 @@ function buildArchReviewPrompt(checklist, archContent, requirementText = '') {
 }
 
 /**
+ * Builds an adversarial verification prompt.
+ *
+ * Problem it solves (P1-A):
+ *   The main review LLM has systematic blind spots – if it doesn't consider
+ *   "assuming the DB can handle 10k QPS" a risk, it will PASS that item in
+ *   both the detection and verification steps. An adversarial verifier uses a
+ *   different framing ("find what was missed") to surface these blind spots.
+ *
+ * The adversarial prompt is intentionally skeptical:
+ *   - It is told that the main reviewer may have been too lenient
+ *   - It is asked to focus ONLY on items the main reviewer marked PASS or N/A
+ *   - It must justify any downgrade with a specific, concrete finding
+ *
+ * @param {object[]} checklist
+ * @param {string}   archContent
+ * @param {object[]} mainResults  - Results from the main review (PASS/N/A items only)
+ * @param {string}   [requirementText]
+ * @returns {string}
+ */
+function buildAdversarialArchPrompt(checklist, archContent, mainResults, requirementText = '') {
+  const passedItems = mainResults.filter(r => r.result === 'PASS' || r.result === 'N/A');
+  if (passedItems.length === 0) return null;
+
+  const itemList = passedItems
+    .map(r => {
+      const item = checklist.find(c => c.id === r.id);
+      return [
+        `- [${r.id}] (${item?.severity ?? 'unknown'}) ${item?.description ?? r.id}`,
+        `  Main reviewer said: ${r.result} – "${r.finding}"`,
+        `  Hint: ${item?.hint ?? ''}`,
+        `  How to evaluate: ${item?.evaluationGuide ?? ''}`,
+      ].join('\n');
+    })
+    .join('\n\n');
+
+  const reqSection = requirementText
+    ? `## Requirements Document\n\n${requirementText}\n\n`
+    : '';
+
+  return [
+    `You are **Fred Brooks** – author of *The Mythical Man-Month* and *The Design of Design*, Turing Award laureate, and the architect who learned the hardest lessons about software complexity firsthand.
+You are performing an adversarial second-opinion architecture review. Your job is to find what the main reviewer missed.`,
+    ``,
+    `The main reviewer has already evaluated this architecture and marked the following items as PASS or N/A.`,
+    `Your job is to find cases where the main reviewer was TOO LENIENT.`,
+    ``,
+    `## Your Mission`,
+    ``,
+    `For each item below, determine whether the main reviewer's PASS/N/A verdict was CORRECT or WRONG.`,
+    `- If you agree the item genuinely passes: return PASS with a brief confirmation.`,
+    `- If you find the main reviewer missed a real issue: return FAIL with a SPECIFIC finding and fix instruction.`,
+    `- Be skeptical. Look for vague statements, missing details, and unstated assumptions.`,
+    `- A statement like "we will handle this" or "standard practices apply" is NOT a pass.`,
+    ``,
+    `## Items to Re-evaluate (main reviewer said PASS or N/A)`,
+    ``,
+    itemList,
+    ``,
+    reqSection,
+    `## Architecture Document`,
+    ``,
+    archContent,
+    ``,
+    `## Output Format`,
+    ``,
+    `Return a JSON array with ONLY the items you are re-evaluating (same IDs as above).`,
+    `Each element must have:`,
+    `- "id": checklist item ID`,
+    `- "result": "PASS" | "FAIL"`,
+    `- "finding": one sentence. If FAIL, describe the SPECIFIC gap the main reviewer missed.`,
+    `- "fixInstruction": if FAIL, one concrete instruction. Otherwise null.`,
+    ``,
+    `Return ONLY the JSON array. No markdown fences, no extra text.`,
+  ].join('\n');
+}
+
+/**
  * Builds an architect refinement prompt from failed checklist items.
  *
  * For long documents (>4000 chars), uses a patch-based approach:
@@ -249,9 +329,8 @@ function buildArchFixPrompt(originalContent, failures) {
 
   if (isLongDoc) {
     const prompt = [
-      `You are a Software Architecture Agent performing a self-correction pass.`,
-      ``,
-      `The following issues were found in your architecture document during a checklist review:`,
+      `You are **Martin Fowler** – Chief Scientist at ThoughtWorks, author of *Refactoring* and *Patterns of Enterprise Application Architecture*.
+You are performing a self-correction pass on an architecture document. Fix every issue listed below with the precision of someone who has refactored thousands of designs.`,
       ``,
       `## Issues to Fix`,
       ``,
@@ -285,10 +364,8 @@ function buildArchFixPrompt(originalContent, failures) {
   }
 
   const prompt = [
-    `You are a Software Architecture Agent performing a self-correction pass.`,
-    ``,
-    `The following issues were found in your architecture document during a checklist review:`,
-    ``,
+    `You are **Martin Fowler** – Chief Scientist at ThoughtWorks, author of *Refactoring* and *Patterns of Enterprise Application Architecture*.
+You are performing a self-correction pass on an architecture document. Fix every issue listed below with the precision of someone who has refactored thousands of designs.`,    ``,
     `## Issues to Fix`,
     ``,
     fixList,
@@ -377,14 +454,17 @@ function extractJsonArray(response) {
 
 class ArchitectureReviewAgent {
   /**
-   * @param {Function} llmCall   - async (prompt: string) => string
+   * @param {Function} llmCall            - async (prompt: string) => string
    * @param {object}   [options]
-   * @param {number}   [options.maxRounds=2]        - Max self-correction rounds
+   * @param {number}   [options.maxRounds=2]           - Max self-correction rounds
    * @param {boolean}  [options.verbose=true]
-   * @param {object[]} [options.extraChecklist=[]]  - Additional checklist items
-   * @param {string}   [options.outputDir]          - Where to write architecture-review.md
-   * @param {object}   [options.investigationTools] - Optional tools for deep investigation
-   *   (search, readSource, queryExperience) – same interface as SelfCorrectionEngine
+   * @param {object[]} [options.extraChecklist=[]]     - Additional checklist items
+   * @param {string}   [options.outputDir]             - Where to write architecture-review.md
+   * @param {object}   [options.investigationTools]    - Optional tools for deep investigation
+   * @param {Function} [options.adversarialLlmCall]    - Optional independent LLM for adversarial
+   *   verification (P1-A fix). If not provided, falls back to llmCall with an adversarial
+   *   system prompt. Pass a different LLM instance (higher temperature or different model)
+   *   for true independence. see CHANGELOG: P1-A
    */
   constructor(llmCall, {
     maxRounds = 2,
@@ -392,11 +472,15 @@ class ArchitectureReviewAgent {
     extraChecklist = [],
     outputDir = null,
     investigationTools = null,
+    adversarialLlmCall = null,
   } = {}) {
     if (typeof llmCall !== 'function') {
       throw new Error('[ArchitectureReviewAgent] llmCall must be a function');
     }
     this.llmCall = llmCall;
+    // P1-A fix: adversarial verifier uses a different framing to surface blind spots.
+    // Falls back to the same llmCall if no independent verifier is provided.
+    this.adversarialLlmCall = (typeof adversarialLlmCall === 'function') ? adversarialLlmCall : llmCall;
     this.maxRounds = maxRounds;
     this.verbose = verbose;
     this.checklist = [...ARCHITECTURE_CHECKLIST, ...extraChecklist];
@@ -581,23 +665,30 @@ class ArchitectureReviewAgent {
   }
 
   /**
-   * Runs a single checklist review pass via LLM.
+   * Runs a single checklist review pass via LLM, followed by an adversarial
+   * second-opinion pass to surface blind spots. see CHANGELOG: P1-A
+   *
+   * Two-phase review:
+   *   Phase 1 (main):       this.llmCall evaluates all checklist items
+   *   Phase 2 (adversarial): this.adversarialLlmCall re-evaluates PASS/N/A items
+   *                          with a skeptical framing to find missed issues
+   *
+   * A PASS item that the adversarial verifier downgrades to FAIL is treated as
+   * FAIL in the merged result. This prevents systematic blind spots from causing
+   * false positives ("passed" items that are actually broken).
    *
    * @param {string} archContent
    * @param {string} requirementText
    * @returns {Promise<object[]>}
    */
   async _runReview(archContent, requirementText) {
+    // ── Phase 1: Main review ──────────────────────────────────────────────────
     const prompt = buildArchReviewPrompt(this.checklist, archContent, requirementText);
     let response;
     try {
       response = await this.llmCall(prompt);
     } catch (err) {
       this._log(`[ArchReview] ❌ Review LLM call failed: ${err.message}`);
-      // N55 fix: LLM call failure → mark all items as MISSING (not N/A).
-      // N/A means "not applicable to this architecture", which is semantically wrong
-      // for a failure case. MISSING items are treated as failures in the pass-rate
-      // calculation so passRate is not artificially inflated.
       return this.checklist.map(item => ({
         id: item.id,
         result: 'MISSING',
@@ -609,7 +700,6 @@ class ArchitectureReviewAgent {
     const parsed = extractJsonArray(response);
     if (!parsed) {
       this._log(`[ArchReview] ⚠️  Could not parse LLM review response. Treating all as MISSING.`);
-      // N55 fix: parse failure → MISSING, not N/A (same reasoning as above).
       return this.checklist.map(item => ({
         id: item.id,
         result: 'MISSING',
@@ -618,16 +708,62 @@ class ArchitectureReviewAgent {
       }));
     }
 
-    // N55 fix: items the LLM did not return are MISSING (not evaluated), NOT N/A
-    // (not applicable). Marking them N/A incorrectly excludes them from the passRate
-    // denominator, making passRate artificially high.
     const resultMap = new Map(parsed.map(r => [r.id, r]));
-    return this.checklist.map(item => resultMap.get(item.id) ?? {
+    const mainResults = this.checklist.map(item => resultMap.get(item.id) ?? {
       id: item.id,
       result: 'MISSING',
       finding: 'Not evaluated by LLM (response did not include this item)',
       fixInstruction: null,
     });
+
+    // ── Phase 2: Adversarial verification (P1-A fix) ──────────────────────────
+    // Only run adversarial pass if there are PASS/N/A items to challenge.
+    // Skip if all items already failed (no point re-checking failures).
+    const passedItems = mainResults.filter(r => r.result === 'PASS' || r.result === 'N/A');
+    if (passedItems.length === 0) {
+      this._log(`[ArchReview] ⚡ Adversarial pass skipped (no PASS/N/A items to challenge).`);
+      return mainResults;
+    }
+
+    const adversarialPrompt = buildAdversarialArchPrompt(
+      this.checklist, archContent, mainResults, requirementText
+    );
+    if (!adversarialPrompt) return mainResults;
+
+    this._log(`[ArchReview] 🔴 Running adversarial verification on ${passedItems.length} PASS/N/A item(s)...`);
+    let adversarialResults = [];
+    try {
+      const adversarialResponse = await this.adversarialLlmCall(adversarialPrompt);
+      adversarialResults = extractJsonArray(adversarialResponse) || [];
+    } catch (err) {
+      this._log(`[ArchReview] ⚠️  Adversarial LLM call failed: ${err.message}. Using main results only.`);
+      return mainResults;
+    }
+
+    // Merge: adversarial FAIL overrides main PASS/N/A
+    const adversarialMap = new Map(adversarialResults.map(r => [r.id, r]));
+    let downgrades = 0;
+    const mergedResults = mainResults.map(mainItem => {
+      if (mainItem.result !== 'PASS' && mainItem.result !== 'N/A') return mainItem;
+      const adversarialItem = adversarialMap.get(mainItem.id);
+      if (adversarialItem && adversarialItem.result === 'FAIL') {
+        downgrades++;
+        this._log(`[ArchReview] 🔴 Adversarial downgrade: [${mainItem.id}] PASS → FAIL – ${adversarialItem.finding}`);
+        return {
+          ...adversarialItem,
+          finding: `[Adversarial] ${adversarialItem.finding}`,
+        };
+      }
+      return mainItem;
+    });
+
+    if (downgrades > 0) {
+      this._log(`[ArchReview] 🔴 Adversarial pass found ${downgrades} additional issue(s) missed by main review.`);
+    } else {
+      this._log(`[ArchReview] ✅ Adversarial pass confirmed main review (no additional issues found).`);
+    }
+
+    return mergedResults;
   }
 
   /**

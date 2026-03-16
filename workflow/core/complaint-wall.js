@@ -14,6 +14,16 @@ const fs = require('fs');
 const path = require('path');
 const { PATHS } = require('./constants');
 
+// Lazy-loaded to avoid circular dependency (ExperienceStore → ComplaintWall → ExperienceStore).
+// Resolved on first use inside methods that need ExperienceType/ExperienceCategory.
+let _experienceTypes = null;
+function _getExpTypes() {
+  if (!_experienceTypes) {
+    _experienceTypes = require('./experience-store');
+  }
+  return _experienceTypes;
+}
+
 // ─── Complaint Severity ───────────────────────────────────────────────────────
 
 const ComplaintSeverity = {
@@ -45,12 +55,23 @@ class ComplaintWall {
   /**
    * @param {string} [storePath] - Path to persist complaints JSON
    */
-  constructor(storePath = null) {
+  /**
+   * @param {string} [storePath] - Path to persist complaints JSON
+   * @param {object} [options]
+   * @param {object} [options.experienceStore] - ExperienceStore instance for bidirectional sync.
+   *   Defect F fix: when provided, enables two automatic bridges:
+   *   1. resolve() → creates a POSITIVE experience capturing the resolution (knowledge extraction)
+   *   2. ExperienceStore negative records → auto-filed as complaints (problem tracking)
+   *   Both bridges are idempotent and safe to call multiple times.
+   */
+  constructor(storePath = null, { experienceStore = null } = {}) {
     this.storePath = storePath || path.join(PATHS.OUTPUT_DIR, 'complaints.json');
     /** @type {Complaint[]} */
     this.complaints = [];
     // N44 fix: monotonic counter to guarantee unique IDs even within the same millisecond.
     this._idSeq = 0;
+    // Defect F fix: optional ExperienceStore reference for bidirectional sync
+    this._experienceStore = experienceStore;
     this._load();
   }
 
@@ -106,6 +127,38 @@ class ComplaintWall {
     complaint.updatedAt = new Date().toISOString();
     this._save();
     console.log(`[ComplaintWall] Complaint resolved: ${complaintId}`);
+
+    // ── Defect F fix: bridge resolved complaint → positive experience ──────────
+    // When a complaint is RESOLVED (not WONTFIX), the resolution contains actionable
+    // knowledge that should be preserved in ExperienceStore as a POSITIVE experience.
+    // This closes the loop: problem (complaint) → solution (experience) → prevention.
+    //
+    // The experience title is derived from the complaint to enable dedup:
+    //   "Resolved: [target] description" — if the same complaint is resolved again
+    //   (e.g. after reopening), recordIfAbsent() prevents duplicate entries.
+    if (status === ComplaintStatus.RESOLVED && this._experienceStore) {
+      try {
+        const { ExperienceType, ExperienceCategory } = _getExpTypes();
+        const title = `Resolved: [${complaint.targetType}:${complaint.targetId}] ${complaint.description.slice(0, 80)}`;
+        this._experienceStore.recordIfAbsent(title, {
+          type:     ExperienceType.POSITIVE,
+          category: ExperienceCategory.STABLE_PATTERN,
+          title,
+          content:  [
+            `Problem: ${complaint.description}`,
+            `Target: ${complaint.targetType}:${complaint.targetId} (severity: ${complaint.severity})`,
+            `Resolution: ${resolution}`,
+            `Suggestion that led to fix: ${complaint.suggestion}`,
+          ].join('\n'),
+          skill:    complaint.targetId,
+          tags:     [complaint.targetType, complaint.targetId, 'complaint-resolved', complaint.severity],
+        });
+        console.log(`[ComplaintWall] 🔗 Experience created from resolved complaint: ${complaintId}`);
+      } catch (err) {
+        // Non-fatal: complaint resolution succeeds even if experience creation fails
+        console.warn(`[ComplaintWall] ⚠️  Failed to create experience from complaint: ${err.message}`);
+      }
+    }
   }
 
   /**
@@ -195,6 +248,57 @@ class ComplaintWall {
       }
     }
     return lines.join('\n');
+  }
+
+  // ─── Bidirectional Sync ─────────────────────────────────────────────────────
+
+  /**
+   * Sets or replaces the ExperienceStore reference for bidirectional sync.
+   * Call this after construction if the store wasn't available at construction time.
+   *
+   * @param {object} experienceStore - ExperienceStore instance
+   */
+  setExperienceStore(experienceStore) {
+    this._experienceStore = experienceStore;
+  }
+
+  /**
+   * Defect F fix: creates a complaint from a NEGATIVE experience.
+   *
+   * Call this when a new negative experience is recorded in ExperienceStore.
+   * The complaint serves as a visible "problem ticket" that needs attention,
+   * while the experience serves as the knowledge record. Together they form
+   * a closed loop: experience (knowledge) ↔ complaint (action item).
+   *
+   * Idempotent: if an open complaint already exists for the same experience ID,
+   * no duplicate is created.
+   *
+   * @param {object} experience - The negative experience object from ExperienceStore
+   * @returns {object|null} The created complaint, or null if skipped (duplicate)
+   */
+  fileFromNegativeExperience(experience) {
+    if (!experience || experience.type !== 'negative') return null;
+
+    // Dedup: check if an open complaint already targets this experience ID
+    const existing = this.complaints.find(
+      c => c.targetType === ComplaintTarget.EXPERIENCE
+        && c.targetId === experience.id
+        && c.status === ComplaintStatus.OPEN
+    );
+    if (existing) return null;
+
+    // Map experience category to complaint severity
+    const severity = experience.category === 'pitfall' ? ComplaintSeverity.ANNOYING : ComplaintSeverity.MINOR;
+
+    return this.file({
+      targetType:  ComplaintTarget.EXPERIENCE,
+      targetId:    experience.id,
+      severity,
+      description: `[Auto] Negative experience recorded: ${experience.title}`,
+      suggestion:  `Review and address the pitfall described in experience ${experience.id}. Once resolved, the resolution will be captured as a positive experience.`,
+      agentId:     'system:experience-bridge',
+      taskId:      experience.taskId || null,
+    });
   }
 
   // ─── Private Helpers ──────────────────────────────────────────────────────────

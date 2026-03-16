@@ -114,6 +114,17 @@ class CIIntegration {
     const startedAt = Date.now();
     const steps = [];
 
+    // Step 0: Syntax check (always run – catches SyntaxErrors before lint/test)
+    // P2 fix: Even if lint is skipped or lintCmd is null, this step runs.
+    // Uses `node --check` which is a zero-cost parse-only validation.
+    if (!skipLint) {
+      const syntaxResult = this._runSyntaxCheck();
+      steps.push(syntaxResult);
+      if (!syntaxResult.passed) {
+        return this._buildResult('failed', steps, startedAt, 'Syntax check failed – pipeline aborted');
+      }
+    }
+
     // Step 1: Lint
     if (!skipLint && this._lintCmd) {
       const lintResult = this._runStep('lint', this._lintCmd);
@@ -152,6 +163,56 @@ class CIIntegration {
 
     const allPassed = steps.every(s => s.passed);
     return this._buildResult(allPassed ? 'success' : 'failed', steps, startedAt);
+  }
+
+  /**
+   * Runs `node --check` on all .js files under the project root.
+   * This catches SyntaxErrors (broken comments, unclosed brackets, etc.)
+   * at near-zero cost since --check only parses, it does not execute.
+   */
+  _runSyntaxCheck() {
+    const start = Date.now();
+    const name = 'syntax-check';
+    console.log(`[CIIntegration]   ▶ ${name}: node --check on all .js files`);
+
+    try {
+      // Find all .js files in common source directories
+      const dirs = ['core', 'agents', 'commands', 'tools'];
+      const errors = [];
+
+      for (const dir of dirs) {
+        const dirPath = path.join(this._root, dir);
+        if (!fs.existsSync(dirPath)) continue;
+
+        const files = fs.readdirSync(dirPath).filter(f => f.endsWith('.js'));
+        for (const file of files) {
+          const filePath = path.join(dirPath, file);
+          const result = spawnSync('node', ['--check', filePath], {
+            encoding: 'utf-8',
+            timeout: 10_000,
+          });
+          if (result.status !== 0) {
+            const errMsg = (result.stderr || result.stdout || 'Unknown syntax error').trim();
+            errors.push(`${dir}/${file}: ${errMsg}`);
+          }
+        }
+      }
+
+      const durationMs = Date.now() - start;
+
+      if (errors.length > 0) {
+        const output = errors.join('\n');
+        console.log(`[CIIntegration]   ❌ ${name} failed: ${errors.length} file(s) with syntax errors`);
+        return { name, passed: false, output: output.slice(0, 1000), durationMs };
+      }
+
+      console.log(`[CIIntegration]   ✅ ${name} passed (${(durationMs / 1000).toFixed(1)}s)`);
+      return { name, passed: true, output: 'All files parsed successfully', durationMs };
+    } catch (err) {
+      const durationMs = Date.now() - start;
+      console.log(`[CIIntegration]   ❌ ${name} error: ${err.message}`);
+      return { name, passed: false, output: err.message, durationMs };
+    }
   }
 
   _runStep(name, command) {

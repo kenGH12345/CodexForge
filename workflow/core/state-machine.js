@@ -192,7 +192,99 @@ class StateMachine {
     return targetState;
   }
 
-  // ─── Risk Recording ───────────────────────────────────────────────────────────
+  // ─── Parallel Sub-task Execution ─────────────────────────────────────────────
+
+  /**
+   * Defect B fix: Runs multiple independent sub-tasks in parallel within the
+   * current state, without changing the linear state transition structure.
+   *
+   * Motivation: The current state machine is a strict serial pipeline
+   * (INIT → ANALYSE → ARCHITECT → CODE → TEST → FINISHED). In practice, several
+   * sub-tasks within a single stage are independent and can run concurrently:
+   *
+   *   ARCHITECT stage:
+   *     CoverageChecker.check()  ──┐
+   *                                ├── both read the same file, no data dependency
+   *     ArchitectureReviewAgent  ──┘
+   *
+   *   CODE stage:
+   *     TestCaseGenerator        ──┐
+   *                                ├── both read the same artifact, no data dependency
+   *     CodeReviewAgent          ──┘
+   *
+   * This method runs all tasks concurrently via Promise.allSettled(), collects
+   * results, and returns them in the same order as the input tasks array.
+   * It does NOT advance the state machine – state transitions remain the caller's
+   * responsibility. This preserves the linear state invariant while eliminating
+   * unnecessary serial wait time.
+   *
+   * Error handling: uses Promise.allSettled() (not Promise.all()) so a single
+   * task failure does not cancel sibling tasks. Each result has:
+   *   { status: 'fulfilled', value: T }  – task succeeded
+   *   { status: 'rejected',  reason: E } – task failed; sibling results still available
+   *
+   * Usage example:
+   *   const [coverageResult, archReviewResult] = await this.stateMachine.runParallel([
+   *     { name: 'CoverageCheck', fn: () => coverageChecker.check(outputPath, requirementPath) },
+   *     { name: 'ArchReview',    fn: () => archReviewer.review(outputPath, requirementPath) },
+   *   ]);
+   *   // coverageResult.status === 'fulfilled' → coverageResult.value
+   *   // archReviewResult.status === 'rejected' → archReviewResult.reason
+   *
+   * @param {{ name: string, fn: () => Promise<any> }[]} tasks
+   *   Array of named async tasks to run in parallel.
+   *   - `name`: human-readable label for logging and error attribution
+   *   - `fn`:   zero-argument async function returning the task result
+   * @returns {Promise<PromiseSettledResult<any>[]>}
+   *   Resolves when ALL tasks complete (fulfilled or rejected).
+   *   Results are in the same order as the input tasks array.
+   */
+  async runParallel(tasks) {
+    if (!Array.isArray(tasks) || tasks.length === 0) return [];
+
+    const state = this.getState();
+    const names = tasks.map(t => t.name).join(', ');
+    console.log(`[StateMachine] ⚡ Parallel execution in state ${state}: [${names}]`);
+
+    const startMs = Date.now();
+    const results = await Promise.allSettled(tasks.map(t => t.fn()));
+    const elapsedMs = Date.now() - startMs;
+
+    // Log outcome summary
+    const summary = results.map((r, i) => {
+      const label = tasks[i].name;
+      return r.status === 'fulfilled'
+        ? `✅ ${label}`
+        : `❌ ${label} (${r.reason?.message ?? r.reason})`;
+    }).join(', ');
+    console.log(`[StateMachine] ⚡ Parallel complete in ${elapsedMs}ms: ${summary}`);
+
+    return results;
+  }
+
+  /**
+   * Convenience wrapper: runs tasks in parallel and throws if ANY task failed.
+   * Use this when all tasks are required and a single failure should abort the stage.
+   *
+   * @param {{ name: string, fn: () => Promise<any> }[]} tasks
+   * @returns {Promise<any[]>} Resolved values in input order
+   * @throws {AggregateError} if one or more tasks failed
+   */
+  async runParallelStrict(tasks) {
+    const results = await this.runParallel(tasks);
+    const failures = results
+      .map((r, i) => ({ ...r, name: tasks[i].name }))
+      .filter(r => r.status === 'rejected');
+
+    if (failures.length > 0) {
+      const msgs = failures.map(f => `[${f.name}] ${f.reason?.message ?? f.reason}`).join('; ');
+      throw new Error(`[StateMachine] runParallelStrict: ${failures.length} task(s) failed – ${msgs}`);
+    }
+
+    return results.map(r => r.value);
+  }
+
+
 
   /**
    * Appends a risk entry to the manifest.

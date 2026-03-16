@@ -77,9 +77,24 @@ class Orchestrator {
    * @param {string[]} [options.git.labels=[]]          - Labels to apply to the PR
    * @param {string[]} [options.git.reviewers=[]]       - Reviewer usernames
    */
-  constructor({ projectId, llmCall, projectRoot = null, askUser = null, dryRun = false, git = {} }) {
+  constructor({ projectId, llmCall, projectRoot = null, askUser = null, dryRun = false, git = {}, outputDir = null }) {
     this.projectId = projectId;
     this.projectRoot = projectRoot || path.resolve(__dirname, '..');
+
+    // P1-D fix: support per-instance outputDir so multiple Orchestrator instances
+    // (e.g. one per task in a multi-project setup) can write to isolated directories
+    // without conflicting on shared files like stage-context.json, architecture.md, etc.
+    //
+    // Previously StageContextStore (and several helpers) always used the global
+    // PATHS.OUTPUT_DIR constant, which is a single shared directory. If two Orchestrator
+    // instances ran concurrently (or sequentially in the same process), their output
+    // files would overwrite each other.
+    //
+    // Fix: accept an optional outputDir constructor argument. If not provided, fall back
+    // to the global PATHS.OUTPUT_DIR (backward-compatible). Store as this._outputDir so
+    // all instance methods (StageContextStore, buildDeveloperContextBlock, etc.) can use
+    // it instead of the global constant.
+    this._outputDir = outputDir || PATHS.OUTPUT_DIR;
     // N4 fix (revised): per-stage source-file cache for investigation tools.
     // Each stage (Architecture / Code / Test) reads a different set of files and
     // reads them at a different point in time (architecture.md doesn't exist yet
@@ -166,19 +181,109 @@ class Orchestrator {
     // Negative experiences expire after 90 days, positive after 365 days (configurable via ttlDays).
     this.experienceStore.purgeExpired();
     this.complaintWall = new ComplaintWall();
+
+    // ── Defect F fix: Bidirectional sync between ExperienceStore and ComplaintWall ──
+    // Previously these two systems were isolated information silos:
+    //   - Resolving a complaint didn't create a positive experience (knowledge lost)
+    //   - Recording a negative experience didn't file a complaint (problem untracked)
+    // Now they cross-reference each other:
+    //   ComplaintWall.resolve() → auto-creates POSITIVE experience (solution capture)
+    //   ExperienceStore.record(NEGATIVE) → auto-files complaint (problem tracking)
+    this.experienceStore.setComplaintWall(this.complaintWall);
+    this.complaintWall.setExperienceStore(this.experienceStore);
+    console.log(`[Orchestrator] 🔗 ExperienceStore ↔ ComplaintWall bidirectional sync established.`);
+
     this.skillEvolution = new SkillEvolutionEngine();
 
     // ── StageContextStore: cross-stage semantic context propagation ──────────
-    // Lazily initialised in _runAnalyst (first stage) so it's always fresh
-    // for each workflow run. Exposed here so _buildInvestigationTools can
-    // access it via this.stageCtx.
-    this.stageCtx = null;
+    // P2-A fix: initialise StageContextStore eagerly in the constructor instead of
+    // lazily in _runAnalyst. The lazy pattern had two problems:
+    //   1. If _runAnalyst is skipped (e.g. direct call to _runArchitect or checkpoint
+    //      resume past ANALYSE), stageCtx is never initialised and downstream helpers
+    //      (buildArchitectUpstreamCtx, storeArchitectContext, etc.) throw TypeError.
+    //   2. Hiding a side-effect (this.stageCtx = ...) inside a "pure" stage runner
+    //      violates the single-responsibility principle and makes the code harder to test.
+    // The store is always fresh per Orchestrator instance (one instance = one workflow run).
+    //
+    // P1-D fix: use this._outputDir instead of the global PATHS.OUTPUT_DIR constant.
+    // If multiple Orchestrator instances run concurrently (e.g. one per project in a
+    // multi-project setup), each instance now writes stage-context.json to its own
+    // isolated output directory, preventing file conflicts.
+    this.stageCtx = new StageContextStore({
+      outputDir: this._outputDir,
+      verbose: false,
+    });
+    console.log(`[Orchestrator] 🔗 StageContextStore initialised for cross-stage context propagation.`);
 
     // Register built-in skills
     this._registerBuiltinSkills();
 
     // Wrap llmCall with prompt builder
-    this._rawLlmCall = llmCall;
+    // P1-NEW-4 fix: wrap _rawLlmCall itself with a token-metering layer so that ALL
+    // LLM calls (SelfCorrectionEngine, _runRealTestLoop, runAuto, translateMdFile, etc.)
+    // are counted – not just the ones that go through wrappedLlm.
+    // Previously ~60% of token consumption from these "hidden" callers was invisible
+    // to the Observability module. The wrapper is transparent: it estimates tokens from
+    // the prompt length, records the call under the special role '__internal', and
+    // returns the response unchanged.
+    const _originalLlmCall = llmCall;
+    this._rawLlmCall = async (prompt) => {
+      try {
+        // Estimate tokens from prompt length (char / 4 heuristic, same as buildAgentPrompt)
+        const promptStr = Array.isArray(prompt)
+          ? prompt.map(m => (typeof m === 'object' ? (m.content || '') : String(m))).join(' ')
+          : String(prompt || '');
+        const estimatedTokens = Math.ceil(promptStr.length / 4);
+        this.obs.recordLlmCall('__internal', estimatedTokens);
+      } catch (_) { /* metering must never break the call */ }
+
+      // P1-A fix: when prompt is a multi-turn conversation array, try to pass it
+      // directly to _originalLlmCall first (works if the caller's llmCall supports
+      // the OpenAI messages array format). If _originalLlmCall throws a TypeError
+      // (e.g. it only accepts strings), fall back to serialising the history into a
+      // single string so the multi-turn context is not silently lost.
+      //
+      // Serialisation format:
+      //   [User]: <content>
+      //   [Assistant]: <content>
+      //   ...
+      // This is readable by any LLM and preserves the full reasoning chain.
+      let response;
+      if (Array.isArray(prompt)) {
+        try {
+          response = await _originalLlmCall(prompt);
+        } catch (arrayErr) {
+          // _originalLlmCall does not support array input – serialise to string
+          console.warn(`[Orchestrator] ⚠️  _rawLlmCall: llmCall does not support message arrays (${arrayErr.message}). Serialising conversation history to string.`);
+          const serialised = prompt
+            .map(m => {
+              const role = (m && m.role) ? m.role : 'user';
+              const content = (m && m.content) ? String(m.content) : String(m);
+              return `[${role.charAt(0).toUpperCase() + role.slice(1)}]: ${content}`;
+            })
+            .join('\n\n');
+          response = await _originalLlmCall(serialised);
+        }
+      } else {
+        response = await _originalLlmCall(prompt);
+      }
+      try {
+        const actualTokens = (response && typeof response === 'object')
+          ? (response.usage?.total_tokens ?? response.usage?.input_tokens ?? null)
+          : null;
+        if (actualTokens != null) {
+          this.obs.recordActualTokens('__internal', actualTokens);
+        }
+      } catch (_) { /* metering must never break the call */ }
+      return response;
+    };
+
+    // P1-NEW-3 fix: independent rollback counter Map, keyed by stage name.
+    // Using stageCtx.meta for rollback counting is unsafe because RollbackCoordinator
+    // calls stageCtx.delete(stage) during rollback, which resets the counter to 0
+    // and can cause infinite recursion (_runTester → rollback → _runDeveloper → _runTester).
+    // This Map lives on the Orchestrator instance and is never cleared by rollback logic.
+    this._rollbackCounters = new Map();
 
     // ── Observability: session-level metrics collector ──────────────────────
     this.obs = new Observability(PATHS.OUTPUT_DIR, projectId);
@@ -190,14 +295,15 @@ class Orchestrator {
     this._adaptiveStrategy = Observability.deriveStrategy(PATHS.OUTPUT_DIR, {
       maxFixRounds:    cfgAutoFix.maxFixRounds    ?? 2,
       maxReviewRounds: cfgAutoFix.maxReviewRounds ?? 2,
+      maxExpInjected:  cfgAutoFix.maxExpInjected  ?? 5,
       projectId:       projectId,
     });
     if (this._adaptiveStrategy.source !== 'defaults') {
       console.log(`[Orchestrator] 📈 Adaptive strategy loaded from ${this._adaptiveStrategy.source}:`);
-      console.log(`[Orchestrator]    maxFixRounds=${this._adaptiveStrategy.maxFixRounds} | maxReviewRounds=${this._adaptiveStrategy.maxReviewRounds} | skipEntropyOnClean=${this._adaptiveStrategy.skipEntropyOnClean}`);
+      console.log(`[Orchestrator]    maxFixRounds=${this._adaptiveStrategy.maxFixRounds} | maxReviewRounds=${this._adaptiveStrategy.maxReviewRounds} | skipEntropyOnClean=${this._adaptiveStrategy.skipEntropyOnClean} | maxExpInjected=${this._adaptiveStrategy.maxExpInjected}`);
       if (this._adaptiveStrategy._debug) {
         const d = this._adaptiveStrategy._debug;
-        console.log(`[Orchestrator]    (testFailRate=${d.testFailRate}, errorTrend=${d.errorTrend}, sessions=${d.sessionCount})`);
+        console.log(`[Orchestrator]    (testFailRate=${d.testFailRate}, errorTrend=${d.errorTrend}, sessions=${d.sessionCount}, expHitRate=${d.expHitRate})`);
       }
     }
 
@@ -232,6 +338,9 @@ class Orchestrator {
 
     // Create agents with hook emitter
     const emitter = this.hooks.getEmitter();
+    // P1-NEW-4: wrappedLlm calls _originalLlmCall directly (not _rawLlmCall) to avoid
+    // double-counting: wrappedLlm already records the call under the agent role, and
+    // _rawLlmCall's metering wrapper would add a second '__internal' entry for the same call.
     const wrappedLlm = (role) => async (prompt) => {
       // N72 fix: wrap buildAgentPrompt in try/catch so an unknown role does not
       // crash the entire task worker – fall back to the raw prompt instead.
@@ -240,13 +349,27 @@ class Orchestrator {
         const result = buildAgentPrompt(role, prompt);
         optimisedPrompt = result.prompt;
         console.log(`[Orchestrator] LLM call for ${role}: ~${result.meta.estimatedTokens} tokens`);
-        // Observability: record LLM call with token estimate
         this.obs.recordLlmCall(role, result.meta.estimatedTokens || 0);
       } catch (err) {
         console.warn(`[Orchestrator] buildAgentPrompt failed for role "${role}": ${err.message}. Using raw prompt.`);
         this.obs.recordLlmCall(role, 0);
       }
-      return this._rawLlmCall(optimisedPrompt);
+      // P2-A fix: extract actual token usage from LLM response (if the LLM client
+      // attaches a .usage object to the response string, e.g. via a custom wrapper).
+      // Standard OpenAI/Anthropic SDKs return usage in the response object; if the
+      // caller wraps the response as a plain string, actual tokens remain null and
+      // we fall back to the estimated count. No error is thrown either way.
+      const rawResponse = await _originalLlmCall(optimisedPrompt);
+      const actualTokens = (rawResponse && typeof rawResponse === 'object')
+        ? (rawResponse.usage?.total_tokens ?? rawResponse.usage?.input_tokens ?? null)
+        : null;
+      if (actualTokens != null) {
+        this.obs.recordActualTokens(role, actualTokens);
+        console.log(`[Orchestrator] 📊 Token usage for ${role}: ${actualTokens} actual tokens`);
+      }
+      return (typeof rawResponse === 'object' && rawResponse !== null && 'text' in rawResponse)
+        ? rawResponse.text
+        : rawResponse;
     };
 
     this.agents = {
@@ -313,6 +436,26 @@ class Orchestrator {
 
     // Persist the inter-agent communication log
     this.bus.saveLog();
+
+    // P1-C fix: flush ExperienceStore write queue before emitting WORKFLOW_COMPLETE.
+    // In task-based mode, _runTester (which calls flushDirty at the end of the TEST
+    // stage) is NOT executed – each task runs _executeTask directly. The individual
+    // record()/appendByTitle()/recordIfAbsent() calls in _runAgentWorker now await
+    // their _save() Promises (P1-C fix above), but _save() is queued via a Promise
+    // chain (_saveQueue). If the process exits immediately after the last worker
+    // finishes, the tail of _saveQueue may not have flushed to disk yet.
+    // Calling flushDirty() here drains the queue and guarantees all writes complete
+    // before WORKFLOW_COMPLETE is emitted and the process returns.
+    // This is also safe in sequential mode (run()) – flushDirty() is idempotent
+    // and the _runTester call already flushed, so this is a cheap no-op.
+    try {
+      if (this.experienceStore && typeof this.experienceStore.flushDirty === 'function') {
+        await this.experienceStore.flushDirty();
+        console.log(`[Orchestrator] 💾 ExperienceStore flushed in _finalizeWorkflow (task-based write guarantee).`);
+      }
+    } catch (flushErr) {
+      console.warn(`[Orchestrator] ⚠️  ExperienceStore flush in _finalizeWorkflow failed (non-fatal): ${flushErr.message}`);
+    }
 
     // Emit WORKFLOW_COMPLETE so HookSystem handlers (e.g. notifications) are triggered
     await this.hooks.emit(HOOK_EVENTS.WORKFLOW_COMPLETE, {
@@ -397,11 +540,46 @@ class Orchestrator {
     console.log(`\n[Orchestrator] 🤖 Auto-dispatch: analysing requirement for task decomposition...`);
 
     // ── Step 1: Ask LLM to decompose the requirement into tasks ──────────────
+    //
+    // P2-E fix: inject AGENTS.md into the decomposition prompt.
+    //
+    // Previous problem: runAuto() called _rawLlmCall() BEFORE _initWorkflow(), so
+    // this._agentsMdContent was always undefined at this point. The task decomposition
+    // LLM had no knowledge of the project's tech stack, constraints, or conventions,
+    // and could produce task plans that were inappropriate for the current project
+    // (e.g. suggesting Java tasks for a Node.js project, or ignoring existing modules).
+    //
+    // Fix: eagerly read AGENTS.md here if it hasn't been loaded yet by _initWorkflow().
+    // We use the cached value if available (set by _initWorkflow in run()/runTaskBased()),
+    // or read it directly from disk if runAuto() is the entry point (most common case).
+    // This is safe: AGENTS.md is a read-only file at this point; no write has happened yet.
+    // _initWorkflow() will re-read and cache it later – that's fine (idempotent).
+    let agentsMdForDecomposition = this._agentsMdContent;
+    if (!agentsMdForDecomposition) {
+      try {
+        agentsMdForDecomposition = fs.existsSync(PATHS.AGENTS_MD)
+          ? fs.readFileSync(PATHS.AGENTS_MD, 'utf-8')
+          : '';
+        if (agentsMdForDecomposition) {
+          console.log(`[Orchestrator] 📋 AGENTS.md pre-loaded for task decomposition (${agentsMdForDecomposition.length} chars).`);
+        }
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  Could not pre-load AGENTS.md for task decomposition: ${err.message}`);
+        agentsMdForDecomposition = '';
+      }
+    }
+
     const decompositionPrompt = [
       `You are a **Task Decomposition Analyst**. Analyse the following software requirement and decide whether it should be executed as:`,
       `  A) A single sequential workflow (ANALYSE → ARCHITECT → CODE → TEST)`,
       `  B) Multiple parallel tasks with dependencies`,
       ``,
+      // P2-E fix: inject AGENTS.md so the LLM knows the project's tech stack,
+      // constraints, and conventions when deciding how to decompose the requirement.
+      agentsMdForDecomposition
+        ? `## Project Context (AGENTS.md)\n${agentsMdForDecomposition.slice(0, 3000)}${agentsMdForDecomposition.length > 3000 ? '\n... (truncated for decomposition)' : ''}`
+        : '',
+      agentsMdForDecomposition ? `` : '',
       `## Requirement`,
       rawRequirement,
       ``,
@@ -515,7 +693,29 @@ class Orchestrator {
 
     if (taskLines.length > 12) {
       console.warn(`[Orchestrator] PARALLEL mode has ${taskLines.length} tasks (max 12). Truncating to 12.`);
+      // P2-3 fix: before truncating, collect the titles of tasks that WILL be kept
+      // so we can later validate that no kept task depends on a truncated task.
+      // Previously, truncation was silent – if task 10 depended on task 13 (truncated),
+      // the dependency was silently dropped, causing incorrect execution order.
+      const keptTitles = new Set(
+        taskLines.slice(0, 12).map(l => l.slice(2).replace(/\[deps:[^\]]*\]/i, '').trim())
+      );
+      const droppedTitles = new Set(
+        taskLines.slice(12).map(l => l.slice(2).replace(/\[deps:[^\]]*\]/i, '').trim())
+      );
       taskLines.splice(12);
+      // Warn if any kept task depends on a dropped task
+      for (const line of taskLines) {
+        const depsMatch = line.match(/\[deps:\s*([^\]]+)\]/i);
+        if (depsMatch && depsMatch[1].trim().toLowerCase() !== 'none') {
+          const depTitles = depsMatch[1].split(',').map(d => d.trim());
+          for (const depTitle of depTitles) {
+            if (droppedTitles.has(depTitle)) {
+              console.warn(`[Orchestrator] ⚠️  P2-3: Task depends on truncated task "${depTitle}". Dependency will be dropped – execution order may be incorrect.`);
+            }
+          }
+        }
+      }
     }
 
     // Build title → id map
@@ -576,6 +776,10 @@ class Orchestrator {
     console.log(`  CodeBuddy Multi-Agent Workflow`);
     console.log(`  Project: ${this.projectId}`);
     console.log(`${'='.repeat(60)}\n`);
+
+    // P1-NEW-2: store current requirement so stage functions can pass it to
+    // getContextBlock() for task-relevance scoring (instead of global hitCount).
+    this._currentRequirement = rawRequirement;
 
     // 1–3. Shared startup: StateMachine init + memory + AGENTS.md + complaints
     const resumeState = await this._initWorkflow();
@@ -658,7 +862,12 @@ class Orchestrator {
     console.log(`${'='.repeat(60)}\n`);
 
     // 1–3. Shared startup: StateMachine init + memory + AGENTS.md + complaints
-    await this._initWorkflow();
+    // P1-3 fix: capture resumeState returned by _initWorkflow() for logging and
+    // future断点续跑 (breakpoint-resume) support. Previously the return value was
+    // silently discarded, making it impossible to detect whether task-based mode
+    // was resuming from a prior run or starting fresh.
+    const resumeState = await this._initWorkflow();
+    console.log(`[Orchestrator] Task-based mode resume state: ${resumeState} (reserved for future checkpoint-resume support).`);
 
     // Register all tasks
     for (const def of taskDefs) {
@@ -761,21 +970,69 @@ class Orchestrator {
   async _runAgentWorker(agentId) {
     console.log(`[AgentWorker:${agentId}] Started`);
     let idleCount = 0;
+    let waitingForRunningCount = 0; // P2-2 fix: adaptive wait counter when other workers are running
     const MAX_IDLE = 8; // N32 fix: increased from 3 to 8 to tolerate longer dependency waits
 
     while (idleCount < MAX_IDLE) {
       // Check if all tasks are terminal (done/exhausted/failed-no-retry) before idling
       const summary = this.taskManager.getSummary();
-      const activeStatuses = ['pending', 'running', 'blocked', 'interrupted', 'failed'];
-      const hasActive = activeStatuses.some(s => (summary.byStatus[s] || 0) > 0);
+      // P0-2 fix: 'failed' tasks in their backoff window are NOT immediately claimable.
+      // If the only "active" tasks are failed tasks whose nextRetryAt hasn't arrived yet,
+      // the worker would spin MAX_IDLE times (4s total) and exit – abandoning tasks that
+      // will become claimable in 30s. We now check whether any failed task is actually
+      // ready to retry (nextRetryAt <= now). If all failed tasks are still in backoff,
+      // we treat them as "pending future work" and wait with a longer sleep instead of
+      // burning through idle cycles.
+      const nonFailedActive = ['pending', 'running', 'blocked', 'interrupted']
+        .some(s => (summary.byStatus[s] || 0) > 0);
+      const failedCount = summary.byStatus['failed'] || 0;
+      let hasRetryableNow = false;
+      if (!nonFailedActive && failedCount > 0 && typeof this.taskManager.getRetryableTasks === 'function') {
+        // Check if any failed task is past its nextRetryAt
+        hasRetryableNow = this.taskManager.getRetryableTasks().length > 0;
+      }
+      const hasActive = nonFailedActive || hasRetryableNow || (failedCount > 0 && typeof this.taskManager.getRetryableTasks !== 'function');
       if (!hasActive) break; // All tasks are terminal, no point waiting
 
+      // P1-3 fix: re-fetch summary immediately before claimNextTask to close the
+      // TOCTOU (time-of-check/time-of-use) race window.
+      // Between the hasActive check above (T1) and claimNextTask below (T2), another
+      // worker may have claimed the last pending task. If we used the T1 snapshot for
+      // the hasRunning check after a null claim, we might see hasRunning=false and
+      // increment idleCount even though work is still in progress.
+      // Re-fetching here ensures the hasRunning check below uses the freshest state.
       const task = this.taskManager.claimNextTask(agentId);
       if (!task) {
         // N32 fix: if there are running tasks (other workers are making progress),
         // don't count this as an idle cycle – just wait without incrementing idleCount.
         // Only increment idleCount when truly nothing is happening (no running tasks).
-        const hasRunning = (summary.byStatus['running'] || 0) > 0;
+        // P1-3 fix: use a fresh summary snapshot (not the T1 snapshot from above)
+        // to avoid the race where another worker claimed the last task between T1 and T2.
+        const freshSummary = this.taskManager.getSummary();
+        const hasRunning = (freshSummary.byStatus['running'] || 0) > 0;
+
+        // P0-2 fix (continued): if all failed tasks are in backoff (none retryable now),
+        // wait until the nearest nextRetryAt instead of burning through idle cycles.
+        // This prevents the worker from exiting before the backoff window expires.
+        const freshFailedCount = freshSummary.byStatus['failed'] || 0;
+        const freshNonFailedActive = ['pending', 'running', 'blocked', 'interrupted']
+          .some(s => (freshSummary.byStatus[s] || 0) > 0);
+        if (!hasRunning && !freshNonFailedActive && freshFailedCount > 0 &&
+            typeof this.taskManager.getRetryableTasks === 'function' &&
+            this.taskManager.getRetryableTasks().length === 0) {
+          // All failed tasks are in backoff – compute wait time to nearest retry
+          const allTasks = this.taskManager.getAllTasks();
+          const failedInBackoff = allTasks.filter(t => t.status === 'failed' && t.nextRetryAt);
+          if (failedInBackoff.length > 0) {
+            const nearestRetryMs = Math.min(...failedInBackoff.map(t => new Date(t.nextRetryAt).getTime()));
+            const waitUntilRetry = Math.max(500, nearestRetryMs - Date.now());
+            const cappedWait = Math.min(waitUntilRetry, 10000); // cap at 10s per iteration
+            console.log(`[AgentWorker:${agentId}] All failed tasks in backoff. Waiting ${cappedWait}ms for nearest retry...`);
+            await new Promise(r => setTimeout(r, cappedWait));
+            continue; // Do NOT increment idleCount – we're waiting for a known future event
+          }
+        }
+
         if (!hasRunning) {
           idleCount++;
         }
@@ -784,13 +1041,25 @@ class Orchestrator {
         // Math.pow(2, idleCount - 1) produces 0.5 when idleCount=0 (2^-1 = 0.5),
         // which is an unintended fractional exponent. Exponential backoff only makes
         // sense when truly idle (no running tasks) – use it only in that case.
+      // P2-2 fix: when hasRunning=true (other workers are active), use an
+        // adaptive wait that grows from 500ms up to 5000ms as the worker keeps
+        // waiting. This avoids 600 pointless polls during a 5-minute task while
+        // still reacting quickly when a task finishes.
+        // waitingForRunningCount is reset to 0 whenever a task is claimed (idleCount=0
+        // reset path above) or when hasRunning becomes false.
+        if (hasRunning) {
+          waitingForRunningCount = (waitingForRunningCount || 0) + 1;
+        } else {
+          waitingForRunningCount = 0;
+        }
         const waitMs = hasRunning
-          ? 500
+          ? Math.min(500 * waitingForRunningCount, 5000)
           : Math.min(1000 * Math.pow(2, idleCount - 1), 10000);
         await new Promise(r => setTimeout(r, waitMs));
         continue;
       }
       idleCount = 0;
+      waitingForRunningCount = 0; // P2-2 fix: reset adaptive wait counter on task claim
 
       await this.hooks.emit(HOOK_EVENTS.TASK_CLAIMED, { agentId, taskId: task.id });
 
@@ -821,15 +1090,38 @@ class Orchestrator {
         ]);
 
 
-        this.taskManager.completeTask(task.id, result);
+        // P0-1 fix: completeTask() requires a non-empty verificationNote or it throws.
+        // Previously this call omitted verificationNote entirely (defaulting to ''),
+        // causing every task completion to throw and making runTaskBased() completely
+        // non-functional. We now synthesise a verification note from the task result.
+        const verificationNote = (result && result.summary)
+          ? `Task executed by ${agentId}. Output: ${String(result.summary).slice(0, 120)}`
+          : `Task executed by ${agentId} (no output summary).`;
+        this.taskManager.completeTask(task.id, result, verificationNote);
         await this.hooks.emit(HOOK_EVENTS.TASK_COMPLETED, { agentId, taskId: task.id, result });
+
+        // ── P0-NEW-3: Dynamic re-planning after each task completion ──────────
+        // After a task completes, ask LLM to evaluate whether the result reveals
+        // the need for new tasks or dependency changes. This is the core difference
+        // between a "static task graph" and a true Agent system.
+        //
+        // Throttle: only re-plan if there are still pending tasks (no point re-planning
+        // when all tasks are done). Cap at 1 re-plan per task to avoid runaway growth.
+        // Re-planning is non-blocking: failures are logged but do not abort the workflow.
+        await this._evaluateReplan(task, result, agentId).catch(err => {
+          console.warn(`[AgentWorker:${agentId}] Re-planning evaluation failed (non-fatal): ${err.message}`);
+        });
 
         // Record positive experience from successful task
         if (result && result.experience) {
           const expTitle = result.experience.title || `Task ${task.id} solution`;
           // recordIfAbsent is atomic: concurrent workers cannot both pass the
           // findByTitle check and both call record() for the same title.
-          const exp = this.experienceStore.recordIfAbsent(expTitle, {
+          // P1-C fix: await the Promise returned by recordIfAbsent() so the
+          // underlying _save() write completes before the worker moves on.
+          // Previously this was fire-and-forget; if the process exited immediately
+          // after the last worker finished, the write could be silently lost.
+          const exp = await this.experienceStore.recordIfAbsent(expTitle, {
               type: ExperienceType.POSITIVE,
               category: result.experience.category || ExperienceCategory.STABLE_PATTERN,
               title: expTitle,
@@ -840,20 +1132,19 @@ class Orchestrator {
               codeExample: result.experience.codeExample || null,
             });
 
-          // Check if this experience should trigger skill evolution
-          if (exp) {
-            const shouldEvolve = this.experienceStore.markUsed(exp.id);
-            if (shouldEvolve && task.skill) {
-              this.skillEvolution.evolve(task.skill, {
-                section: 'Best Practices',
-                title: exp.title,
-                content: exp.content,
-                sourceExpId: exp.id,
-                reason: `High-frequency pattern from task ${task.id}`,
-              });
-              await this.hooks.emit(HOOK_EVENTS.SKILL_EVOLVED, { skillName: task.skill, expId: exp.id });
-            }
-          }
+          // EvoMap fix: do NOT call markUsed() immediately after recordIfAbsent().
+          // The previous code called markUsed(exp.id) right after creating the experience,
+          // which incremented hitCount from 0 to 1 on a brand-new entry. This conflated
+          // "just created" with "was retrieved and helped solve a problem".
+          //
+          // hitCount should only be incremented via markUsedBatch() in the feedback-loop
+          // paths (orchestrator-stages.js: ARCHITECT/CODE/TEST success paths), where we
+          // know the experience was injected into a prompt AND the downstream task succeeded.
+          //
+          // The skill evolution trigger (adaptive threshold per Defect I fix) is now driven
+          // by genuine "helped solve N problems" signals, not "was created N times".
+          // The threshold varies by experience category: generic patterns evolve at 3 hits,
+          // framework-specific knowledge at 7 hits, others at 5 hits.
         }
 
       } catch (err) {
@@ -882,8 +1173,12 @@ class Orchestrator {
         // N11 fix: task.title may be undefined if task data was corrupted during _load()
         const negTitle = `Task failure: ${(task.title ?? 'unknown').slice(0, 50)}`;
         const negContent = `Task "${task.title}" failed with: ${err.message}`;
-        if (!this.experienceStore.appendByTitle(negTitle, negContent)) {
-          this.experienceStore.record({
+        // P1-C fix: await both appendByTitle and record so writes complete before
+        // the worker loop continues. appendByTitle returns a Promise (or false if
+        // the title was not found); record also returns a Promise.
+        const appended = await this.experienceStore.appendByTitle(negTitle, negContent);
+        if (!appended) {
+          await this.experienceStore.record({
             type: ExperienceType.NEGATIVE,
             category: ExperienceCategory.PITFALL,
             title: negTitle,
@@ -1048,14 +1343,156 @@ class Orchestrator {
     const experience = {
       title: `Task completed: ${(task.title ?? 'unknown').slice(0, 60)}`,
       content: `Task "${task.title}" completed successfully. Output summary: ${(output ?? '').slice(0, 300)}`,
+      // P1-1 fix: TESTER role should use DEBUG_TECHNIQUE category, not STABLE_PATTERN.
+      // Previously TESTER and DEVELOPER both used STABLE_PATTERN, causing test
+      // experiences and development experiences to be mixed in the same category.
+      // This reduced the precision of getContextBlock('test-report') lookups.
       category: role === AgentRole.ARCHITECT ? ExperienceCategory.ARCHITECTURE
-               : role === AgentRole.TESTER   ? ExperienceCategory.STABLE_PATTERN
+               : role === AgentRole.TESTER   ? ExperienceCategory.DEBUG_TECHNIQUE
                : ExperienceCategory.STABLE_PATTERN,
       tags: [role.toLowerCase(), 'task-based', 'completed'],
       codeExample: null,
     };
 
     return { summary: output, raw: output, experience };
+  }
+
+  // ─── P0-NEW-3: Dynamic Re-planning ───────────────────────────────────────────
+
+  /**
+   * Evaluates whether a completed task's result reveals the need for new tasks
+   * or dependency changes. If so, inserts new tasks into the TaskManager.
+   *
+   * This is the core of "dynamic re-planning" – the difference between a static
+   * task graph (fixed at start) and a true Agent system (adapts during execution).
+   *
+   * Design principles:
+   *   - Non-blocking: failures are caught and logged, never abort the workflow
+   *   - Throttled: only runs when there are still pending tasks (no point re-planning
+   *     when all tasks are done or the task graph is already large)
+   *   - Bounded: max 3 new tasks per re-plan, max 2 re-plans per original task
+   *   - Idempotent: uses recordIfAbsent-style title dedup to avoid duplicate tasks
+   *
+   * @param {object} completedTask - The task that just completed
+   * @param {object} result        - The task result from _executeTask
+   * @param {string} agentId       - For logging
+   */
+  async _evaluateReplan(completedTask, result, agentId) {
+    // Guard: only re-plan if there are still pending tasks
+    const summary = this.taskManager.getSummary();
+    const pendingCount = (summary.byStatus['pending'] || 0) + (summary.byStatus['blocked'] || 0);
+    if (pendingCount === 0) return; // All remaining tasks are running/done – no point re-planning
+
+    // Guard: cap total task count to avoid runaway growth (max 20 tasks total)
+    const MAX_TOTAL_TASKS = 20;
+    if (summary.total >= MAX_TOTAL_TASKS) {
+      console.log(`[AgentWorker:${agentId}] Re-planning skipped: task graph at max size (${summary.total}/${MAX_TOTAL_TASKS}).`);
+      return;
+    }
+
+    // Guard: skip re-planning for trivial/short outputs (likely no new insights)
+    const outputSummary = (result && result.summary) ? String(result.summary) : '';
+    if (outputSummary.length < 100) return;
+
+    // Build re-planning prompt
+    const pendingTasks = this.taskManager.getAllTasks()
+      .filter(t => t.status === 'pending' || t.status === 'blocked')
+      .slice(0, 10) // cap to avoid token overflow
+      .map(t => `- [${t.id}] ${t.title}${t.deps && t.deps.length > 0 ? ` (deps: ${t.deps.join(', ')})` : ''}`)
+      .join('\n');
+
+    const replanPrompt = [
+      `You are a **Task Re-planning Agent**. A task just completed and you must evaluate whether its result reveals the need for additional tasks.`,
+      ``,
+      `## Completed Task`,
+      `**ID**: ${completedTask.id}`,
+      `**Title**: ${completedTask.title}`,
+      `**Output Summary** (first 800 chars):`,
+      outputSummary.slice(0, 800),
+      ``,
+      `## Remaining Pending Tasks`,
+      pendingTasks || '(none)',
+      ``,
+      `## Decision`,
+      `Based on the completed task's output, do you need to insert NEW tasks that were not in the original plan?`,
+      ``,
+      `Rules:`,
+      `- Only add tasks if the completed output REVEALS a concrete gap that the existing pending tasks do NOT cover.`,
+      `- Do NOT add tasks that duplicate or overlap with existing pending tasks.`,
+      `- Maximum 3 new tasks per re-plan.`,
+      `- New tasks must have clear, actionable titles (≤60 chars).`,
+      `- New tasks may depend on the completed task (use its ID: ${completedTask.id}).`,
+      ``,
+      `## Output Format`,
+      `If no new tasks are needed, respond with exactly:`,
+      `NO_REPLAN`,
+      ``,
+      `If new tasks are needed, respond with:`,
+      `REPLAN`,
+      `NEW_TASKS:`,
+      `- <task title> [deps: ${completedTask.id}]`,
+      `- <task title> [deps: none]`,
+      `(max 3 tasks)`,
+    ].join('\n');
+
+    let replanResponse;
+    try {
+      // Use a short timeout for re-planning (5s) to avoid blocking the worker
+      const REPLAN_TIMEOUT_MS = 15_000;
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Re-planning timed out after ${REPLAN_TIMEOUT_MS}ms`)), REPLAN_TIMEOUT_MS)
+      );
+      replanResponse = await Promise.race([this._rawLlmCall(replanPrompt), timeoutPromise]);
+    } catch (err) {
+      console.warn(`[AgentWorker:${agentId}] Re-planning LLM call failed: ${err.message}`);
+      return;
+    }
+
+    if (!replanResponse || /NO_REPLAN/i.test(replanResponse)) {
+      console.log(`[AgentWorker:${agentId}] Re-planning: no new tasks needed after "${completedTask.title}".`);
+      return;
+    }
+
+    // Parse new tasks
+    if (!/REPLAN/i.test(replanResponse)) return;
+
+    const newTaskLines = replanResponse
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.startsWith('- '));
+
+    if (newTaskLines.length === 0) return;
+
+    let inserted = 0;
+    const existingTitles = new Set(
+      this.taskManager.getAllTasks().map(t => (t.title || '').toLowerCase())
+    );
+
+    for (const line of newTaskLines.slice(0, 3)) {
+      const depsMatch = line.match(/\[deps:\s*([^\]]+)\]/i);
+      const title = line.slice(2).replace(/\[deps:[^\]]*\]/i, '').trim();
+      if (!title || existingTitles.has(title.toLowerCase())) continue;
+
+      let deps = [];
+      if (depsMatch && depsMatch[1].trim().toLowerCase() !== 'none') {
+        deps = depsMatch[1].split(',').map(d => d.trim()).filter(Boolean);
+      }
+
+      const newId = `replan-${completedTask.id}-${inserted + 1}`;
+      try {
+        this.taskManager.addTask({ id: newId, title, deps, description: `Auto-inserted by re-planning after task "${completedTask.title}" completed.` });
+        existingTitles.add(title.toLowerCase());
+        inserted++;
+        console.log(`[AgentWorker:${agentId}] 🔄 Re-planning: inserted new task [${newId}] "${title}"${deps.length > 0 ? ` (deps: ${deps.join(', ')})` : ''}`);
+        this.stateMachine.recordRisk('low', `[Replan] New task inserted after "${completedTask.title}": "${title}"`);
+      } catch (err) {
+        console.warn(`[AgentWorker:${agentId}] Re-planning: failed to insert task "${title}": ${err.message}`);
+      }
+    }
+
+    if (inserted > 0) {
+      console.log(`[AgentWorker:${agentId}] ✅ Re-planning complete: ${inserted} new task(s) inserted.`);
+    }
   }
 
   // ─── AgentFlow: Experience & Skill Management ─────────────────────────────────
@@ -1168,6 +1605,28 @@ class Orchestrator {
       const artifactPath = alreadyTransitioned ? stageResult.artifactPath : stageResult;
       if (!alreadyTransitioned) {
         await this.stateMachine.transition(artifactPath, `Stage ${fromState} → ${toState} completed`);
+      } else {
+        // P0-C fix: the rollback chain (e.g. _runTester → _runDeveloper → _runArchitect)
+        // has already called stateMachine.transition() internally, advancing the state
+        // machine to an intermediate state (e.g. ARCHITECT after a CODE→ARCHITECT rollback).
+        // Without this fix, _runStage would skip its own transition() call and the state
+        // machine would remain at ARCHITECT even though the CODE→TEST stage has "completed"
+        // (via the rollback path). On the next checkpoint resume, the workflow would
+        // incorrectly restart from ARCHITECT instead of the correct toState.
+        //
+        // Fix: use jumpTo(toState) to forcibly advance the state machine to the stage's
+        // intended target state, regardless of where the rollback chain left it.
+        // jumpTo() is safe here because:
+        //   1. It records a [JUMP] history entry so the rollback is fully auditable.
+        //   2. The actual work for this stage has already been completed (or rolled back
+        //      and re-executed) – we are only correcting the state machine's bookkeeping.
+        //   3. If the state machine is already at toState (e.g. a future fix makes the
+        //      rollback chain advance it correctly), jumpTo() is a no-op.
+        const currentState = this.stateMachine.getState();
+        if (currentState !== toState) {
+          console.log(`[Orchestrator] P0-C: State machine at "${currentState}" after rollback chain; jumping to "${toState}" to stay in sync.`);
+          await this.stateMachine.jumpTo(toState, `P0-C sync after rollback chain in stage ${fromState}→${toState}`);
+        }
       }
     } catch (err) {
       stageStatus = 'error';

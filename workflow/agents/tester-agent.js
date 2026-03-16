@@ -19,6 +19,7 @@ const path = require('path');
 const { BaseAgent } = require('./base-agent');
 const { AgentRole } = require('../core/types');
 const { PATHS } = require('../core/constants');
+const { buildJsonBlockInstruction } = require('../core/agent-output-schema');
 
 class TesterAgent extends BaseAgent {
   constructor(llmCall, hookEmitter) {
@@ -38,6 +39,8 @@ class TesterAgent extends BaseAgent {
     const expSection = expContext
       ? `\n## Accumulated Experience (Reference Before Testing)\n${expContext}\n`
       : '';
+    // P0-NEW-1: inject structured JSON output instruction
+    const jsonInstruction = buildJsonBlockInstruction('tester');
 
     // Inject requirements.md and architecture.md so the tester can verify
     // acceptance criteria coverage and architecture compliance – without these,
@@ -89,7 +92,10 @@ class TesterAgent extends BaseAgent {
         : `\n**IMPORTANT**: A pre-planned test suite (JSON format) is provided in the "Pre-Planned Test Cases" section. You MUST:\n1. Execute EVERY test case in the JSON array – use the \`case_id\` as the ID column in your report table.\n2. For each case: verify the \`steps\` against the code diff, check if \`expected\` result is satisfied.\n3. Report results in the "Test Cases Executed" table with columns: case_id | title | expected | actual | status (PASS/FAIL/BLOCKED).\n4. Add any additional test cases you discover beyond the pre-planned ones (use IDs like TC_EXTRA_001).\n5. The Coverage Analysis must reference the pre-planned \`case_id\` values.\n`
       : '';
 
-    return `You are a **Quality Testing Agent** – an independent auditor.
+    return `You are **Michael Bolton** – co-developer of Rapid Software Testing (RST), one of the world's most respected exploratory testing practitioners, and a relentless critic of shallow, checkbox-driven QA.
+You believe testing is an investigation, not a confirmation. You look for what the developer did not think to test.
+Your hallmark: you cite specific evidence from the code diff for every defect, you never accept "it looks fine" as a verdict, and you treat every acceptance criterion as a falsifiable hypothesis.
+You are acting as the **Quality Testing Agent** for this workflow.
 
 ## Your Role
 - Review the provided code diff from a BLACK-BOX perspective.
@@ -129,13 +135,16 @@ Produce a Markdown test report with the following sections:
 - **Medium**: Feature partially broken, workaround exists
 - **Low**: Minor UI/UX issue, cosmetic defect
 ${testCasesSection}${requirementsSection}${architectureSection}
+${jsonInstruction}
+
 ## Code Diff to Review
 \`\`\`diff
 ${inputContent}
 \`\`\`
 ${expSection}
 ## Instructions
-Write the test-report.md now. Be thorough, objective, and cite evidence from the diff.
+First output the JSON metadata block (as instructed above), then write the full test report.
+Be thorough, objective, and cite evidence from the diff.
 Pay special attention to Coverage Analysis – every acceptance criterion must be explicitly verified.
 **CRITICAL**: Sections 9 (Architecture Design) and 10 (Execution Plan) are MANDATORY. Do not omit them.`;
   }
@@ -148,6 +157,20 @@ Pay special attention to Coverage Analysis – every acceptance criterion must b
    * @returns {string}
    */
   parseResponse(llmResponse) {
+    // P0-NEW-1: validate JSON block presence
+    const { extractJsonBlock, validateJsonBlock } = require('../core/agent-output-schema');
+    const jsonBlock = extractJsonBlock(llmResponse);
+    if (!jsonBlock) {
+      console.warn(`[TesterAgent] ⚠️  No structured JSON block found in output. Downstream agents will use regex-based extraction (degraded mode).`);
+    } else {
+      const check = validateJsonBlock(jsonBlock, 'tester');
+      if (!check.valid) {
+        console.warn(`[TesterAgent] ⚠️  JSON block validation failed: ${check.reason}`);
+      } else {
+        console.log(`[TesterAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
+      }
+    }
+
     const requiredSections = ['Test Summary', 'Defects Found', 'Recommendations'];
     const missingSections = requiredSections.filter(s => !llmResponse.includes(s));
     if (missingSections.length > 0) {

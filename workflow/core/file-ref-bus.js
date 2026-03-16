@@ -17,6 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS } = require('../core/constants');
+const { extractJsonBlock, validateJsonBlock } = require('../core/agent-output-schema');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -83,6 +84,141 @@ function warnDirectTextPassing(senderRole, receiverRole, contentLength) {
   );
 }
 
+// ─── Agent Output Contracts ───────────────────────────────────────────────────
+
+/**
+ * Defines the minimum content contract for each Agent's input file.
+ *
+ * Problem it solves (P2-D):
+ *   FileRefBus validates file path format but not file content. If ANALYST outputs
+ *   an empty or malformed requirements.md, ARCHITECT silently runs with bad input.
+ *   These contracts catch that at publish() time, before the downstream Agent runs.
+ *
+ * P2-NEW-2 fix: requiredSections now includes Chinese equivalents for each keyword.
+ *   Previously only English keywords were checked, causing false-positive contract
+ *   violations for Chinese-language projects (e.g. "## 需求" was not recognised as
+ *   a requirements section). Each entry now has both English and Chinese variants.
+ *
+ * Contract format:
+ *   { requiredSections: string[], minLength: number, description: string }
+ *
+ * requiredSections: at least one of these strings must appear in the file content.
+ *   (OR semantics – any one match is sufficient to pass the check)
+ * minLength: minimum file size in characters (catches empty/stub files)
+ */
+const AGENT_CONTRACTS = {
+  // ANALYST → ARCHITECT: requirements.md must have a requirements section
+  architect: {
+    requiredSections: [
+      // English variants
+      '## Requirements', '## Functional', '## Feature', '# Requirements', 'requirements',
+      // Chinese variants (P2-NEW-2)
+      '## 需求', '## 功能', '## 功能需求', '## 用户故事', '## 特性', '需求', '功能需求',
+    ],
+    minLength: 100,
+    description: 'requirements.md for ArchitectAgent',
+  },
+  // ARCHITECT → DEVELOPER: architecture.md must have a design/component section
+  developer: {
+    requiredSections: [
+      // English variants
+      '## Architecture', '## Component', '## Design', '## System', '# Architecture', 'architecture',
+      // Chinese variants (P2-NEW-2)
+      '## 架构', '## 系统架构', '## 组件', '## 模块', '## 设计', '## 技术栈', '架构设计', '技术栈',
+    ],
+    minLength: 200,
+    description: 'architecture.md for DeveloperAgent',
+  },
+  // DEVELOPER → TESTER: code.diff must look like a diff
+  tester: {
+    requiredSections: [
+      'diff --git', '--- a/', '+++ b/', '@@', '.js', '.ts', '.py',
+      // Chinese projects may use other extensions (P2-NEW-2)
+      '.java', '.go', '.cs', '.lua', '.rb',
+    ],
+    minLength: 50,
+    description: 'code.diff for TesterAgent',
+  },
+};
+
+/**
+ * Validates that a file's content satisfies the downstream Agent's input contract.
+ *
+ * P0-NEW-1 fix: Two-tier validation:
+ *   Tier 1 (preferred): JSON Schema validation – if the file contains a structured
+ *     JSON block (agent-output-schema.js format), validate required fields directly.
+ *     This is precise and immune to keyword false-positives.
+ *   Tier 2 (fallback): Keyword-based heuristic – for legacy/plain Markdown files
+ *     that don't yet embed a JSON block. Same as the original P2-D implementation.
+ *
+ * @param {string} receiverRole - The downstream Agent role
+ * @param {string} filePath     - Path to the file being published
+ * @returns {{ valid: boolean, reason: string, tier: 'json-schema'|'keyword'|'no-contract' }}
+ */
+function validateAgentContract(receiverRole, filePath) {
+  const contract = AGENT_CONTRACTS[receiverRole.toLowerCase()];
+  if (!contract) return { valid: true, reason: 'no contract defined', tier: 'no-contract' };
+
+  let content;
+  try {
+    content = fs.readFileSync(filePath, 'utf-8');
+  } catch (err) {
+    return { valid: false, reason: `Cannot read file for contract validation: ${err.message}`, tier: 'no-contract' };
+  }
+
+  if (content.length < contract.minLength) {
+    return {
+      valid: false,
+      reason: `Contract violation for ${contract.description}: file is too short ` +
+              `(${content.length} chars, minimum ${contract.minLength}). ` +
+              `The file may be empty or a stub.`,
+      tier: 'keyword',
+    };
+  }
+
+  // ── Tier 1: JSON Schema validation (P0-NEW-1) ─────────────────────────────
+  // If the file contains a structured JSON block, validate it against the schema.
+  // This is the preferred path for agents that output JSON+Markdown hybrid files.
+  const jsonBlock = extractJsonBlock(content);
+  if (jsonBlock) {
+    // Map receiverRole to the sender's role (the file was produced by the sender)
+    const senderRoleMap = {
+      architect: 'analyst',
+      developer: 'architect',
+      tester:    'developer',
+    };
+    const senderRole = senderRoleMap[receiverRole.toLowerCase()];
+    if (senderRole) {
+      const schemaCheck = validateJsonBlock(jsonBlock, senderRole);
+      if (!schemaCheck.valid) {
+        return {
+          valid: false,
+          reason: `JSON Schema violation for ${contract.description}: ${schemaCheck.reason}`,
+          tier: 'json-schema',
+        };
+      }
+      // JSON block is valid – skip keyword check
+      return { valid: true, reason: 'JSON schema validated', tier: 'json-schema' };
+    }
+  }
+
+  // ── Tier 2: Keyword-based heuristic (fallback for legacy Markdown files) ──
+  const hasRequiredSection = contract.requiredSections.some(s =>
+    content.toLowerCase().includes(s.toLowerCase())
+  );
+  if (!hasRequiredSection) {
+    return {
+      valid: false,
+      reason: `Contract violation for ${contract.description}: none of the required sections ` +
+              `[${contract.requiredSections.slice(0, 3).join(', ')}...] found in file. ` +
+              `The file may have an unexpected format or missing structured JSON block.`,
+      tier: 'keyword',
+    };
+  }
+
+  return { valid: true, reason: 'keyword check passed', tier: 'keyword' };
+}
+
 // ─── FileRefBus ───────────────────────────────────────────────────────────────
 
 /**
@@ -106,6 +242,8 @@ class FileRefBus {
     this._queue = new Map();
     /** @type {Array<{from, to, filePath, meta, timestamp}>} */
     this._log = [];
+    /** @type {Array<{from, to, filePath, reason, timestamp}>} */
+    this._contractViolations = []; // P2-D: tracks content contract violations
   }
 
   /**
@@ -139,6 +277,27 @@ class FileRefBus {
 
     if (!fs.existsSync(filePath)) {
       throw new Error(`[FileRefBus] File does not exist: "${filePath}" (from ${senderRole} to ${receiverRole})`);
+    }
+
+    // P2-D fix: validate file content against the downstream Agent's input contract.
+    // This catches empty/malformed files before the downstream Agent runs silently
+    // with bad input. Contract violations are logged as warnings (not hard errors)
+    // to avoid blocking the workflow on edge cases (e.g. minimal valid files).
+    const contractCheck = validateAgentContract(receiverRole, filePath);
+    if (!contractCheck.valid) {
+      console.warn(
+        `\n⚠️  [FileRefBus] CONTRACT VIOLATION DETECTED\n` +
+        `   From: ${senderRole} → To: ${receiverRole}\n` +
+        `   File: ${path.basename(filePath)}\n` +
+        `   Reason: ${contractCheck.reason}\n` +
+        `   The downstream Agent may produce incorrect output due to malformed input.\n`
+      );
+      // Record as a soft warning – do not throw, as the Agent may still handle it.
+      // Callers can check bus.getContractViolations() to decide whether to abort.
+      this._contractViolations.push({
+        from: senderRole, to: receiverRole, filePath,
+        reason: contractCheck.reason, timestamp: new Date().toISOString(),
+      });
     }
 
     this._queue.set(receiverRole, { filePath, meta });
@@ -193,10 +352,47 @@ class FileRefBus {
   }
 
   /**
+   * Clears all messages whose sender matches senderRole.
+   * Called during rollback to invalidate stale downstream messages so that
+   * re-run stages cannot accidentally consume messages from the previous attempt.
+   *
+   * Example: rolling back from CODE → ARCHITECT should clear the DEVELOPER
+   * message that ARCHITECT published, so _runDeveloper cannot consume the old
+   * architecture.md path when it re-runs after the rollback.
+   *
+   * @param {string} senderRole - The role whose outbound messages should be cleared
+   * @returns {number} Number of messages cleared
+   */
+  clearDownstream(senderRole) {
+    let cleared = 0;
+    for (const [receiverRole, entry] of this._queue) {
+      // The log records the sender; find all queue entries whose last publish
+      // came from senderRole by checking the communication log in reverse.
+      const lastPublish = [...this._log].reverse().find(l => l.to === receiverRole);
+      if (lastPublish && lastPublish.from === senderRole) {
+        this._queue.delete(receiverRole);
+        cleared++;
+        console.log(`[FileRefBus] 🧹 Cleared stale downstream message: ${senderRole} → ${receiverRole} (rollback invalidation)`);
+      }
+    }
+    return cleared;
+  }
+
+  /**
    * Returns the full communication log for observability.
    */
   getLog() {
     return [...this._log];
+  }
+
+  /**
+   * Returns all contract violations recorded during this session. (P2-D)
+   * Callers can check this after each publish() to decide whether to abort
+   * the workflow or record a risk.
+   * @returns {Array<{from, to, filePath, reason, timestamp}>}
+   */
+  getContractViolations() {
+    return [...this._contractViolations];
   }
 
   /**
@@ -214,4 +410,4 @@ class FileRefBus {
   }
 }
 
-module.exports = { FileRefBus, validateFileRef, warnDirectTextPassing };
+module.exports = { FileRefBus, validateFileRef, warnDirectTextPassing, validateAgentContract, AGENT_CONTRACTS };

@@ -68,9 +68,87 @@ class SkillEvolutionEngine {
     return meta;
   }
 
+  // ─── Capsule Dedup Helpers ────────────────────────────────────────────────────
+
+  /**
+   * Computes Jaccard similarity between two strings based on word tokens.
+   * Used for title-level dedup: two titles with Jaccard ≥ DEDUP_THRESHOLD are
+   * considered to describe the same concept and should be merged, not appended.
+   *
+   * Why Jaccard on words (not Levenshtein on chars):
+   *  - "Use async/await for DB calls" vs "Always use async/await for DB operations"
+   *    Levenshtein: 22 edits (high distance → not detected as duplicate)
+   *    Jaccard on {use,async,await,db}: intersection=4, union=7 → 0.57 (detected)
+   *  - "JWT token expiry handling" vs "Handle JWT expiration"
+   *    Jaccard on {jwt,token,expiry,handle,expiration}: intersection=1, union=5 → 0.2
+   *    (correctly NOT merged – different enough)
+   *
+   * @param {string} a
+   * @param {string} b
+   * @returns {number} 0.0 – 1.0
+   */
+  _titleSimilarity(a, b) {
+    // Normalize: lowercase, strip punctuation, split on whitespace
+    const tokenize = s => new Set(
+      s.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(w => w.length >= 3)
+    );
+    const setA = tokenize(a);
+    const setB = tokenize(b);
+    if (setA.size === 0 && setB.size === 0) return 1.0;
+    if (setA.size === 0 || setB.size === 0) return 0.0;
+    let intersection = 0;
+    for (const token of setA) {
+      if (setB.has(token)) intersection++;
+    }
+    const union = setA.size + setB.size - intersection;
+    return intersection / union;
+  }
+
+  /**
+   * Extracts all entry titles from a given section of a skill file.
+   * Returns an array of { title, startIdx } objects for dedup scanning.
+   *
+   * @param {string} skillContent - Full skill file content
+   * @param {string} section      - Section name (e.g. 'Best Practices')
+   * @returns {{ title: string, startIdx: number }[]}
+   */
+  _extractSectionTitles(skillContent, section) {
+    const sectionHeader = `## ${section}`;
+    const sectionIdx = skillContent.indexOf(sectionHeader);
+    if (sectionIdx === -1) return [];
+
+    const afterSection = sectionIdx + sectionHeader.length;
+    const nextSectionIdx = skillContent.indexOf('\n## ', afterSection);
+    const sectionBody = nextSectionIdx === -1
+      ? skillContent.slice(afterSection)
+      : skillContent.slice(afterSection, nextSectionIdx);
+
+    const entries = [];
+    // Match ### headings (entry titles) within the section
+    const headingRegex = /\n### (.+)/g;
+    let match;
+    while ((match = headingRegex.exec(sectionBody)) !== null) {
+      entries.push({
+        title: match[1].trim(),
+        startIdx: afterSection + match.index,
+      });
+    }
+    return entries;
+  }
+
   /**
    * Evolves a skill by appending new knowledge from an experience.
    * Increments version and records evolution history.
+   *
+   * Capsule Inheritance (Improvement 3):
+   *   Before appending, scans existing entries in the target section for
+   *   title-level duplicates using Jaccard word-token similarity.
+   *   If a similar entry (similarity ≥ DEDUP_THRESHOLD) is found:
+   *     - Skips the append (no duplicate content written)
+   *     - Still bumps the version and records the dedup event in Evolution History
+   *     - Logs a clear message so the caller knows dedup fired
+   *   This prevents the skill file from accumulating semantically identical entries
+   *   like "Use async/await for DB calls" / "Always use async/await for DB operations".
    *
    * @param {string} skillName
    * @param {object} evolution
@@ -92,6 +170,64 @@ class SkillEvolutionEngine {
     let skillContent = '';
     if (fs.existsSync(meta.filePath)) {
       skillContent = fs.readFileSync(meta.filePath, 'utf-8');
+    }
+
+    // ── Capsule Inheritance: title-level dedup before appending ──────────────
+    // Scan existing entries in the target section for semantically similar titles.
+    // Threshold: Jaccard ≥ 0.6 means "same concept, different wording" → skip append.
+    const DEDUP_THRESHOLD = 0.6;
+    const existingEntries = this._extractSectionTitles(skillContent, section);
+    let dedupMatch = null;
+    for (const entry of existingEntries) {
+      const sim = this._titleSimilarity(title, entry.title);
+      if (sim >= DEDUP_THRESHOLD) {
+        dedupMatch = { title: entry.title, similarity: sim };
+        break;
+      }
+    }
+
+    if (dedupMatch) {
+      // Duplicate detected: bump version and record in history, but skip content append.
+      // This keeps the version timeline accurate ("we saw this pattern again") without
+      // bloating the file with redundant content.
+      console.log(`[SkillEvolution] 🔁 Dedup: "${title}" ≈ "${dedupMatch.title}" (Jaccard=${dedupMatch.similarity.toFixed(2)}) – skipping append, bumping version only.`);
+
+      let [dMajor, dMinor, dPatch] = meta.version.split('.').map(Number);
+      dPatch += 1;
+      if (dPatch >= 10) { dPatch = 0; dMinor += 1; }
+      if (dMinor >= 10) { dMinor = 0; dMajor += 1; }
+      const dedupVersion = `${dMajor}.${dMinor}.${dPatch}`;
+
+      // Update version header
+      const firstSecIdx = skillContent.indexOf('\n## ');
+      const hPart = firstSecIdx === -1 ? skillContent : skillContent.slice(0, firstSecIdx);
+      const bPart = firstSecIdx === -1 ? '' : skillContent.slice(firstSecIdx);
+      const vPat = /\*\*Version\*\*: \d+\.\d+\.\d+/;
+      let updatedContent = vPat.test(hPart)
+        ? hPart.replace(vPat, `**Version**: ${dedupVersion}`) + bPart
+        : `> **Version**: ${dedupVersion}\n` + hPart + bPart;
+
+      // Append dedup record to Evolution History
+      const dedupHistoryEntry = `| v${dedupVersion} | ${new Date().toISOString().slice(0, 10)} | [DEDUP] "${title}" merged into "${dedupMatch.title}" (Jaccard=${dedupMatch.similarity.toFixed(2)}) |`;
+      if (updatedContent.includes('## Evolution History')) {
+        const hIdx = updatedContent.indexOf('## Evolution History');
+        const afterH = updatedContent.indexOf('\n## ', hIdx + 1);
+        const hSection = afterH === -1 ? updatedContent.slice(hIdx) : updatedContent.slice(hIdx, afterH);
+        const trimmedH = hSection.trimEnd();
+        const insertP = hIdx + trimmedH.length;
+        updatedContent = updatedContent.slice(0, insertP) + `\n${dedupHistoryEntry}` + updatedContent.slice(insertP);
+      } else {
+        updatedContent += `\n\n## Evolution History\n\n| Version | Date | Change |\n|---------|------|--------|\n${dedupHistoryEntry}\n`;
+      }
+
+      const dedupTmpPath = meta.filePath + '.tmp';
+      fs.writeFileSync(dedupTmpPath, updatedContent, 'utf-8');
+      fs.renameSync(dedupTmpPath, meta.filePath);
+      meta.version = dedupVersion;
+      meta.evolutionCount += 1;
+      meta.lastEvolvedAt = new Date().toISOString();
+      this._saveRegistry();
+      return true;
     }
 
     // Compute new version (do NOT mutate meta yet – write file first, then update registry)

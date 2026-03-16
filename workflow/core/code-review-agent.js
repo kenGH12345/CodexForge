@@ -6,12 +6,13 @@
  * checking it against a structured checklist of domain best practices.
  *
  * Review dimensions (checklist categories):
- *   1. Security      – injection, auth, secrets, input validation
- *   2. Error Handling – all error branches covered, no silent failures
- *   3. Performance   – no obvious N+1, memory leaks, blocking calls
- *   4. Code Style    – naming, comments, dead code, magic numbers
- *   5. Requirements  – every acceptance criterion reflected in the diff
- *   6. Edge Cases    – null/undefined, empty collections, boundary values
+ *   1. Syntax        – parseability, valid JS, intact comment blocks
+ *   2. Security      – injection, auth, secrets, input validation
+ *   3. Error Handling – all error branches covered, no silent failures
+ *   4. Performance   – no obvious N+1, memory leaks, blocking calls
+ *   5. Code Style    – naming, comments, dead code, magic numbers
+ *   6. Requirements  – every acceptance criterion reflected in the diff
+ *   7. Edge Cases    – null/undefined, empty collections, boundary values
  *
  * Self-correction loop:
  *   code.diff → checklist review → issues found → refinement prompt →
@@ -121,6 +122,18 @@ const DEFAULT_CHECKLIST = [
     hint: 'Extra features add untested surface area and delay delivery.',
   },
 
+  // ── Syntax & Parseability ────────────────────────────────────────────────
+  {
+    id: 'SYNTAX-001', category: 'Syntax', severity: 'critical',
+    description: 'All modified files are syntactically valid and parseable',
+    hint: 'Check for unclosed brackets, broken comment blocks (e.g. JSDoc missing /** opener), unterminated strings, and mismatched template literals. A single broken comment can cascade into SyntaxError for the entire module.',
+  },
+  {
+    id: 'SYNTAX-002', category: 'Syntax', severity: 'high',
+    description: 'No broken JSDoc / multi-line comment blocks (missing /** or */)',
+    hint: 'Look for multi-line comments that are missing the opening /** or closing */. These cause the JS parser to treat subsequent code as part of the comment, leading to cryptic SyntaxErrors far from the actual defect.',
+  },
+
   // ── Edge Cases ────────────────────────────────────────────────────────────
   {
     id: 'EDGE-001', category: 'Edge Cases', severity: 'medium',
@@ -160,7 +173,10 @@ function buildReviewPrompt(checklist, codeDiff, requirementText = '') {
     : '';
 
   return [
-    `You are a senior code reviewer performing a structured checklist review.`,
+    `You are **Robert C. Martin (Uncle Bob)** – author of *Clean Code*, *The Clean Coder*, and *Clean Architecture*, and the originator of the SOLID principles.
+You have reviewed more code than almost anyone alive, and you have zero tolerance for code that violates the Single Responsibility Principle, hides its intent, or leaves the next developer worse off than you found it.
+Your hallmark: every FAIL finding comes with a concrete, actionable fix instruction – not a vague suggestion.
+You are performing a structured checklist code review.`,
     ``,
     `## Task`,
     `Evaluate the code diff below against each checklist item.`,
@@ -210,7 +226,8 @@ function buildFixPrompt(originalDiff, failures) {
     .join('\n\n');
 
   return [
-    `You are a Code Development Agent performing a self-correction pass.`,
+    `You are **Kent Beck** – inventor of TDD and author of *Test Driven Development: By Example*.
+You are performing a self-correction pass on a code diff. Fix every issue listed below by applying the simplest change that makes the code correct, clear, and honest.`,
     ``,
     `The following issues were found in your code diff during a checklist review:`,
     ``,
@@ -234,6 +251,75 @@ function buildFixPrompt(originalDiff, failures) {
     `## Original Diff`,
     ``,
     originalDiff,
+  ].join('\n');
+}
+
+/**
+ * Builds an adversarial verification prompt for code review.
+ *
+ * Problem it solves (P1-A):
+ *   The main review LLM has systematic blind spots. An adversarial verifier
+ *   uses a skeptical framing to surface issues the main reviewer missed.
+ *
+ * @param {object[]} checklist
+ * @param {string}   codeDiff
+ * @param {object[]} mainResults  - Results from the main review (PASS/N/A items only)
+ * @param {string}   [requirementText]
+ * @returns {string|null}
+ */
+function buildAdversarialCodePrompt(checklist, codeDiff, mainResults, requirementText = '') {
+  const passedItems = mainResults.filter(r => r.result === 'PASS' || r.result === 'N/A');
+  if (passedItems.length === 0) return null;
+
+  const itemList = passedItems
+    .map(r => {
+      const item = checklist.find(c => c.id === r.id);
+      return [
+        `- [${r.id}] (${item?.severity ?? 'unknown'}) ${item?.description ?? r.id}`,
+        `  Main reviewer said: ${r.result} – "${r.finding}"`,
+        `  Hint: ${item?.hint ?? ''}`,
+      ].join('\n');
+    })
+    .join('\n\n');
+
+  const reqSection = requirementText
+    ? `## Requirements Document\n\n${requirementText}\n\n`
+    : '';
+
+  return [
+    `You are **Bruce Schneier** – world-renowned security technologist, author of *Applied Cryptography* and *Secrets and Lies*, and the person who coined the phrase "security is a process, not a product".
+You are performing an adversarial security-focused second-opinion code review. Your job is to find the security and correctness issues that the main reviewer was too lenient about.`,
+    ``,
+    `The main reviewer has already evaluated this code diff and marked the following items as PASS or N/A.`,
+    `Your job is to find cases where the main reviewer was TOO LENIENT.`,
+    ``,
+    `## Your Mission`,
+    ``,
+    `For each item below, determine whether the main reviewer's PASS/N/A verdict was CORRECT or WRONG.`,
+    `- If you agree the item genuinely passes: return PASS with a brief confirmation.`,
+    `- If you find the main reviewer missed a real issue: return FAIL with a SPECIFIC finding (file + line if possible) and fix instruction.`,
+    `- Be skeptical. Look for subtle bugs, missing edge cases, and security oversights.`,
+    `- A comment like "// TODO: add validation" is NOT a pass for input validation.`,
+    ``,
+    `## Items to Re-evaluate (main reviewer said PASS or N/A)`,
+    ``,
+    itemList,
+    ``,
+    reqSection,
+    `## Code Diff`,
+    ``,
+    codeDiff,
+    ``,
+    `## Output Format`,
+    ``,
+    `Return a JSON array with ONLY the items you are re-evaluating (same IDs as above).`,
+    `Each element must have:`,
+    `- "id": checklist item ID`,
+    `- "result": "PASS" | "FAIL"`,
+    `- "finding": one sentence. If FAIL, describe the SPECIFIC issue the main reviewer missed.`,
+    `- "fixInstruction": if FAIL, one concrete instruction. Otherwise null.`,
+    ``,
+    `Return ONLY the JSON array. No markdown fences, no extra text.`,
   ].join('\n');
 }
 
@@ -277,14 +363,17 @@ function extractJsonArray(response) {
 
 class CodeReviewAgent {
   /**
-   * @param {Function} llmCall   - async (prompt: string) => string
+   * @param {Function} llmCall            - async (prompt: string) => string
    * @param {object}   [options]
-   * @param {number}   [options.maxRounds=2]        - Max self-correction rounds
+   * @param {number}   [options.maxRounds=2]           - Max self-correction rounds
    * @param {boolean}  [options.verbose=true]
-   * @param {object[]} [options.extraChecklist=[]]  - Additional checklist items
-   * @param {string}   [options.outputDir]          - Where to write code-review.md
-   * @param {object}   [options.investigationTools] - Optional tools for deep investigation
-   *   (search, readSource, queryExperience) – same interface as SelfCorrectionEngine
+   * @param {object[]} [options.extraChecklist=[]]     - Additional checklist items
+   * @param {string}   [options.outputDir]             - Where to write code-review.md
+   * @param {object}   [options.investigationTools]    - Optional tools for deep investigation
+   * @param {Function} [options.adversarialLlmCall]    - Optional independent LLM for adversarial
+   *   verification (P1-A fix). If not provided, falls back to llmCall with an adversarial
+   *   system prompt. Pass a different LLM instance (higher temperature or different model)
+   *   for true independence. see CHANGELOG: P1-A
    */
   constructor(llmCall, {
     maxRounds = 2,
@@ -292,11 +381,15 @@ class CodeReviewAgent {
     extraChecklist = [],
     outputDir = null,
     investigationTools = null,
+    adversarialLlmCall = null,
   } = {}) {
     if (typeof llmCall !== 'function') {
       throw new Error('[CodeReviewAgent] llmCall must be a function');
     }
     this.llmCall = llmCall;
+    // P1-A fix: adversarial verifier uses a different framing to surface blind spots.
+    // Falls back to the same llmCall if no independent verifier is provided.
+    this.adversarialLlmCall = (typeof adversarialLlmCall === 'function') ? adversarialLlmCall : llmCall;
     this.maxRounds = maxRounds;
     this.verbose = verbose;
     this.checklist = [...DEFAULT_CHECKLIST, ...extraChecklist];
@@ -508,13 +601,20 @@ class CodeReviewAgent {
   }
 
   /**
-   * Runs a single checklist review pass via LLM.
+   * Runs a single checklist review pass via LLM, followed by an adversarial
+   * second-opinion pass to surface blind spots. see CHANGELOG: P1-A
+   *
+   * Two-phase review:
+   *   Phase 1 (main):       this.llmCall evaluates all checklist items
+   *   Phase 2 (adversarial): this.adversarialLlmCall re-evaluates PASS/N/A items
+   *                          with a skeptical framing to find missed issues
    *
    * @param {string} codeDiff
    * @param {string} requirementText
    * @returns {Promise<object[]>} Array of { id, result, finding, fixInstruction }
    */
   async _runReview(codeDiff, requirementText) {
+    // ── Phase 1: Main review ──────────────────────────────────────────────────
     const prompt = buildReviewPrompt(this.checklist, codeDiff, requirementText);
     let response;
     try {
@@ -540,19 +640,60 @@ class CodeReviewAgent {
       }));
     }
 
-    // Merge: fill in any items the LLM missed
-    // N50 fix: items the LLM did not return are "not evaluated" (MISSING), NOT "N/A"
-    // (not applicable). Marking them N/A incorrectly excludes them from the passRate
-    // denominator (evaluatedItems = totalItems - na), making passRate artificially high.
-    // MISSING items are treated as failures in the pass-rate calculation so they are
-    // visible in the report and do not silently inflate the score.
     const resultMap = new Map(parsed.map(r => [r.id, r]));
-    return this.checklist.map(item => resultMap.get(item.id) ?? {
+    const mainResults = this.checklist.map(item => resultMap.get(item.id) ?? {
       id: item.id,
       result: 'MISSING',
       finding: 'Not evaluated by LLM (response did not include this item)',
       fixInstruction: null,
     });
+
+    // ── Phase 2: Adversarial verification (P1-A fix) ──────────────────────────
+    const passedItems = mainResults.filter(r => r.result === 'PASS' || r.result === 'N/A');
+    if (passedItems.length === 0) {
+      this._log(`[CodeReview] ⚡ Adversarial pass skipped (no PASS/N/A items to challenge).`);
+      return mainResults;
+    }
+
+    const adversarialPrompt = buildAdversarialCodePrompt(
+      this.checklist, codeDiff, mainResults, requirementText
+    );
+    if (!adversarialPrompt) return mainResults;
+
+    this._log(`[CodeReview] 🔴 Running adversarial verification on ${passedItems.length} PASS/N/A item(s)...`);
+    let adversarialResults = [];
+    try {
+      const adversarialResponse = await this.adversarialLlmCall(adversarialPrompt);
+      adversarialResults = extractJsonArray(adversarialResponse) || [];
+    } catch (err) {
+      this._log(`[CodeReview] ⚠️  Adversarial LLM call failed: ${err.message}. Using main results only.`);
+      return mainResults;
+    }
+
+    // Merge: adversarial FAIL overrides main PASS/N/A
+    const adversarialMap = new Map(adversarialResults.map(r => [r.id, r]));
+    let downgrades = 0;
+    const mergedResults = mainResults.map(mainItem => {
+      if (mainItem.result !== 'PASS' && mainItem.result !== 'N/A') return mainItem;
+      const adversarialItem = adversarialMap.get(mainItem.id);
+      if (adversarialItem && adversarialItem.result === 'FAIL') {
+        downgrades++;
+        this._log(`[CodeReview] 🔴 Adversarial downgrade: [${mainItem.id}] PASS → FAIL – ${adversarialItem.finding}`);
+        return {
+          ...adversarialItem,
+          finding: `[Adversarial] ${adversarialItem.finding}`,
+        };
+      }
+      return mainItem;
+    });
+
+    if (downgrades > 0) {
+      this._log(`[CodeReview] 🔴 Adversarial pass found ${downgrades} additional issue(s) missed by main review.`);
+    } else {
+      this._log(`[CodeReview] ✅ Adversarial pass confirmed main review (no additional issues found).`);
+    }
+
+    return mergedResults;
   }
 
   /**

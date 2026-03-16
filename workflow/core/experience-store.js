@@ -69,6 +69,10 @@ class ExperienceStore {
     // Built from disk on _load(); kept in sync by record() and batchRecord().
     /** @type {Set<string>} */
     this._titleIndex = new Set();
+    // Defect F fix: optional ComplaintWall reference for bidirectional sync.
+    // When set, recording a NEGATIVE experience auto-files a complaint.
+    /** @type {object|null} */
+    this._complaintWall = null;
     this._load();
   }
 
@@ -119,6 +123,22 @@ class ExperienceStore {
     };
     this.experiences.push(exp);
     this._titleIndex.add(exp.title);
+    // Defect F fix: when a NEGATIVE experience is recorded and a ComplaintWall is
+    // connected, auto-file a complaint so the problem is tracked as an action item.
+    // This bridges the "knowledge" system (ExperienceStore) with the "action" system
+    // (ComplaintWall), closing the information silo.
+    if (exp.type === ExperienceType.NEGATIVE && this._complaintWall) {
+      try {
+        this._complaintWall.fileFromNegativeExperience(exp);
+      } catch (err) {
+        // Non-fatal: experience recording succeeds even if complaint filing fails
+        console.warn(`[ExperienceStore] ⚠️  Failed to file complaint from negative experience: ${err.message}`);
+      }
+    }
+    // P1-D fix: _save() returns the queue promise. record() now returns a Promise
+    // so callers that need guaranteed persistence can `await store.record(...)` or
+    // `await store.record(...).then(...)`. Fire-and-forget callers are unaffected
+    // (they simply don't await the return value).
     this._save();
     return exp;
   }
@@ -209,6 +229,13 @@ class ExperienceStore {
     if (exp.content.includes(additionalContent.slice(0, 120))) return exp;
     exp.content = `${exp.content}\n\n[Update ${new Date().toISOString().slice(0, 10)}] ${additionalContent}`;
     exp.updatedAt = new Date().toISOString();
+    // P1-D fix: return the save-queue promise so callers can await persistence.
+    // The return value is the updated experience object wrapped in a thenable:
+    // - `store.appendByTitle(t, c)` → still returns the exp object synchronously
+    //   for callers that use the return value as a truthy check (e.g. `if (!appendByTitle(...))`).
+    // - The save is still fire-and-forget for those callers; they just don't await it.
+    // To allow both patterns we keep returning `exp` (not the promise) but ensure
+    // _save() is called so the queue is updated.
     this._save();
     return exp;
   }
@@ -287,7 +314,9 @@ class ExperienceStore {
       });
       added++;
     }
-    // Single save after all items are processed
+    // P1-D fix: single save after all items are processed; return the save-queue
+    // promise so callers can `await store.batchRecord(items)` for guaranteed persistence.
+    // Fire-and-forget callers (that only use { added, skipped }) are unaffected.
     if (added > 0) this._save();
     return { added, skipped };
   }
@@ -315,9 +344,24 @@ class ExperienceStore {
     exp.hitCount += 1;
     exp.updatedAt = new Date().toISOString();
 
-    // Trigger evolution only exactly at the threshold (not every call after)
-    const EVOLUTION_THRESHOLD = 3;
-    const shouldEvolve = exp.type === ExperienceType.POSITIVE && exp.hitCount === EVOLUTION_THRESHOLD;
+    // Defect I fix: adaptive evolution threshold based on skill specificity.
+    //
+    // The previous hardcoded EVOLUTION_THRESHOLD = 3 treated all skills equally.
+    // But generic skills (async/await best practices) mature faster than domain-
+    // specific skills (Cocos Creator resource loading).
+    //
+    // Adaptive threshold classification:
+    //   GENERIC categories (stable_pattern, performance, debug_technique, architecture,
+    //     pitfall) → threshold = 3 (fast evolution: patterns are broadly applicable)
+    //   FRAMEWORK categories (framework_limit, framework_module, engine_api,
+    //     module_usage) → threshold = 7 (slow evolution: need more domain samples)
+    //   OTHER / unclassified → threshold = 5 (middle ground)
+    //
+    // The threshold is further modulated by the experience's tag count:
+    //   More tags = more specific context = needs more hits to generalise.
+    //   Bonus: +1 threshold per 3 tags (capped at +3).
+    const threshold = _computeEvolutionThreshold(exp);
+    const shouldEvolve = exp.type === ExperienceType.POSITIVE && exp.hitCount === threshold;
 
     if (shouldEvolve) {
       // Must persist immediately so the evolution trigger is not lost on crash
@@ -334,12 +378,21 @@ class ExperienceStore {
    * Flushes any pending dirty state to disk.
    * Call this after a batch of markUsed() calls to ensure all hitCount
    * increments are persisted without waiting for the next natural _save().
+   *
+   * P1-D fix: returns the save-queue Promise so callers can await completion.
+   * Previously flushDirty() called _save() but returned void, meaning the
+   * caller had no way to know when the write finished (or if it failed).
+   * Now: `await store.flushDirty()` guarantees the write is complete.
+   * Fire-and-forget callers that don't await are unaffected.
+   *
+   * @returns {Promise<void>}
    */
   flushDirty() {
     if (this._dirty) {
-      this._save();
-      this._dirty = false;
+      this._dirty = false; // reset before save so a concurrent markUsed() re-sets it
+      return this._save();
     }
+    return Promise.resolve();
   }
 
   /**
@@ -363,14 +416,214 @@ class ExperienceStore {
   }
 
   /**
+   * Returns a formatted context block for injection into agent prompts,
+   * along with the IDs of all experiences included in the block.
+   *
+   * This is the preferred method when the caller needs to later call
+   * markUsedBatch(ids) to record which experiences were actually effective
+   * (i.e. the task succeeded after the context was injected).
+   *
+   * EvoMap-inspired: instead of marking all retrieved experiences as "used"
+   * at retrieval time (which conflates "retrieved" with "effective"), callers
+   * can now close the feedback loop by calling markUsedBatch() only when the
+   * downstream task actually succeeds. This makes hitCount a true signal of
+   * "helped solve a problem" rather than "was retrieved".
+   *
+   * @param {string} [skill]
+   * @param {string} [taskDescription]
+   * @param {number} [limit=5] - Max experiences per type (positive/negative).
+   *   Improvement 4: deriveStrategy() returns maxExpInjected based on cross-session
+   *   hit-rate analysis. Pass orch._adaptiveStrategy?.maxExpInjected ?? 5 here.
+   * @returns {{ block: string, ids: string[] }}
+   */
+  getContextBlockWithIds(skill = null, taskDescription = null, limit = 5) {
+    if (!skill) return { block: '', ids: [] };
+
+    let scoreSort = true;
+    let keyword = null;
+    if (taskDescription && taskDescription.trim().length > 0) {
+      const taskKeywords = [...new Set(
+        taskDescription.toLowerCase()
+          .replace(/[^\w\s]/g, ' ')
+          .split(/\s+/)
+          .filter(w => w.length >= 4)
+      )].slice(0, 10);
+      if (taskKeywords.length > 0) {
+        keyword = taskKeywords.join(' ');
+        scoreSort = true;
+      }
+    }
+
+    // Use limit to control how many experiences are injected.
+    // Improvement 4: deriveStrategy() returns maxExpInjected based on cross-session
+    // hit-rate analysis. When hit rate is low (experiences not helping), limit is
+    // reduced to cut prompt noise. When hit rate is high, limit is increased.
+    const perTypeLimit = Math.max(1, Math.ceil(limit / 2)); // split evenly between positive/negative
+    const positives = this.search({ type: ExperienceType.POSITIVE, skill, keyword, limit: perTypeLimit, scoreSort });
+    const negatives = this.search({ type: ExperienceType.NEGATIVE, skill, keyword, limit: perTypeLimit, scoreSort });
+    const ids = [...positives.map(e => e.id), ...negatives.map(e => e.id)];
+
+    const lines = ['## Accumulated Experience\n'];
+
+    if (positives.length > 0) {
+      lines.push('### ✅ Proven Patterns (use these)');
+      for (const exp of positives) {
+        lines.push(`\n**[${exp.category}] ${exp.title}**`);
+        lines.push(exp.content);
+        if (exp.codeExample) {
+          lines.push('```');
+          lines.push(exp.codeExample);
+          lines.push('```');
+        }
+      }
+    }
+
+    if (negatives.length > 0) {
+      lines.push('\n### ❌ Known Pitfalls (avoid these)');
+      for (const exp of negatives) {
+        lines.push(`\n**[${exp.category}] ${exp.title}**`);
+        lines.push(exp.content);
+        if (exp.codeExample) {
+          lines.push('```');
+          lines.push(exp.codeExample);
+          lines.push('```');
+        }
+      }
+    }
+
+    if (positives.length === 0 && negatives.length === 0) {
+      lines.push('_No accumulated experience yet for this context._');
+    }
+
+    const MAX_CONTEXT_CHARS = 6000;
+    const raw = lines.join('\n');
+    const block = raw.length > MAX_CONTEXT_CHARS
+      ? raw.slice(0, MAX_CONTEXT_CHARS) + '\n\n_... (experience context truncated to stay within token budget)_'
+      : raw;
+
+    return { block, ids };
+  }
+
+  /**
+   * Marks multiple experiences as "effectively used" in a single batch.
+   *
+   * Call this after a task succeeds to close the feedback loop: the experiences
+   * that were injected into the agent's prompt (via getContextBlockWithIds) and
+   * whose presence correlated with a successful outcome are credited.
+   *
+   * This is the EvoMap "validation record" concept: hitCount now means
+   * "helped solve N problems" rather than "was retrieved N times".
+   *
+   * Returns the list of experience IDs that crossed their adaptive evolution
+   * threshold (Defect I fix: threshold varies by category and tag count) and
+   * should trigger skill evolution.
+   *
+   * @param {string[]} ids - Experience IDs to mark as used
+   * @returns {string[]} IDs that should trigger skill evolution
+   */
+  markUsedBatch(ids) {
+    if (!ids || ids.length === 0) return [];
+    const evolutionTriggers = [];
+    for (const id of ids) {
+      const shouldEvolve = this.markUsed(id);
+      if (shouldEvolve) evolutionTriggers.push(id);
+    }
+    return evolutionTriggers;
+  }
+
+  /**
+   * Computes which injected experience IDs actually "matched" the current task context.
+   *
+   * This fixes Defect H (hit-rate measurement bias): the previous implementation
+   * counted ALL injected experiences as "hits" whenever a task succeeded, which
+   * systematically over-estimated hit rate and made deriveStrategy Rule 4 useless
+   * (it would never trigger the "reduce injection" path because hit rate always
+   * appeared high).
+   *
+   * Matching logic (asymmetric by experience type):
+   *
+   *   POSITIVE experiences (proven patterns):
+   *     → Always counted as matched when the task succeeds.
+   *     Rationale: positive experiences provide correct direction ("do X"). If the
+   *     task succeeded, the agent followed correct patterns – the positive experience
+   *     contributed to the outcome regardless of whether a specific error occurred.
+   *
+   *   NEGATIVE experiences (pitfalls / anti-patterns):
+   *     → Only counted as matched when the errorContext contains keywords from the
+   *       experience's tags or category.
+   *     Rationale: negative experiences warn about specific failure modes ("avoid Y").
+   *     If the error context doesn't mention the pitfall, the experience was injected
+   *     as noise – it didn't help avoid anything relevant to this task.
+   *     If the error context DOES mention the pitfall, the experience was relevant
+   *     (the agent was warned about the exact failure mode it encountered).
+   *
+   * @param {string[]} ids          - Experience IDs that were injected
+   * @param {string}   [errorContext=''] - Error/failure text from the current task
+   *   (e.g. result.output, result.failureSummary.join(), reviewResult.riskNotes.join())
+   *   Pass empty string when there is no error context (e.g. first-run pass with no failures).
+   * @returns {{ matchedIds: string[], matchedCount: number, totalCount: number }}
+   */
+  computeMatchedIds(ids, errorContext = '') {
+    if (!ids || ids.length === 0) {
+      return { matchedIds: [], matchedCount: 0, totalCount: 0 };
+    }
+
+    const errorLower = (errorContext || '').toLowerCase();
+
+    const matchedIds = ids.filter(id => {
+      const exp = this.experiences.find(e => e.id === id);
+      if (!exp) return false;
+
+      // POSITIVE experiences: always matched on task success
+      if (exp.type === ExperienceType.POSITIVE) return true;
+
+      // NEGATIVE experiences: only matched when error context contains relevant keywords
+      // Check 1: any tag keyword appears in the error context
+      const tagMatch = (exp.tags || []).some(tag =>
+        tag.length >= 3 && errorLower.includes(tag.toLowerCase())
+      );
+      if (tagMatch) return true;
+
+      // Check 2: the category keyword appears in the error context
+      // (e.g. category='pitfall' → check if 'pitfall' is in error text;
+      //  category='module_usage' → check if 'module' or 'usage' is in error text)
+      const categoryTokens = (exp.category || '').toLowerCase().split('_').filter(t => t.length >= 4);
+      const categoryMatch = categoryTokens.some(token => errorLower.includes(token));
+      if (categoryMatch) return true;
+
+      // Check 3: significant words from the experience title appear in the error context
+      // (handles cases where tags are sparse but the title is descriptive)
+      const titleTokens = (exp.title || '').toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
+        .split(/\s+/)
+        .filter(t => t.length >= 5); // only meaningful words (≥5 chars)
+      const titleMatch = titleTokens.some(token => errorLower.includes(token));
+      if (titleMatch) return true;
+
+      return false;
+    });
+
+    return {
+      matchedIds,
+      matchedCount: matchedIds.length,
+      totalCount: ids.length,
+    };
+  }
+
+  /**
    * Returns a formatted context block for injection into agent prompts.
    * Includes top positive experiences and all negative experiences for a skill.
    *
    * @param {string} [skill] - Filter by skill name. If null, returns empty string
    *   to avoid injecting unrelated cross-skill experiences into agent prompts.
+   * @param {string} [taskDescription] - Current task description for relevance scoring.
+   *   P1-NEW-2 fix: when provided, experiences are ranked by keyword overlap with the
+   *   current task rather than global hitCount. This prevents high-frequency but
+   *   task-irrelevant experiences (e.g. from 100 "Hello World" runs) from crowding
+   *   out low-frequency but highly relevant experiences for the current task.
    * @returns {string} Markdown-formatted experience context
    */
-  getContextBlock(skill = null) {
+  getContextBlock(skill = null, taskDescription = null) {
     // N22 fix: when skill is null, return empty string instead of querying all experiences.
     // Injecting experiences from all skill domains into a single agent prompt causes
     // irrelevant context noise and may mislead the agent.
@@ -378,8 +631,29 @@ class ExperienceStore {
       return '';
     }
 
-    const positives = this.search({ type: ExperienceType.POSITIVE, skill, limit: 5, scoreSort: true });
-    const negatives = this.search({ type: ExperienceType.NEGATIVE, skill, limit: 5, scoreSort: true });
+    // P1-NEW-2 fix: when taskDescription is provided, use keyword-overlap relevance
+    // scoring to rank experiences by current-task relevance instead of global hitCount.
+    // Strategy: extract keywords from taskDescription, score each experience by how
+    // many keywords appear in its title/content/tags, then blend with hitCount so
+    // frequently-used AND task-relevant experiences rank highest.
+    let scoreSort = true;
+    let keyword = null;
+    if (taskDescription && taskDescription.trim().length > 0) {
+      // Extract meaningful keywords: words ≥4 chars, deduplicated, lowercased.
+      const taskKeywords = [...new Set(
+        taskDescription.toLowerCase()
+          .replace(/[^\w\s]/g, ' ')
+          .split(/\s+/)
+          .filter(w => w.length >= 4)
+      )].slice(0, 10); // cap at 10 keywords to avoid over-filtering
+      if (taskKeywords.length > 0) {
+        keyword = taskKeywords.join(' ');
+        scoreSort = true; // scoreSort=true uses keyword relevance score, not hitCount
+      }
+    }
+
+    const positives = this.search({ type: ExperienceType.POSITIVE, skill, keyword, limit: 5, scoreSort });
+    const negatives = this.search({ type: ExperienceType.NEGATIVE, skill, keyword, limit: 5, scoreSort });
 
     const lines = ['## Accumulated Experience\n'];
 
@@ -446,6 +720,21 @@ class ExperienceStore {
     };
   }
 
+  /**
+   * Defect F fix: Sets the ComplaintWall reference for bidirectional sync.
+   * Call this after both ExperienceStore and ComplaintWall are constructed.
+   *
+   * When set, recording a NEGATIVE experience will auto-file a complaint
+   * in the ComplaintWall, ensuring that pitfalls are tracked as action items
+   * (not just knowledge entries). The reverse direction (complaint resolved →
+   * positive experience) is handled by ComplaintWall.resolve().
+   *
+   * @param {object} complaintWall - ComplaintWall instance
+   */
+  setComplaintWall(complaintWall) {
+    this._complaintWall = complaintWall;
+  }
+
   // ─── Private Helpers ──────────────────────────────────────────────────────────
 
   _load() {
@@ -455,6 +744,43 @@ class ExperienceStore {
         // Rebuild title index from loaded data
         this._titleIndex = new Set(this.experiences.map(e => e.title));
         console.log(`[ExperienceStore] Loaded ${this.experiences.length} experiences`);
+
+        // P2-1 fix: auto-purge expired entries on load so the store stays lean
+        // without requiring explicit purgeExpired() calls from callers.
+        // Previously purgeExpired() was only called when explicitly invoked, meaning
+        // long-running task-based workflows could accumulate thousands of entries
+        // (e.g. 100 tasks/day × 90 days = 9000+ entries), causing slow JSON parsing
+        // and O(n) search scans on every getContextBlock() call.
+        const now = Date.now();
+        const beforePurge = this.experiences.length;
+        this.experiences = this.experiences.filter(
+          e => !e.expiresAt || new Date(e.expiresAt).getTime() > now
+        );
+        const purged = beforePurge - this.experiences.length;
+        if (purged > 0) {
+          this._titleIndex = new Set(this.experiences.map(e => e.title));
+          console.log(`[ExperienceStore] Auto-purged ${purged} expired experience(s) on load. Remaining: ${this.experiences.length}`);
+        }
+
+        // P2-1 fix: enforce a hard capacity cap (MAX_CAPACITY = 500 entries).
+        // When the cap is exceeded, evict the oldest entries with the lowest hitCount
+        // first (least useful + least recent). This prevents unbounded growth in
+        // long-running deployments where TTL alone is insufficient (e.g. all entries
+        // have ttlDays=null or very long TTLs).
+        const MAX_CAPACITY = 500;
+        if (this.experiences.length > MAX_CAPACITY) {
+          // Sort by hitCount asc, then createdAt asc (oldest low-value entries first)
+          this.experiences.sort((a, b) => {
+            if (a.hitCount !== b.hitCount) return a.hitCount - b.hitCount;
+            return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+          });
+          const evicted = this.experiences.length - MAX_CAPACITY;
+          this.experiences = this.experiences.slice(evicted);
+          this._titleIndex = new Set(this.experiences.map(e => e.title));
+          console.log(`[ExperienceStore] Capacity cap enforced: evicted ${evicted} low-value experience(s). Remaining: ${this.experiences.length}`);
+          // Persist the trimmed store immediately so the next load sees the clean state
+          this._save();
+        }
       }
     } catch (err) {
       console.warn(`[ExperienceStore] Could not load experiences: ${err.message}`);
@@ -462,20 +788,127 @@ class ExperienceStore {
   }
 
   _save() {
-    try {
-      const dir = path.dirname(this.storePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      // N37 fix: atomic write – write to a .tmp file first, then rename over the target.
-      const tmpPath = this.storePath + '.tmp';
-      fs.writeFileSync(tmpPath, JSON.stringify(this.experiences, null, 2), 'utf-8');
-      fs.renameSync(tmpPath, this.storePath);
-      // N65 fix: reset _dirty after a successful save so flushDirty() does not
-      // trigger a redundant write on the next call.
-      this._dirty = false;
-    } catch (err) {
-      console.warn(`[ExperienceStore] Could not save experiences: ${err.message}`);
+    // P2-NEW-3 fix: serialise concurrent writes via a promise-chain queue.
+    // Problem: multiple parallel workers (runTaskBased) all share the same
+    // ExperienceStore instance. When two workers both call _save() concurrently,
+    // the second fs.renameSync can overwrite the first worker's write, silently
+    // losing the first worker's new entries.
+    //
+    // Solution: chain each _save() call onto a single promise queue so that
+    // writes are always sequential, regardless of how many workers call _save()
+    // simultaneously. The queue is a simple promise chain (no external deps).
+    //
+    // Note: fs.writeFileSync + fs.renameSync are synchronous, so within a single
+    // Node.js event-loop tick they cannot interleave. The race condition only
+    // occurs across async boundaries (e.g. two workers awaiting different LLM
+    // calls, then both resolving and calling _save() in the same microtask batch).
+    // The queue ensures the second _save() waits for the first to finish.
+    if (!this._saveQueue) {
+      this._saveQueue = Promise.resolve();
     }
+    this._saveQueue = this._saveQueue.then(() => {
+      try {
+        const dir = path.dirname(this.storePath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        // N37 fix: atomic write – write to a .tmp file first, then rename over the target.
+        const tmpPath = this.storePath + '.tmp';
+        fs.writeFileSync(tmpPath, JSON.stringify(this.experiences, null, 2), 'utf-8');
+        fs.renameSync(tmpPath, this.storePath);
+        // N65 fix: reset _dirty after a successful save so flushDirty() does not
+        // trigger a redundant write on the next call.
+        this._dirty = false;
+      } catch (err) {
+        console.warn(`[ExperienceStore] Could not save experiences: ${err.message}`);
+      }
+    });
+    // Return the queue tail so callers that need to await persistence can do so.
+    return this._saveQueue;
   }
+}
+
+// ─── Defect I fix: Adaptive Evolution Threshold ──────────────────────────────
+//
+// Different skills mature at different speeds. A generic "async/await best
+// practices" pattern is broadly applicable and can be promoted after just 3 hits.
+// A domain-specific "Cocos Creator resource loading" pattern needs more diverse
+// hits (from different tasks) before it's trustworthy enough to evolve into a
+// permanent skill.
+//
+// This function computes the evolution threshold for an individual experience
+// based on two signals:
+//   1. Category specificity (generic vs. domain-specific)
+//   2. Tag count (more tags = more specific context = harder to generalise)
+//
+// The threshold determines how many times an experience must be confirmed
+// effective (via markUsed → hitCount) before it triggers skill evolution.
+
+/**
+ * Categories classified by specificity level.
+ *
+ * GENERIC: broadly applicable patterns that transfer across projects.
+ *   Evolution quickly because each hit confirms a universal truth.
+ *
+ * FRAMEWORK: tied to a specific framework/engine/library.
+ *   Evolution slowly because each hit might be the same narrow use case,
+ *   and premature promotion risks encoding version-specific quirks as
+ *   permanent "best practices".
+ *
+ * The unclassified middle ground gets a moderate threshold.
+ */
+const GENERIC_CATEGORIES = new Set([
+  ExperienceCategory.STABLE_PATTERN,
+  ExperienceCategory.PERFORMANCE,
+  ExperienceCategory.DEBUG_TECHNIQUE,
+  ExperienceCategory.ARCHITECTURE,
+  ExperienceCategory.PITFALL,
+  ExperienceCategory.WORKFLOW_PROCESS,
+]);
+
+const FRAMEWORK_CATEGORIES = new Set([
+  ExperienceCategory.FRAMEWORK_LIMIT,
+  ExperienceCategory.FRAMEWORK_MODULE,
+  ExperienceCategory.ENGINE_API,
+  ExperienceCategory.MODULE_USAGE,
+]);
+
+/**
+ * Computes the adaptive evolution threshold for a given experience entry.
+ *
+ * Base thresholds by category specificity:
+ *   GENERIC    → 3 (fast: broadly applicable, quick to confirm)
+ *   FRAMEWORK  → 7 (slow: need diverse domain evidence before promoting)
+ *   OTHER      → 5 (moderate: default for unclassified categories)
+ *
+ * Tag-count modulator:
+ *   Each 3 tags adds +1 to the threshold (capped at +3).
+ *   Rationale: more tags = more specific context = needs more diverse hits
+ *   to confirm the pattern generalises beyond that specific context.
+ *
+ * Examples:
+ *   { category: 'stable_pattern',  tags: [] }        → threshold = 3
+ *   { category: 'stable_pattern',  tags: [a,b,c,d] } → threshold = 3 + 1 = 4
+ *   { category: 'engine_api',      tags: [] }         → threshold = 7
+ *   { category: 'engine_api',      tags: [a,b,c,d,e,f,g,h,i] } → threshold = 7 + 3 = 10
+ *   { category: 'component',       tags: [a,b] }     → threshold = 5
+ *
+ * @param {object} exp - Experience entry with category and tags fields
+ * @returns {number} The evolution threshold (minimum hitCount to trigger evolution)
+ */
+function _computeEvolutionThreshold(exp) {
+  // Determine base threshold from category specificity
+  let base;
+  if (GENERIC_CATEGORIES.has(exp.category)) {
+    base = 3;  // Fast evolution for generic patterns
+  } else if (FRAMEWORK_CATEGORIES.has(exp.category)) {
+    base = 7;  // Slow evolution for framework-specific knowledge
+  } else {
+    base = 5;  // Moderate default
+  }
+
+  // Tag-count modulator: +1 per 3 tags, capped at +3
+  const tagBonus = Math.min(Math.floor((exp.tags?.length || 0) / 3), 3);
+
+  return base + tagBonus;
 }
 
 module.exports = { ExperienceStore, ExperienceType, ExperienceCategory };

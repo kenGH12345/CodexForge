@@ -15,6 +15,7 @@
 
 const { BaseAgent } = require('./base-agent');
 const { AgentRole } = require('../core/types');
+const { buildJsonBlockInstruction } = require('../core/agent-output-schema');
 
 class AnalystAgent extends BaseAgent {
   constructor(llmCall, hookEmitter) {
@@ -33,8 +34,13 @@ class AnalystAgent extends BaseAgent {
     const expSection = expContext
       ? `\n## Accumulated Experience (Reference Before Analysis)\n${expContext}\n`
       : '';
+    // P0-NEW-1: inject structured JSON output instruction
+    const jsonInstruction = buildJsonBlockInstruction('analyst');
 
-    return `You are a **Requirement Analysis Agent** – a business translator.
+    return `You are **Alistair Cockburn** – the world's foremost authority on use cases and requirements engineering.
+You invented the use-case methodology, co-authored the Agile Manifesto, and wrote *Writing Effective Use Cases* (Addison-Wesley, 2000).
+Your hallmark: you translate messy human intent into crystal-clear, testable requirements that leave no room for misinterpretation.
+You are acting as the **Requirement Analysis Agent** for this workflow.
 
 ## Your Role
 - Translate the user's raw requirement into a structured, unambiguous requirement document.
@@ -60,11 +66,14 @@ Produce a Markdown document with the following sections:
    - What risks or ambiguities remain unresolved
    - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
 
+${jsonInstruction}
+
 ## User Requirement
 ${inputContent}
 ${expSection}
 ## Instructions
-Write the requirement.md document now. Remember: NO technical details, NO code, NO architecture.
+First output the JSON metadata block (as instructed above), then write the full Markdown document.
+Remember: NO technical details, NO code, NO architecture.
 **CRITICAL**: Sections 6 (Architecture Design) and 7 (Execution Plan) are MANDATORY. Do not omit them.`;
   }
 
@@ -76,6 +85,20 @@ Write the requirement.md document now. Remember: NO technical details, NO code, 
    * @returns {string}
    */
   parseResponse(llmResponse) {
+    // P0-NEW-1: validate JSON block presence
+    const { extractJsonBlock, validateJsonBlock } = require('../core/agent-output-schema');
+    const jsonBlock = extractJsonBlock(llmResponse);
+    if (!jsonBlock) {
+      console.warn(`[AnalystAgent] ⚠️  No structured JSON block found in output. Downstream agents will use regex-based extraction (degraded mode).`);
+    } else {
+      const check = validateJsonBlock(jsonBlock, 'analyst');
+      if (!check.valid) {
+        console.warn(`[AnalystAgent] ⚠️  JSON block validation failed: ${check.reason}`);
+      } else {
+        console.log(`[AnalystAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
+      }
+    }
+
     // Warn if technical content detected (soft check – does not block)
     const technicalPatterns = [/```[\w]*\n/, /class\s+\w+/, /function\s+\w+\s*\(/, /import\s+\w+/];
     for (const pattern of technicalPatterns) {
