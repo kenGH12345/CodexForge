@@ -12,6 +12,7 @@ const { CoverageChecker } = require('./coverage-checker');
 const { CodeReviewAgent } = require('./code-review-agent');
 const { ArchitectureReviewAgent } = require('./architecture-review-agent');
 const { TestRunner } = require('./test-runner');
+const { TestCaseGenerator } = require('./test-case-generator');
 const { DECISION_QUESTIONS } = require('./socratic-engine');
 
 /**
@@ -316,6 +317,26 @@ async function _runTester() {
   const devMeta = this.bus.getMeta(AgentRole.TESTER);
   if (devMeta && devMeta.reviewRounds > 0) {
     console.log(`[Orchestrator] ℹ️  Code was self-corrected in ${devMeta.reviewRounds} round(s) (${devMeta.failedItems} issue(s) fixed). Tester should pay attention to corrected areas.`);
+  }
+
+  // ── Step 0: Pre-generate test cases (test-first planning) ─────────────────
+  // Generate test-cases.md BEFORE running TesterAgent.
+  // This forces explicit coverage planning and gives the tester a concrete
+  // execution checklist, significantly improving test report quality.
+  console.log(`\n[Orchestrator] 📋 Pre-generating test cases (test-first planning)...`);
+  try {
+    const tcGen = new TestCaseGenerator(this._rawLlmCall, {
+      verbose: true,
+      outputDir: PATHS.OUTPUT_DIR,
+    });
+    const tcResult = await tcGen.generate();
+    if (!tcResult.skipped) {
+      console.log(`[Orchestrator] ✅ Test cases generated: ${tcResult.caseCount} case(s) → output/test-cases.md`);
+    } else {
+      console.log(`[Orchestrator] ⏭️  Test case generation skipped (no requirements.md found).`);
+    }
+  } catch (err) {
+    console.warn(`[Orchestrator] ⚠️  Test case generation failed (non-fatal): ${err.message}`);
   }
 
   const agentsMdForTest = this._agentsMdContent || '';

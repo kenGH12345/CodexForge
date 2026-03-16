@@ -59,6 +59,19 @@ class TesterAgent extends BaseAgent {
       ? `\n## Architecture Document (for Compliance Verification)\n${architectureContent}\n`
       : '';
 
+    // Inject pre-generated test cases if available
+    const testCasesPath = path.join(PATHS.OUTPUT_DIR, 'test-cases.md');
+    const testCasesContent = fs.existsSync(testCasesPath)
+      ? fs.readFileSync(testCasesPath, 'utf-8')
+      : null;
+    const testCasesSection = testCasesContent
+      ? `\n## Pre-Planned Test Cases (Execute ALL of these)\n> These test cases were designed from the requirements BEFORE you started.\n> You MUST execute every test case listed here and report its result.\n\n${testCasesContent}\n`
+      : '';
+
+    const testCasesInstruction = testCasesContent
+      ? `\n**IMPORTANT**: A pre-planned test suite is provided above. You MUST:\n1. Execute every test case in the "Pre-Planned Test Cases" section.\n2. Report each test case result in the "Test Cases Executed" table using the same TC-XXX IDs.\n3. Add any additional test cases you discover beyond the pre-planned ones.\n4. The Coverage Analysis must reference the pre-planned test case IDs.\n`
+      : '';
+
     return `You are a **Quality Testing Agent** – an independent auditor.
 
 ## Your Role
@@ -69,7 +82,7 @@ class TesterAgent extends BaseAgent {
 - Do NOT modify any source files, requirement documents, or architecture documents.
 - Be objective and evidence-based: cite specific lines from the diff when reporting issues.
 - If accumulated experience is provided below, apply proven test patterns and avoid known pitfalls.
-
+${testCasesInstruction}
 ## Output Format
 Produce a Markdown test report with the following sections:
 1. **Test Summary** – Overall pass/fail verdict with confidence score (0-100%)
@@ -86,7 +99,7 @@ Produce a Markdown test report with the following sections:
 - **High**: Core feature broken, no workaround
 - **Medium**: Feature partially broken, workaround exists
 - **Low**: Minor UI/UX issue, cosmetic defect
-${requirementsSection}${architectureSection}
+${testCasesSection}${requirementsSection}${architectureSection}
 ## Code Diff to Review
 \`\`\`diff
 ${inputContent}
