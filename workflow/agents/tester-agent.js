@@ -60,10 +60,15 @@ class TesterAgent extends BaseAgent {
       : '';
 
     // Inject pre-generated test cases if available
+    // Cap at 12000 chars to avoid token overflow (large test suites can be very long)
+    const TEST_CASES_TOKEN_CAP = 12000;
     const testCasesPath = path.join(PATHS.OUTPUT_DIR, 'test-cases.md');
-    const testCasesContent = fs.existsSync(testCasesPath)
+    const testCasesRaw = fs.existsSync(testCasesPath)
       ? fs.readFileSync(testCasesPath, 'utf-8')
       : null;
+    const testCasesContent = testCasesRaw && testCasesRaw.length > TEST_CASES_TOKEN_CAP
+      ? testCasesRaw.slice(0, TEST_CASES_TOKEN_CAP) + `\n\n> ⚠️ [Truncated at ${TEST_CASES_TOKEN_CAP} chars to fit context window. Full file: output/test-cases.md]`
+      : testCasesRaw;
     const testCasesSection = testCasesContent
       ? `\n## Pre-Planned Test Cases (Execute ALL of these)\n> These test cases were designed from the requirements BEFORE testing began.\n> The JSON array below contains automation-ready test cases with concrete test data.\n> You MUST execute every test case and report its result using the same \`case_id\`.\n\n${testCasesContent}\n`
       : '';
@@ -123,6 +128,25 @@ Pay special attention to Coverage Analysis – every acceptance criterion must b
     if (missingSections.length > 0) {
       console.warn(`[TesterAgent] WARNING: Test report missing sections: ${missingSections.join(', ')}`);
     }
+
+    // Verify that pre-planned test case IDs appear in the report
+    // This catches cases where the LLM ignored the test cases checklist
+    const testCasesPath = require('path').join(require('../core/constants').PATHS.OUTPUT_DIR, 'test-cases.md');
+    if (require('fs').existsSync(testCasesPath)) {
+      const testCasesContent = require('fs').readFileSync(testCasesPath, 'utf-8');
+      const plannedIds = (testCasesContent.match(/"case_id"\s*:\s*"([^"]+)"/g) || [])
+        .map(m => m.match(/"([^"]+)"$/)[1]);
+      if (plannedIds.length > 0) {
+        const coveredIds = plannedIds.filter(id => llmResponse.includes(id));
+        const coverageRate = Math.round((coveredIds.length / plannedIds.length) * 100);
+        if (coverageRate < 80) {
+          console.warn(`[TesterAgent] WARNING: Only ${coveredIds.length}/${plannedIds.length} pre-planned test case IDs (${coverageRate}%) appear in the report. The tester may have ignored the test checklist.`);
+        } else {
+          console.log(`[TesterAgent] ✅ Test case coverage: ${coveredIds.length}/${plannedIds.length} IDs referenced in report (${coverageRate}%).`);
+        }
+      }
+    }
+
     return llmResponse;
   }
 }

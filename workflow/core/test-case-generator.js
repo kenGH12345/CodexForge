@@ -3,6 +3,7 @@
 const fs   = require('fs');
 const path = require('path');
 const { PATHS } = require('./constants');
+const { translateMdFile } = require('./i18n-translator');
 
 /**
  * TestCaseGenerator – Pre-test planning module.
@@ -214,6 +215,9 @@ Now generate the complete test suite for the requirements provided above.
     if (this._verbose) {
       console.log(`[TestCaseGenerator] ✅ Generated ${caseCount} test case(s) → ${outputPath}`);
     }
+
+    // Async Chinese translation – non-blocking, does not affect main flow
+    translateMdFile(outputPath, this._llmCall).catch(() => {});
 
     return { path: outputPath, caseCount, skipped: false };
   }
