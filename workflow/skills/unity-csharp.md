@@ -1,3 +1,16 @@
+---
+name: unity-csharp
+version: 1.0.0
+type: domain-skill
+domains: [unity, csharp, game]
+dependencies: []
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [unity, c#, csharp, monobehaviour, scriptableobject, ecs]
+  roles: [developer]
+description: "Unity C# development patterns and pitfalls"
+---
 # Skill: unity-csharp
 
 > **Type**: Domain Skill

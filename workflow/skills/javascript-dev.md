@@ -1,3 +1,16 @@
+---
+name: javascript-dev
+version: 1.0.0
+type: domain-skill
+domains: [frontend, backend, javascript]
+dependencies: []
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [javascript, js, node, npm, typescript, ts, react, vue, express]
+  roles: [developer]
+description: "JavaScript development patterns"
+---
 # Skill: javascript-dev
 
 > **Type**: Domain Skill

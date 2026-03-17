@@ -54,6 +54,20 @@ module.exports = {
     failOnUnfixed: false,
   },
 
+  // ─── Three-Layer Skill Loading ─────────────────────────────────────────────
+  //
+  // Skills are loaded in three priority tiers:
+  //   Level 1 – Global:  Always loaded for every task (safety, standards, troubleshooting)
+  //   Level 2 – Project: Loaded for all tasks in the current project
+  //   Level 3 – Task:    Dynamically matched by keyword from task text
+  //
+  // Skills in higher tiers have loading priority; lower-tier skills fill remaining
+  // token budget. Dependencies declared in skill YAML frontmatter are auto-resolved.
+
+  globalSkills: ['standards', 'troubleshooting'],
+
+  projectSkills: ['javascript-dev'],
+
   // ─── Built-in Skills ─────────────────────────────────────────────────────────
   builtinSkills: [    {
         name: "workflow-orchestration",
@@ -79,6 +93,28 @@ module.exports = {
             "backend",
             "javascript"
         ]
+    },
+    {
+        name: "standards",
+        description: "Project-wide coding standards, naming conventions, and directory structure rules",
+        domains: [
+            "general",
+            "quality",
+            "conventions"
+        ],
+        type: "standards",
+        loadLevel: "global"
+    },
+    {
+        name: "troubleshooting",
+        description: "Common errors, root causes, and fix recipes from complaint resolutions",
+        domains: [
+            "general",
+            "debugging",
+            "error-handling"
+        ],
+        type: "troubleshooting",
+        loadLevel: "global"
     }
 ],
 

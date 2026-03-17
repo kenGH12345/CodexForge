@@ -1,3 +1,16 @@
+---
+name: java-dev
+version: 1.0.0
+type: domain-skill
+domains: [backend, java]
+dependencies: []
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [java, spring, maven, gradle, jvm, kotlin]
+  roles: [developer]
+description: "Java development patterns"
+---
 # Skill: java-dev
 
 > **Type**: Domain Skill

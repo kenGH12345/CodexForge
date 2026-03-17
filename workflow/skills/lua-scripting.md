@@ -1,3 +1,16 @@
+---
+name: lua-scripting
+version: 1.0.0
+type: domain-skill
+domains: [lua, game, scripting]
+dependencies: []
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [lua, luajit, coroutine, metatables, unity lua, xlua]
+  roles: [developer]
+description: "Lua scripting patterns for game engines"
+---
 # Skill: lua-scripting
 
 > **Type**: Domain Skill

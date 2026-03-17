@@ -14,6 +14,7 @@
 
 const fs = require('fs');
 const { LLM } = require('../core/constants');
+const { getConfig } = require('../core/config-loader');
 const { estimateTokens } = require('../tools/thin-tools');
 const { ContextLoader } = require('./context-loader');
 const { PromptSlotManager } = require('./prompt-slot-manager');
@@ -176,6 +177,8 @@ function _getOrCreateLoader(options) {
     options.projectRoot,
     Object.keys(options.skillKeywords || {}),
     options.alwaysLoadSkills,
+    options.globalSkills,
+    options.projectSkills,
   ]);
   if (_cachedLoader && _cachedLoaderKey === key) {
     return _cachedLoader;
@@ -473,6 +476,8 @@ function buildAgentPrompt(role, dynamicInput, contextFiles = [], options = {}) {
     projectRoot:      options && options.projectRoot ? options.projectRoot : null,
     skillKeywords:    options && options.skillKeywords ? options.skillKeywords : {},
     alwaysLoadSkills: options && options.alwaysLoadSkills ? options.alwaysLoadSkills : [],
+    globalSkills:     options && options.globalSkills ? options.globalSkills : (getConfig().globalSkills || []),
+    projectSkills:    options && options.projectSkills ? options.projectSkills : (getConfig().projectSkills || []),
   };
   const loader = _getOrCreateLoader(loaderOptions);
   const { sections: autoSections } = loader.resolve(dynamicInput, role);

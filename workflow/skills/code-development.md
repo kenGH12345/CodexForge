@@ -1,3 +1,16 @@
+---
+name: code-development
+version: 1.0.0
+type: domain-skill
+domains: [development, coding]
+dependencies: [code-review, standards]
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [code, develop, implement, build, program]
+  roles: [developer, coding-agent]
+description: "Code development patterns, coding standards and best practices"
+---
 # Skill: code-development
 
 > **Type**: Domain Skill

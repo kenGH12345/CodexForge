@@ -1,3 +1,16 @@
+---
+name: project-onboarding
+version: 1.0.0
+type: domain-skill
+domains: [onboarding, legacy]
+dependencies: []
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [onboard, setup, init, new project, getting started]
+  roles: [developer, analyst]
+description: "Legacy project onboarding: familiarise, distil, execute"
+---
 # Skill: project-onboarding
 
 > **Type**: Domain Skill

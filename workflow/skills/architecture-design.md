@@ -1,3 +1,16 @@
+---
+name: architecture-design
+version: 1.0.0
+type: domain-skill
+domains: [architecture, design]
+dependencies: []
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [architecture, design pattern, module, dependency, coupling, solid]
+  roles: [architect]
+description: "Architecture design patterns, principles and best practices"
+---
 # Skill: architecture-design
 
 > **Type**: Domain Skill

@@ -21,6 +21,7 @@
 const fs = require('fs');
 const { PATHS, HOOK_EVENTS } = require('./constants');
 const { STATE_ORDER } = require('./types');
+const { SkillWatcher } = require('./skill-watcher');
 
 module.exports = {
 
@@ -57,6 +58,17 @@ module.exports = {
       for (const c of openComplaints.slice(0, 3)) {
         console.warn(`  [${c.severity}] ${c.description}`);
       }
+    }
+
+    // 4. Start SkillWatcher for hot-reload of skill files
+    if (this.contextLoader && this.skillEvolution) {
+      this._skillWatcher = new SkillWatcher(this.contextLoader, PATHS.SKILLS_DIR, {
+        skillEvolution: this.skillEvolution,
+      });
+      this._skillWatcher.on('skill:changed', ({ filename, eventType }) => {
+        console.log(`[Orchestrator] 🔄 Skill hot-reload: ${filename} (${eventType})`);
+      });
+      this._skillWatcher.start();
     }
 
     return resumeState;
@@ -98,6 +110,12 @@ module.exports = {
 
     // Stop file watcher – no more changes expected
     this.memory.stopWatching();
+
+    // Stop SkillWatcher
+    if (this._skillWatcher) {
+      this._skillWatcher.stop();
+      this._skillWatcher = null;
+    }
 
     // ── Prompt A/B: snapshot variant stats into Observability before flush ──
     if (this.promptSlotManager) {

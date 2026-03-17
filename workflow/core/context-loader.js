@@ -36,6 +36,24 @@ const MAX_ADR_TOKENS = 600;
 /** Max tokens for the code graph injection (compact summary only) */
 const MAX_GRAPH_TOKENS = 600;
 
+/** Max tokens for a dependency skill injection (compact summary) */
+const MAX_DEP_SKILL_TOKENS = 200;
+
+/** Max dependency resolution depth to prevent infinite recursion */
+const MAX_DEP_DEPTH = 2;
+
+// ─── Three-Layer Load Levels ──────────────────────────────────────────────────
+// Skills are loaded in three priority tiers:
+//   Level 1 – Global:  Always loaded for every task (safety, coding standards)
+//   Level 2 – Project: Loaded for all tasks in the project (from config)
+//   Level 3 – Task:    Dynamically matched by keyword from task text
+
+const LOAD_LEVEL = {
+  GLOBAL:  'global',
+  PROJECT: 'project',
+  TASK:    'task',
+};
+
 // ─── Keyword → Skill mapping (built-in defaults) ─────────────────────────────
 // Keys are skill file names (without .md), values are trigger keyword arrays.
 // Projects can extend this via workflow.config.js → skillKeywords.
@@ -53,6 +71,9 @@ const BUILTIN_SKILL_KEYWORDS = {
   'test-report':          ['test', 'unit test', 'integration test', 'coverage', 'jest', 'pytest', 'mocha'],
   'project-onboarding':   ['onboard', 'setup', 'init', 'new project', 'getting started'],
   'workflow-orchestration':['workflow', 'orchestrat', 'agent', 'pipeline', 'stage'],
+  'troubleshooting':      ['error', 'bug', 'fix', 'crash', 'fail', 'issue', 'debug', 'troubleshoot', 'exception'],
+  'standards':            ['standard', 'convention', 'naming', 'style', 'format', 'lint'],
+  'code-development':     ['code', 'develop', 'implement', 'build', 'program'],
 };
 
 // ─── Role → Mandatory docs mapping ───────────────────────────────────────────
@@ -82,6 +103,8 @@ class ContextLoader {
     projectRoot     = null,
     skillKeywords   = {},
     alwaysLoadSkills = [],
+    globalSkills    = [],    // Level 1: always loaded for every task
+    projectSkills   = [],    // Level 2: loaded for all tasks in the project
   } = {}) {
     this._workflowRoot     = workflowRoot;
     this._projectRoot      = projectRoot || null;
@@ -89,6 +112,10 @@ class ContextLoader {
     this._docsDir          = workflowRoot;  // docs/ is relative to workflowRoot
     this._skillKeywords    = { ...BUILTIN_SKILL_KEYWORDS, ...skillKeywords };
     this._alwaysLoadSkills = alwaysLoadSkills;
+    this._globalSkills     = globalSkills;
+    this._projectSkills    = projectSkills;
+    /** @type {Set<string>} Track loaded skills to avoid duplicates across layers */
+    this._loadedSkillsInResolve = new Set();
 
     // ── File Read Cache (D1+D3 optimisation) ──────────────────────────────────
     // Caches file contents in memory to avoid redundant disk I/O within the same
@@ -191,27 +218,54 @@ class ContextLoader {
       if (budget <= 0) break;
     }
 
-    // 2. Always-load skills (from config)
-    for (const skillName of this._alwaysLoadSkills) {
+    // Reset per-resolve dedup tracker
+    this._loadedSkillsInResolve = new Set();
+
+    // 2. Level 1 – Global skills (highest priority, always loaded)
+    for (const skillName of this._globalSkills) {
       if (budget <= 0) break;
-      const loaded = this._loadSkill(skillName, budget);
+      if (this._loadedSkillsInResolve.has(skillName)) continue;
+      const loaded = this._loadSkillWithDeps(skillName, budget, 0);
       if (loaded) {
-        sections.push(loaded.section);
-        sources.push(loaded.source);
+        sections.push(...loaded.sections);
+        sources.push(...loaded.sources);
         budget -= loaded.tokens;
       }
     }
 
-    // 3. Keyword-matched skills (from task text)
+    // 3. Level 2 – Project skills (from config, loaded for all tasks in project)
+    for (const skillName of this._projectSkills) {
+      if (budget <= 0) break;
+      if (this._loadedSkillsInResolve.has(skillName)) continue;
+      const loaded = this._loadSkillWithDeps(skillName, budget, 0);
+      if (loaded) {
+        sections.push(...loaded.sections);
+        sources.push(...loaded.sources);
+        budget -= loaded.tokens;
+      }
+    }
+
+    // 4. Always-load skills (backward compat, from config)
+    for (const skillName of this._alwaysLoadSkills) {
+      if (budget <= 0) break;
+      if (this._loadedSkillsInResolve.has(skillName)) continue;
+      const loaded = this._loadSkillWithDeps(skillName, budget, 0);
+      if (loaded) {
+        sections.push(...loaded.sections);
+        sources.push(...loaded.sources);
+        budget -= loaded.tokens;
+      }
+    }
+
+    // 5. Level 3 – Task skills (keyword-matched from task text)
     const matchedSkills = this._matchSkills(taskText, role);
     for (const skillName of matchedSkills) {
       if (budget <= 0) break;
-      // Skip if already loaded via alwaysLoadSkills
-      if (sources.some(s => s.startsWith(skillName))) continue;
-      const loaded = this._loadSkill(skillName, Math.min(MAX_SKILL_TOKENS, budget));
+      if (this._loadedSkillsInResolve.has(skillName)) continue;
+      const loaded = this._loadSkillWithDeps(skillName, Math.min(MAX_SKILL_TOKENS, budget), 0);
       if (loaded) {
-        sections.push(loaded.section);
-        sources.push(loaded.source);
+        sections.push(...loaded.sections);
+        sources.push(...loaded.sources);
         budget -= loaded.tokens;
       }
     }
@@ -316,16 +370,149 @@ class ContextLoader {
     return this._truncate(digest, tokenBudget);
   }
 
-  // ─── Skill Loading ────────────────────────────────────────────────────────
+  // ─── YAML Frontmatter Parsing ──────────────────────────────────────────────
 
   /**
-   * Loads a skill file and returns a formatted section.
+   * Parses YAML frontmatter from a skill file.
+   * Returns the parsed metadata and the body content after the frontmatter.
+   *
+   * @param {string} content - Full skill file content
+   * @returns {{ meta: object, body: string }}
+   */
+  _parseFrontmatter(content) {
+    if (!content || !content.startsWith('---')) {
+      return { meta: {}, body: content || '' };
+    }
+    const endIdx = content.indexOf('---', 3);
+    if (endIdx === -1) {
+      return { meta: {}, body: content };
+    }
+
+    const yamlBlock = content.slice(3, endIdx).trim();
+    const meta = {};
+    let currentKey = null;
+
+    for (const line of yamlBlock.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      // Handle nested keys (e.g. "  keywords: [...]")
+      if (line.startsWith('  ') && currentKey) {
+        const nestedMatch = trimmed.match(/^(\w+):\s*(.*)$/);
+        if (nestedMatch) {
+          if (typeof meta[currentKey] !== 'object' || Array.isArray(meta[currentKey])) {
+            meta[currentKey] = {};
+          }
+          meta[currentKey][nestedMatch[1]] = this._parseYamlValue(nestedMatch[2]);
+        }
+        continue;
+      }
+
+      // Handle top-level keys
+      const match = trimmed.match(/^(\w[\w_]*):\s*(.*)$/);
+      if (match) {
+        currentKey = match[1];
+        const val = match[2];
+        if (val === '' || val === undefined) {
+          meta[currentKey] = {};
+        } else {
+          meta[currentKey] = this._parseYamlValue(val);
+        }
+      }
+    }
+
+    return { meta, body: content.slice(endIdx + 3).trim() };
+  }
+
+  /**
+   * Parses a simple YAML value (string, number, array).
+   * @param {string} val
+   * @returns {*}
+   */
+  _parseYamlValue(val) {
+    if (!val || val.trim() === '') return '';
+    const trimmed = val.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      const inner = trimmed.slice(1, -1).trim();
+      if (!inner) return [];
+      return inner.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+    }
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+      return trimmed.slice(1, -1);
+    }
+    if (/^\d+$/.test(trimmed)) return Number(trimmed);
+    return trimmed;
+  }
+
+  // ─── Skill Loading (with Dependency Resolution) ─────────────────────────────
+
+  /**
+   * Loads a skill file with recursive dependency resolution.
+   * Dependencies declared in YAML frontmatter are automatically loaded.
+   * Circular dependencies are detected via a visited set.
    *
    * @param {string} skillName
    * @param {number} tokenBudget
-   * @returns {{ section: string, source: string, tokens: number }|null}
+   * @param {number} depth - Current recursion depth (0 = root skill)
+   * @param {Set<string>} [visited] - Visited set for circular dependency detection
+   * @returns {{ sections: string[], sources: string[], tokens: number }|null}
    */
-  _loadSkill(skillName, tokenBudget) {
+  _loadSkillWithDeps(skillName, tokenBudget, depth = 0, visited = null) {
+    if (!visited) visited = new Set();
+
+    // Circular dependency guard
+    if (visited.has(skillName)) {
+      console.log(`[ContextLoader] ⚠️ Circular dependency detected: ${skillName} – skipping`);
+      return null;
+    }
+    visited.add(skillName);
+
+    const result = { sections: [], sources: [], tokens: 0 };
+
+    // Load the skill itself
+    const loaded = this._loadSkill(skillName, tokenBudget, depth > 0);
+    if (!loaded) return null;
+
+    result.sections.push(loaded.section);
+    result.sources.push(loaded.source);
+    result.tokens += loaded.tokens;
+    this._loadedSkillsInResolve.add(skillName);
+
+    // Resolve dependencies if within depth limit
+    if (depth < MAX_DEP_DEPTH && loaded.dependencies && loaded.dependencies.length > 0) {
+      let depBudget = tokenBudget - loaded.tokens;
+      for (const depName of loaded.dependencies) {
+        if (depBudget <= 0) break;
+        if (this._loadedSkillsInResolve.has(depName)) continue;
+        const depLoaded = this._loadSkillWithDeps(
+          depName,
+          Math.min(MAX_DEP_SKILL_TOKENS, depBudget),
+          depth + 1,
+          visited
+        );
+        if (depLoaded) {
+          result.sections.push(...depLoaded.sections);
+          result.sources.push(...depLoaded.sources);
+          result.tokens += depLoaded.tokens;
+          depBudget -= depLoaded.tokens;
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Loads a skill file and returns a formatted section.
+   * Parses YAML frontmatter for metadata and dependencies.
+   *
+   * @param {string} skillName
+   * @param {number} tokenBudget
+   * @param {boolean} [isDep=false] - True if loaded as a dependency (uses compact format)
+   * @returns {{ section: string, source: string, tokens: number, dependencies: string[] }|null}
+   */
+  _loadSkill(skillName, tokenBudget, isDep = false) {
     const skillPath = path.join(this._skillsDir, `${skillName}.md`);
     const content = this._readFileCached(skillPath);
     if (!content) return null;
@@ -333,14 +520,27 @@ class ContextLoader {
     // Skip empty/placeholder skills (no real content yet)
     if (this._isPlaceholderSkill(content)) return null;
 
-    const truncated = this._truncate(content, tokenBudget);
+    // Parse frontmatter for metadata
+    const { meta, body } = this._parseFrontmatter(content);
+    const dependencies = meta.dependencies || [];
+
+    // Use frontmatter max_tokens if available, capped by tokenBudget
+    const effectiveBudget = meta.max_tokens
+      ? Math.min(meta.max_tokens, tokenBudget)
+      : tokenBudget;
+
+    // For dependency skills, use only the body (compact)
+    const toTruncate = isDep ? body : content;
+    const truncated = this._truncate(toTruncate, effectiveBudget);
     if (!truncated) return null;
 
     const tokens = estimateTokens(truncated);
+    const label = isDep ? '🔗 Dep-Skill' : '🧠 Skill';
     return {
-      section: `## 🧠 Skill: ${skillName}\n\n${truncated}`,
+      section: `## ${label}: ${skillName}\n\n${truncated}`,
       source:  `${skillName}.md`,
       tokens,
+      dependencies,
     };
   }
 
@@ -395,4 +595,4 @@ class ContextLoader {
   }
 }
 
-module.exports = { ContextLoader };
+module.exports = { ContextLoader, LOAD_LEVEL };

@@ -1,3 +1,16 @@
+---
+name: code-review
+version: 1.0.0
+type: domain-skill
+domains: [quality, review]
+dependencies: []
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [review, refactor, clean code, lint, quality, smell]
+  roles: [developer, architect, coding-agent]
+description: "Code review checklist and best practices"
+---
 # Skill: code-review
 
 > **Type**: Domain Skill

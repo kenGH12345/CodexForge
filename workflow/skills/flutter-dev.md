@@ -1,3 +1,16 @@
+---
+name: flutter-dev
+version: 1.0.0
+type: domain-skill
+domains: [flutter, dart, mobile]
+dependencies: []
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [flutter, dart, widget, riverpod, provider, bloc, pubspec]
+  roles: [developer]
+description: "Flutter/Dart development patterns"
+---
 # Skill: flutter-dev
 
 > **Type**: Domain Skill

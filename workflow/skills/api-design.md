@@ -1,3 +1,16 @@
+---
+name: api-design
+version: 1.0.0
+type: domain-skill
+domains: [backend, api]
+dependencies: [architecture-design]
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [api, rest, graphql, endpoint, swagger, openapi, http]
+  roles: [developer]
+description: "REST/RPC API design rules and patterns"
+---
 # Skill: api-design
 
 > **Type**: Domain Skill

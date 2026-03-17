@@ -1,3 +1,16 @@
+---
+name: workflow-orchestration
+version: 1.0.0
+type: domain-skill
+domains: [workflow, orchestration]
+dependencies: []
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [workflow, orchestrat, agent, pipeline, stage]
+  roles: [analyst, architect, developer, tester, coding-agent]
+description: "Multi-agent workflow orchestration SOP"
+---
 # Skill: Full Workflow Orchestration SOP
 
 > **Type**: Workflow Skill  

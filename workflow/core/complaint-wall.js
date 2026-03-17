@@ -301,6 +301,38 @@ class ComplaintWall {
     });
   }
 
+  // ─── Troubleshooting Export ──────────────────────────────────────────────────
+
+  /**
+   * Exports resolved complaints as structured troubleshooting entries.
+   * These entries can be fed into the SkillEvolutionEngine to auto-populate
+   * a troubleshooting skill file.
+   *
+   * @param {object} [options]
+   * @param {string}   [options.targetType] - Filter by target type
+   * @param {number}   [options.since]      - Only include complaints resolved after this timestamp (ms)
+   * @returns {{ entries: Array<{ title: string, error: string, rootCause: string, fix: string, prevention: string }>, count: number }}
+   */
+  exportToTroubleshooting({ targetType = null, since = 0 } = {}) {
+    const resolved = this.complaints.filter(c => {
+      if (c.status !== ComplaintStatus.RESOLVED) return false;
+      if (targetType && c.targetType !== targetType) return false;
+      if (since && new Date(c.updatedAt).getTime() < since) return false;
+      return true;
+    });
+
+    const entries = resolved.map(c => ({
+      title: `${c.targetType}:${c.targetId} — ${c.description.slice(0, 80)}`,
+      error: c.description,
+      rootCause: `Identified via complaint ${c.id} (severity: ${c.severity})`,
+      fix: c.resolution || c.suggestion,
+      prevention: c.suggestion,
+      sourceComplaintId: c.id,
+    }));
+
+    return { entries, count: entries.length };
+  }
+
   // ─── Private Helpers ──────────────────────────────────────────────────────────
 
   _getComplaint(id) {

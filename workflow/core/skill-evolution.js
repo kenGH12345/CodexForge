@@ -42,7 +42,7 @@ class SkillEvolutionEngine {
    * @param {string[]} [options.domains]   - Applicable domains (e.g. ['backend', 'database'])
    * @returns {SkillMeta}
    */
-  registerSkill({ name, description, domains = [] }) {
+  registerSkill({ name, description, domains = [], type = 'domain-skill', loadLevel = 'task', dependencies = [], maxTokens = null, triggers = {} }) {
     if (this.registry.has(name)) {
       console.log(`[SkillEvolution] Skill already registered: ${name}`);
       return this.registry.get(name);
@@ -51,6 +51,11 @@ class SkillEvolutionEngine {
       name,
       description,
       domains,
+      type,              // domain-skill | troubleshooting | standards | workflow
+      loadLevel,         // global | project | task
+      dependencies,      // other skill names this skill depends on
+      maxTokens: maxTokens || 800,
+      triggers,          // { keywords: [], roles: [] }
       version: '1.0.0',
       evolutionCount: 0,
       lastEvolvedAt: null,
@@ -378,39 +383,103 @@ class SkillEvolutionEngine {
    * @param {SkillMeta} meta
    */
   _createSkillFile(meta) {
+    // Build YAML frontmatter with structured metadata
+    const triggerKeywords = (meta.triggers && meta.triggers.keywords) || [];
+    const triggerRoles = (meta.triggers && meta.triggers.roles) || [];
+    const frontmatter = [
+      `---`,
+      `name: ${meta.name}`,
+      `version: ${meta.version}`,
+      `type: ${meta.type || 'domain-skill'}`,
+      `domains: [${(meta.domains || []).join(', ')}]`,
+      `dependencies: [${(meta.dependencies || []).join(', ')}]`,
+      `load_level: ${meta.loadLevel || 'task'}`,
+      `max_tokens: ${meta.maxTokens || 800}`,
+      `triggers:`,
+      `  keywords: [${triggerKeywords.join(', ')}]`,
+      `  roles: [${triggerRoles.join(', ')}]`,
+      `description: "${meta.description}"`,
+      `---`,
+    ].join('\n');
+
+    // Determine sections based on skill type
+    let sections;
+    if (meta.type === 'troubleshooting') {
+      sections = [
+        `## Common Errors`,
+        ``,
+        `_No errors documented yet. Errors will be added from complaint resolutions._`,
+        ``,
+        `## Root Cause Analysis`,
+        ``,
+        `_No root causes documented yet._`,
+        ``,
+        `## Fix Recipes`,
+        ``,
+        `_No fix recipes documented yet._`,
+        ``,
+        `## Prevention Rules`,
+        ``,
+        `_No prevention rules defined yet._`,
+      ];
+    } else if (meta.type === 'standards') {
+      sections = [
+        `## Coding Standards`,
+        ``,
+        `_No coding standards defined yet._`,
+        ``,
+        `## Naming Conventions`,
+        ``,
+        `_No naming conventions defined yet._`,
+        ``,
+        `## Directory Structure`,
+        ``,
+        `_No directory structure rules defined yet._`,
+        ``,
+        `## Commit Conventions`,
+        ``,
+        `_No commit conventions defined yet._`,
+      ];
+    } else {
+      sections = [
+        `## Rules`,
+        ``,
+        `_No rules defined yet. Rules will be added as experience accumulates._`,
+        ``,
+        `## SOP (Standard Operating Procedure)`,
+        ``,
+        `_No SOP defined yet._`,
+        ``,
+        `## Checklist`,
+        ``,
+        `_No checklist defined yet._`,
+        ``,
+        `## Best Practices`,
+        ``,
+        `_No best practices defined yet._`,
+        ``,
+        `## Anti-Patterns`,
+        ``,
+        `_No anti-patterns defined yet._`,
+        ``,
+        `## Context Hints`,
+        ``,
+        `_No context hints defined yet._`,
+      ];
+    }
+
     const content = [
+      frontmatter,
+      ``,
       `# Skill: ${meta.name}`,
       ``,
-      `> **Type**: Domain Skill`,
       `> **Version**: ${meta.version}`,
       `> **Description**: ${meta.description}`,
-      `> **Domains**: ${meta.domains.join(', ') || 'general'}`,
+      `> **Domains**: ${(meta.domains || []).join(', ') || 'general'}`,
       ``,
       `---`,
       ``,
-      `## Rules`,
-      ``,
-      `_No rules defined yet. Rules will be added as experience accumulates._`,
-      ``,
-      `## SOP (Standard Operating Procedure)`,
-      ``,
-      `_No SOP defined yet._`,
-      ``,
-      `## Checklist`,
-      ``,
-      `_No checklist defined yet._`,
-      ``,
-      `## Best Practices`,
-      ``,
-      `_No best practices defined yet._`,
-      ``,
-      `## Anti-Patterns`,
-      ``,
-      `_No anti-patterns defined yet._`,
-      ``,
-      `## Context Hints`,
-      ``,
-      `_No context hints defined yet._`,
+      ...sections,
       ``,
       `## Evolution History`,
       ``,
@@ -427,6 +496,79 @@ class SkillEvolutionEngine {
     fs.writeFileSync(tmpPath, content, 'utf-8');
     fs.renameSync(tmpPath, meta.filePath);
     console.log(`[SkillEvolution] Skill file created: ${meta.filePath}`);
+  }
+
+  /**
+   * Parses YAML frontmatter from a skill file content.
+   * Returns an object with the parsed metadata, or null if no frontmatter found.
+   *
+   * @param {string} content - Skill file content
+   * @returns {{ meta: object, bodyStart: number }|null}
+   */
+  _parseFrontmatter(content) {
+    if (!content || !content.startsWith('---')) return null;
+    const endIdx = content.indexOf('---', 3);
+    if (endIdx === -1) return null;
+
+    const yamlBlock = content.slice(3, endIdx).trim();
+    const meta = {};
+    let currentKey = null;
+
+    for (const line of yamlBlock.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      // Handle nested keys (e.g. "  keywords: [...]")
+      if (line.startsWith('  ') && currentKey) {
+        const nestedMatch = trimmed.match(/^(\w+):\s*(.*)$/);
+        if (nestedMatch) {
+          if (typeof meta[currentKey] !== 'object' || Array.isArray(meta[currentKey])) {
+            meta[currentKey] = {};
+          }
+          meta[currentKey][nestedMatch[1]] = this._parseYamlValue(nestedMatch[2]);
+        }
+        continue;
+      }
+
+      // Handle top-level keys
+      const match = trimmed.match(/^(\w+):\s*(.*)$/);
+      if (match) {
+        currentKey = match[1];
+        const val = match[2];
+        // Check if next lines are nested (triggers:)
+        if (val === '' || val === undefined) {
+          meta[currentKey] = {};
+        } else {
+          meta[currentKey] = this._parseYamlValue(val);
+        }
+      }
+    }
+
+    return { meta, bodyStart: endIdx + 3 };
+  }
+
+  /**
+   * Parses a simple YAML value (string, number, array).
+   * @param {string} val
+   * @returns {*}
+   */
+  _parseYamlValue(val) {
+    if (!val || val.trim() === '') return '';
+    const trimmed = val.trim();
+    // Array: [item1, item2]
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      const inner = trimmed.slice(1, -1).trim();
+      if (!inner) return [];
+      return inner.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+    }
+    // Quoted string
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+      return trimmed.slice(1, -1);
+    }
+    // Number
+    if (/^\d+$/.test(trimmed)) return Number(trimmed);
+    return trimmed;
   }
 
   _loadRegistry() {

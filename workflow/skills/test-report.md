@@ -1,3 +1,16 @@
+---
+name: test-report
+version: 1.0.0
+type: domain-skill
+domains: [testing, qa]
+dependencies: []
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [test, unit test, integration test, coverage, jest, pytest, mocha]
+  roles: [tester]
+description: "Test report writing standards and quality assurance patterns"
+---
 # Skill: test-report
 
 > **Type**: Domain Skill

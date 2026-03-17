@@ -1,3 +1,16 @@
+---
+name: go-crud
+version: 1.0.0
+type: domain-skill
+domains: [backend, go, database]
+dependencies: [api-design]
+load_level: task
+max_tokens: 800
+triggers:
+  keywords: [go, golang, gin, gorm, grpc, protobuf]
+  roles: [developer]
+description: "Go language CRUD implementation patterns"
+---
 # Skill: go-crud
 
 > **Type**: Domain Skill
