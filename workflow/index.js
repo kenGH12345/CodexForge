@@ -66,6 +66,8 @@ const { StageRunner, StageRegistry } = require('./core/stage-runner');
 const { AnalystStage, ArchitectStage, DeveloperStage, TesterStage } = require('./core/stages');
 // P3 optimisation: multi-model routing support
 const { LlmRouter } = require('./core/llm-router');
+// MCP (Model Context Protocol) adapters: pluggable external system integration
+const { MCPRegistry, TAPDAdapter, DevToolsAdapter } = require('./hooks/mcp-adapter');
 
 class Orchestrator {
   /**
@@ -476,6 +478,39 @@ class Orchestrator {
     this.stageRegistry.register(new DeveloperStage());
     this.stageRegistry.register(new TesterStage());
     console.log(`[Orchestrator] 🔧 StageRegistry initialised: [${this.stageRegistry.getOrder().join(' → ')}]`);
+
+    // ── MCP (Model Context Protocol) Integration ──────────────────────────────
+    // Initialise MCPRegistry and auto-register adapters from workflow.config.js.
+    // Previously mcp-adapter.js was a fully-implemented but completely orphaned
+    // module – defined, exported, documented in README, but never require()'d by
+    // any runtime code. This bridges the gap.
+    //
+    // The registry is wired into HookSystem so WORKFLOW_COMPLETE / WORKFLOW_ERROR
+    // events are automatically broadcast to all connected MCP adapters (TAPD,
+    // DevTools, etc.), enabling zero-config external system notifications.
+    this.mcpRegistry = new MCPRegistry();
+    const cfgMcp = (this._config && this._config.mcp) || {};
+    if (cfgMcp.tapd) {
+      this.mcpRegistry.register(new TAPDAdapter(cfgMcp.tapd));
+    }
+    if (cfgMcp.devtools) {
+      this.mcpRegistry.register(new DevToolsAdapter(cfgMcp.devtools));
+    }
+    // Wire MCP into HookSystem: broadcast lifecycle events to all connected adapters
+    this.hooks.on(HOOK_EVENTS.WORKFLOW_COMPLETE, async (payload) => {
+      await this.mcpRegistry.broadcastNotify('workflow_complete', payload).catch(() => {});
+    });
+    this.hooks.on(HOOK_EVENTS.WORKFLOW_ERROR, async (payload) => {
+      await this.mcpRegistry.broadcastNotify('workflow_error', {
+        error: payload.error?.message ?? String(payload.error),
+        state: payload.state,
+      }).catch(() => {});
+    });
+    // Register in ServiceContainer for DI access
+    this.services.registerValue('mcpRegistry', this.mcpRegistry);
+    if (cfgMcp.tapd || cfgMcp.devtools) {
+      console.log(`[Orchestrator] 🔌 MCPRegistry initialised with ${cfgMcp.tapd ? 'TAPD' : ''}${cfgMcp.tapd && cfgMcp.devtools ? ' + ' : ''}${cfgMcp.devtools ? 'DevTools' : ''} adapter(s).`);
+    }
   }
 
   // ─── _initWorkflow and _finalizeWorkflow: see orchestrator-lifecycle.js ───

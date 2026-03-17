@@ -175,4 +175,23 @@ module.exports = {
   sandbox: {
     dryRun: false,            // Set to true to enable dry-run mode
   },
+
+  // ─── MCP (Model Context Protocol) ────────────────────────────────────────────
+  //
+  // Connect external systems (TAPD, CI/CD, DevTools) via MCP adapters.
+  // When configured, lifecycle events (WORKFLOW_COMPLETE, WORKFLOW_ERROR) are
+  // automatically broadcast to all connected adapters.
+  //
+  // Uncomment and fill in credentials to enable:
+  //
+  // mcp: {
+  //   tapd: {
+  //     workspaceId: 'your-tapd-workspace-id',
+  //     accessToken: 'your-tapd-access-token',
+  //   },
+  //   devtools: {
+  //     ciApiBase: 'https://ci.example.com',
+  //     authToken: 'your-ci-auth-token',
+  //   },
+  // },
 };

@@ -22,7 +22,7 @@ const fs = require('fs');
 const { PATHS, HOOK_EVENTS } = require('./constants');
 const { STATE_ORDER } = require('./types');
 const { SkillWatcher } = require('./skill-watcher');
-const { getCachedLoader } = require('./prompt-builder');
+const { getCachedLoader, onLoaderReady } = require('./prompt-builder');
 
 module.exports = {
 
@@ -74,7 +74,34 @@ module.exports = {
       });
       this._skillWatcher.start();
     } else if (!cachedLoader) {
+      // SkillWatcher deferred: ContextLoader hasn't been created yet (lazy init
+      // in prompt-builder.js). Register a one-shot callback so the watcher starts
+      // automatically on the first buildAgentPrompt() call.
+      this._skillWatcherDeferred = true;
+      onLoaderReady((loader) => {
+        if (this._skillWatcher || !this.skillEvolution) return; // already started or shutdown
+        this._skillWatcher = new SkillWatcher(loader, PATHS.SKILLS_DIR, {
+          skillEvolution: this.skillEvolution,
+        });
+        this._skillWatcher.on('skill:changed', ({ filename, eventType }) => {
+          console.log(`[Orchestrator] 🔄 Skill hot-reload: ${filename} (${eventType})`);
+        });
+        this._skillWatcher.start();
+        this._skillWatcherDeferred = false;
+        console.log(`[Orchestrator] 🔄 SkillWatcher started (deferred → ContextLoader now available).`);
+      });
       console.log(`[Orchestrator] ℹ️  SkillWatcher deferred: ContextLoader not yet initialised (will activate on first LLM call).`);
+    }
+
+    // 5. Connect MCP adapters (fire-and-forget, non-blocking)
+    // Uses ServiceContainer.resolve() to access the MCPRegistry instance –
+    // this is the first real consumption of the DI container, activating the
+    // ServiceContainer that was previously registered-but-never-consumed.
+    if (this.services.has('mcpRegistry')) {
+      const registry = this.services.resolve('mcpRegistry');
+      registry.connectAll().catch(err =>
+        console.warn(`[Orchestrator] ⚠️  MCP connectAll failed (non-fatal): ${err.message}`)
+      );
     }
 
     return resumeState;

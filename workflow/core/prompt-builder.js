@@ -136,6 +136,13 @@ let _cachedLoader = null;
 let _cachedLoaderKey = '';
 
 /**
+ * Callback list for one-shot notifications when _cachedLoader is first created.
+ * Used by orchestrator-lifecycle.js to start SkillWatcher once ContextLoader exists.
+ * @type {Function[]}
+ */
+let _onLoaderCreatedCallbacks = [];
+
+/**
  * Module-level PromptSlotManager instance.
  * Initialised lazily on first buildAgentPrompt() call, or eagerly via
  * setPromptSlotManager(). When set, buildAgentPrompt() resolves the fixed
@@ -178,6 +185,23 @@ function getCachedLoader() {
 }
 
 /**
+ * Registers a one-shot callback that fires when _cachedLoader is first created.
+ * If _cachedLoader already exists, the callback fires synchronously.
+ * Used by orchestrator-lifecycle.js to start SkillWatcher after ContextLoader is ready.
+ *
+ * @param {Function} cb - (loader: ContextLoader) => void
+ */
+function onLoaderReady(cb) {
+  if (typeof cb !== 'function') return;
+  if (_cachedLoader) {
+    // Already created – fire immediately
+    cb(_cachedLoader);
+  } else {
+    _onLoaderCreatedCallbacks.push(cb);
+  }
+}
+
+/**
  * Returns a (possibly cached) ContextLoader instance.
  * Recreates only if the options fingerprint changes.
  * @private
@@ -194,8 +218,20 @@ function _getOrCreateLoader(options) {
   if (_cachedLoader && _cachedLoaderKey === key) {
     return _cachedLoader;
   }
+  const isFirstCreation = !_cachedLoader;
   _cachedLoader = new ContextLoader(options);
   _cachedLoaderKey = key;
+
+  // Fire one-shot callbacks when ContextLoader is first created.
+  // This allows deferred SkillWatcher startup from orchestrator-lifecycle.js.
+  if (isFirstCreation && _onLoaderCreatedCallbacks.length > 0) {
+    const cbs = _onLoaderCreatedCallbacks;
+    _onLoaderCreatedCallbacks = [];
+    for (const cb of cbs) {
+      try { cb(_cachedLoader); } catch (_) { /* non-fatal */ }
+    }
+  }
+
   return _cachedLoader;
 }
 
@@ -600,6 +636,8 @@ module.exports = {
   getPromptSlotManager,
   // ContextLoader access (for SkillWatcher integration)
   getCachedLoader,
+  // Deferred SkillWatcher startup
+  onLoaderReady,
   // Long-running agent pattern modules
   FeatureList:    require('./feature-list').FeatureList,
   FeatureStatus:  require('./feature-list').FeatureStatus,
