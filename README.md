@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🤖 WorkFlowAgent
+# ⚒ CODEX FORGE
 
 **A production-grade AI Agent Runtime (Harness) for automated software development**
 
@@ -8,8 +8,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D16.0.0-brightgreen)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/Tests-62%20passed-brightgreen)](https://github.com/kenGH12345/WorkFlowAgent)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/kenGH12345/WorkFlowAgent/pulls)
+[![Tests](https://img.shields.io/badge/Tests-62%20passed-brightgreen)](https://github.com/kenGH12345/CodexForge)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/kenGH12345/CodexForge/pulls)
 
 **[English](#english-version)** · **[中文](#chinese-version)**
 
@@ -21,17 +21,17 @@
 
 ## 🇬🇧 English
 
-### What is WorkFlowAgent?
+### What is CODEX FORGE?
 
-WorkFlowAgent is a **portable, LLM-agnostic, production-grade AI Agent Runtime** — commonly called a **Harness** — that transforms a single natural-language requirement into production-ready code through a structured pipeline of specialised AI agents.
+CODEX FORGE is a **portable, LLM-agnostic, production-grade AI Agent Runtime** — commonly called a **Harness** — that transforms a single natural-language requirement into production-ready code through a structured pipeline of specialised AI agents.
 
 > *"An Agent's capability comes from the model, but an Agent's stability comes from the Harness."*
 
-Unlike simple Agent Loops (`while not finished: think → act`), WorkFlowAgent implements a **complete 5-layer Harness architecture** — Environment, Tool, Control, Memory, and Evaluation — ensuring that multi-step AI workflows remain stable, observable, and self-correcting over long-running tasks.
+Unlike simple Agent Loops (`while not finished: think → act`), CODEX FORGE implements a **complete 5-layer Harness architecture** — Environment, Tool, Control, Memory, and Evaluation — ensuring that multi-step AI workflows remain stable, observable, and self-correcting over long-running tasks.
 
 ```
                               ┌─────────────────────────────────────────┐
-                              │         WorkFlowAgent Harness           │
+                              │         CODEX FORGE Harness           │
                               │                                         │
   User Requirement ──────────▶│  ┌─────────┐  ┌───────────┐            │
                               │  │ Analyst  │─▶│ Architect │            │
@@ -60,7 +60,7 @@ Unlike simple Agent Loops (`while not finished: think → act`), WorkFlowAgent i
 
 ### 🏗️ 5-Layer Harness Architecture
 
-WorkFlowAgent implements a complete **Harness Engineering** architecture with five layers:
+CODEX FORGE implements a complete **Harness Engineering** architecture with five layers:
 
 <table border="1" cellpadding="8" cellspacing="0">
   <tr><th>Layer</th><th>Purpose</th><th>Key Modules</th></tr>
@@ -215,7 +215,7 @@ Unlike traditional "restart from scratch" approaches, `RollbackCoordinator` anal
 ### 🆚 Comparison with Similar Frameworks
 
 <table border="1" cellpadding="8" cellspacing="0">
-  <tr><th></th><th>WorkFlowAgent</th><th>AutoGen</th><th>CrewAI</th><th>Devin / SWE-agent</th><th>Cursor / Copilot</th></tr>
+  <tr><th></th><th>CODEX FORGE</th><th>AutoGen</th><th>CrewAI</th><th>Devin / SWE-agent</th><th>Cursor / Copilot</th></tr>
   <tr><td><b>Primary focus</b></td><td>Production-grade software dev Harness</td><td>General multi-agent conversations</td><td>Role-based task crews</td><td>Autonomous coding agent</td><td>IDE code completion</td></tr>
   <tr><td><b>Agent roles</b></td><td>Fixed pipeline with expert personas</td><td>Flexible, user-defined</td><td>Flexible, user-defined</td><td>Single agent loop</td><td>Single assistant</td></tr>
   <tr><td><b>Communication</b></td><td>File-reference protocol (zero token waste)</td><td>In-memory message passing</td><td>In-memory message passing</td><td>Tool calls + scratchpad</td><td>Context window</td></tr>
@@ -245,8 +245,8 @@ Unlike traditional "restart from scratch" approaches, `RollbackCoordinator` anal
 
 ```bash
 # 1. Clone & install
-git clone https://github.com/kenGH12345/WorkFlowAgent.git
-cd WorkFlowAgent/workflow && npm install
+git clone https://github.com/kenGH12345/CodexForge.git
+cd CodexForge/workflow && npm install
 
 # 2. Initialise for your project (auto-detects tech stack)
 node workflow/init-project.js
@@ -287,7 +287,7 @@ await orchestrator.run('Build a REST API for user management with CRUD operation
 
 ```bash
 # 1. Copy the workflow folder
-cp -r WorkFlowAgent/workflow /path/to/your-project/
+cp -r CodexForge/workflow /path/to/your-project/
 
 # 2. Install dependencies
 cd /path/to/your-project/workflow && npm install
@@ -301,7 +301,7 @@ node workflow/init-project.js
 ### 📁 Project Structure
 
 ```
-WorkFlowAgent/
+CodexForge/
 ├── workflow/                          # The portable Harness engine
 │   ├── index.js                       # Orchestrator (main entry point)
 │   ├── init-project.js                # One-command project initialiser
@@ -430,15 +430,15 @@ npm test
 
 ### 项目简介
 
-WorkFlowAgent 是一个**可移植、与 LLM 无关的生产级 AI Agent 运行时系统**（通常称为 **Harness**），通过结构化的专业 AI 智能体流水线，将一句自然语言需求转化为可直接投入生产的代码。
+CODEX FORGE 是一个**可移植、与 LLM 无关的生产级 AI Agent 运行时系统**（通常称为 **Harness**），通过结构化的专业 AI 智能体流水线，将一句自然语言需求转化为可直接投入生产的代码。
 
 > *"Agent 的能力来自模型，但 Agent 的稳定性来自 Harness。"*
 
-与简单的 Agent 循环（`while not finished: think → act`）不同，WorkFlowAgent 实现了完整的 **5 层 Harness 架构** — 环境层、工具层、控制层、记忆层和评估层 — 确保多步骤 AI 工作流在长时间运行中保持稳定、可观测且能够自我修正。
+与简单的 Agent 循环（`while not finished: think → act`）不同，CODEX FORGE 实现了完整的 **5 层 Harness 架构** — 环境层、工具层、控制层、记忆层和评估层 — 确保多步骤 AI 工作流在长时间运行中保持稳定、可观测且能够自我修正。
 
 ```
                               ┌─────────────────────────────────────────┐
-                              │       WorkFlowAgent Harness 运行时      │
+                              │       CODEX FORGE Harness 运行时      │
                               │                                         │
   用户需求 ─────────────────▶│  ┌─────────┐  ┌───────────┐            │
                               │  │  分析师  │─▶│  架构师   │            │
@@ -617,7 +617,7 @@ WorkFlowAgent 是一个**可移植、与 LLM 无关的生产级 AI Agent 运行�
 ### 🆚 与同类框架对比
 
 <table border="1" cellpadding="8" cellspacing="0">
-  <tr><th></th><th>WorkFlowAgent</th><th>AutoGen</th><th>CrewAI</th><th>Devin / SWE-agent</th><th>Cursor / Copilot</th></tr>
+  <tr><th></th><th>CODEX FORGE</th><th>AutoGen</th><th>CrewAI</th><th>Devin / SWE-agent</th><th>Cursor / Copilot</th></tr>
   <tr><td><b>核心定位</b></td><td>生产级软件开发 Harness</td><td>通用多智能体对话</td><td>角色制任务团队</td><td>自主编程 Agent</td><td>IDE 代码补全</td></tr>
   <tr><td><b>智能体角色</b></td><td>固定流水线 + 专家人格</td><td>灵活自定义</td><td>灵活自定义</td><td>单 Agent 循环</td><td>单助手</td></tr>
   <tr><td><b>通信方式</b></td><td>文件引用协议（零 Token 浪费）</td><td>内存消息传递</td><td>内存消息传递</td><td>工具调用+草稿本</td><td>上下文窗口</td></tr>
@@ -647,8 +647,8 @@ WorkFlowAgent 是一个**可移植、与 LLM 无关的生产级 AI Agent 运行�
 
 ```bash
 # 1. 克隆并安装依赖
-git clone https://github.com/kenGH12345/WorkFlowAgent.git
-cd WorkFlowAgent/workflow && npm install
+git clone https://github.com/kenGH12345/CodexForge.git
+cd CodexForge/workflow && npm install
 
 # 2. 初始化到你的项目（自动检测技术栈）
 node workflow/init-project.js
@@ -734,7 +734,7 @@ npm test
 
 ```bash
 # 1. 复制 workflow 文件夹
-cp -r WorkFlowAgent/workflow /path/to/your-project/
+cp -r CodexForge/workflow /path/to/your-project/
 
 # 2. 安装依赖
 cd /path/to/your-project/workflow && npm install
@@ -761,4 +761,4 @@ node workflow/init-project.js
 
 ## 📄 License
 
-[MIT](LICENSE) © 2026 WorkFlowAgent Contributors
+[MIT](LICENSE) © 2026 CODEX FORGE Contributors

@@ -142,7 +142,7 @@ function patchConfigFile(configPath, answers) {
 
 async function main() {
   console.log(bold(cyan('\n╔══════════════════════════════════════════╗')));
-  console.log(bold(cyan('║   WorkFlowAgent – Git PR Setup Wizard    ║')));
+  console.log(bold(cyan('║   CODEX FORGE – Git PR Setup Wizard      ║')));
   console.log(bold(cyan('╚══════════════════════════════════════════╝')));
 
   const { ghAvailable, ghAuthed } = checkPrerequisites();

@@ -22,6 +22,9 @@ const { RollbackCoordinator } = require('./rollback-coordinator');
 const { QualityGate } = require('./quality-gate');
 const { Observability } = require('./observability');
 const { translateMdFile } = require('./i18n-translator');
+// P1-3 fix: extracted EvoMap feedback loop as a reusable helper.
+const { runEvoMapFeedback } = require('./stage-runner-utils');
+const { getPromptSlotManager } = require('./prompt-builder');
 // P2-A fix: shared file-scanner utility – replaces the inline collectFiles closure
 // that was duplicated across orchestrator-stages.js, entropy-gc.js, and code-graph.js.
 const { scanSourceFiles } = require('./file-scanner');
@@ -46,6 +49,28 @@ const {
  * Stage runner methods for Orchestrator.
  * All functions use `this` bound to the Orchestrator instance.
  */
+
+// ─── Prompt A/B outcome recording helper ──────────────────────────────────────
+/**
+ * Records the outcome of a prompt variant usage after a QualityGate decision.
+ * Called after each stage's QualityGate.evaluate() to close the A/B feedback loop.
+ *
+ * @param {string} agentRole       - e.g. 'analyst', 'architect', 'developer', 'tester'
+ * @param {boolean} gatePassed     - Did the QualityGate pass?
+ * @param {number} correctionRounds - Number of self-correction / review rounds
+ * @param {number} [tokensUsed=0]  - Estimated tokens used (from obs)
+ */
+function _recordPromptABOutcome(agentRole, gatePassed, correctionRounds, tokensUsed = 0) {
+  const mgr = getPromptSlotManager();
+  if (!mgr) return;
+  const variantId = mgr.getSessionVariant(agentRole, 'fixed_prefix');
+  if (!variantId) return;
+  mgr.recordOutcome(agentRole, 'fixed_prefix', variantId, {
+    gatePassed,
+    correctionRounds,
+    tokensUsed,
+  });
+}
 
 async function _runAnalyst(rawRequirement) {
   console.log(`\n[Orchestrator] Stage: ANALYSE (AnalystAgent)`);
@@ -106,6 +131,11 @@ async function _runAnalyst(rawRequirement) {
   // ── Store ANALYSE stage context for downstream stages ─────────────────────
   // P2-NEW-1: delegated to storeAnalyseContext helper
   const analyseCtx = storeAnalyseContext(this, outputPath, clarResult);
+
+  // ── Prompt A/B: record analyst outcome ──────────────────────────────────
+  // ANALYSE stage has no QualityGate (it always passes if output is produced).
+  // Record as passed with clarification rounds as the correction metric.
+  _recordPromptABOutcome('analyst', true, clarResult.rounds ?? 0);
 
   // ── Defect J fix: Estimate task complexity from the enriched requirement ───
   // This must happen AFTER ANALYSE produces the enriched requirement, because
@@ -346,6 +376,9 @@ const archDecision = archGate.evaluate(archReviewResult, WorkflowState.ARCHITECT
     category: ExperienceCategory.ARCHITECTURE,
   });
 
+  // ── Prompt A/B: record architect outcome ─────────────────────────────────
+  _recordPromptABOutcome('architect', archDecision.pass, archReviewResult.rounds ?? 0);
+
   if (!archDecision.pass && archDecision.rollback) {
     const failedNotes = archReviewResult.riskNotes.slice(0, 3).join('; ');
     console.warn(`[Orchestrator] ⚠️  ${archDecision.reason}`);
@@ -468,31 +501,13 @@ WorkflowState.ARCHITECT, `Architecture review failed: ${failedNotes}`, 'ArchRevi
     console.log(`[Orchestrator] ℹ️  Architecture review: no issues. Proceeding automatically.`);
   }
 
-  // ── EvoMap feedback loop: mark injected experiences as effectively used ──
-  // archExpContextWithComplaints._injectedExpIds is set by buildArchitectContextBlock().
-  // We only credit experiences when the architecture actually passes QualityGate,
-  // so hitCount means "helped produce a passing architecture", not just "was retrieved".
+  // ── EvoMap feedback loop (P1-3: extracted to runEvoMapFeedback) ──────────
   if (archDecision.pass) {
-    const archInjectedIds = archExpContextWithComplaints._injectedExpIds || [];
-    if (archInjectedIds.length > 0) {
-      // Defect H fix: use computeMatchedIds() instead of counting all injected IDs as hits.
-      // POSITIVE experiences are always matched (they provided correct direction).
-      // NEGATIVE experiences are only matched when the review's risk notes mention
-      // their tags/category (i.e. the agent was warned about the exact issue it encountered).
-      const archErrorContext = (archReviewResult.riskNotes || []).join(' ');
-      const { matchedIds: archMatchedIds, matchedCount: archMatchedCount } =
-        this.experienceStore.computeMatchedIds(archInjectedIds, archErrorContext);
-      // Only markUsedBatch on matched IDs – unmatched experiences were prompt noise
-      const archEvolutionTriggers = this.experienceStore.markUsedBatch(archMatchedIds);
-      // Improvement 4: report only confirmed matched hits to Observability
-      // (injected count was already reported in buildArchitectContextBlock call above)
-      this.obs.recordExpUsage({ hits: archMatchedCount });
-      console.log(`[Orchestrator] 🎯 Experience hit-rate (ARCHITECT): ${archMatchedCount}/${archInjectedIds.length} matched`);
-      // P1 fix: centralized evolution trigger via ExperienceStore.triggerEvolutions()
-      // Replaces the 10-line inline loop that was duplicated 4 times across this file.
-      const archEvolved = await this.experienceStore.triggerEvolutions(archEvolutionTriggers, this.skillEvolution, this.hooks, 'ARCHITECT');
-      console.log(`[Orchestrator] 📊 Marked ${archMatchedCount}/${archInjectedIds.length} experience(s) as effective (ARCHITECT passed). Evolution triggers: ${archEvolved}`);
-    }
+    await runEvoMapFeedback(this, {
+      injectedExpIds: archExpContextWithComplaints._injectedExpIds || [],
+      errorContext: (archReviewResult.riskNotes || []).join(' '),
+      stageLabel: 'ARCHITECT',
+    });
   }
 
   // ── Store ARCHITECT stage context for downstream stages ──────────────────
@@ -564,6 +579,9 @@ async function _runDeveloper() {
   const codeRollbackCountForGate = this._rollbackCounters?.get(WorkflowState.CODE) ?? 0;
   const codeDecision = codeGate.evaluate(reviewResult, WorkflowState.CODE, codeRollbackCountForGate);
   codeGate.recordExperience(codeDecision, WorkflowState.CODE, reviewResult, { skill: 'code-development', category: ExperienceCategory.STABLE_PATTERN });
+
+  // ── Prompt A/B: record developer outcome ─────────────────────────────────
+  _recordPromptABOutcome('developer', codeDecision.pass, reviewResult.rounds ?? 0);
 
   if (codeDecision.pass) {
     console.log(`[Orchestrator] ✅ Code review passed. Reason: ${codeDecision.reason}`);
@@ -726,25 +744,13 @@ async function _runDeveloper() {
     console.warn(`[Orchestrator] Early EntropyGC scan failed (non-fatal): ${err.message}`);
   }
 
-  // ── EvoMap feedback loop: mark injected experiences as effectively used ──
-  // devExpContextWithComplaints._injectedExpIds is set by buildDeveloperContextBlock().
-  // Only credit when code passes QualityGate (codeDecision.pass).
+  // ── EvoMap feedback loop (P1-3: extracted to runEvoMapFeedback) ──────────
   if (codeDecision.pass) {
-    const devInjectedIds = devExpContextWithComplaints._injectedExpIds || [];
-    if (devInjectedIds.length > 0) {
-      // Defect H fix: use computeMatchedIds() for accurate hit-rate measurement.
-      const devErrorContext = (reviewResult.riskNotes || []).join(' ');
-      const { matchedIds: devMatchedIds, matchedCount: devMatchedCount } =
-        this.experienceStore.computeMatchedIds(devInjectedIds, devErrorContext);
-      const devEvolutionTriggers = this.experienceStore.markUsedBatch(devMatchedIds);
-      // Improvement 4: report only confirmed matched hits to Observability
-      // (injected count was already reported in buildDeveloperContextBlock call above)
-      this.obs.recordExpUsage({ hits: devMatchedCount });
-      console.log(`[Orchestrator] 🎯 Experience hit-rate (CODE): ${devMatchedCount}/${devInjectedIds.length} matched`);
-      // P1 fix: centralized evolution trigger
-      const devEvolved = await this.experienceStore.triggerEvolutions(devEvolutionTriggers, this.skillEvolution, this.hooks, 'CODE');
-      console.log(`[Orchestrator] 📊 Marked ${devMatchedCount}/${devInjectedIds.length} experience(s) as effective (CODE passed). Evolution triggers: ${devEvolved}`);
-    }
+    await runEvoMapFeedback(this, {
+      injectedExpIds: devExpContextWithComplaints._injectedExpIds || [],
+      errorContext: (reviewResult.riskNotes || []).join(' '),
+      stageLabel: 'CODE',
+    });
   }
 
   // ── Store CODE stage context for downstream stages ────────────────────────
@@ -978,6 +984,9 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
       };
       const testDecision = testGate.evaluate(testGateInput, WorkflowState.TEST, testRollbackCountForGate);
       testGate.recordExperience(testDecision, WorkflowState.TEST, testGateInput, { skill: 'test-report', category: ExperienceCategory.PITFALL });
+
+      // ── Prompt A/B: record tester outcome ────────────────────────────────
+      _recordPromptABOutcome('tester', !testDecision.rollback, corrResult.rounds ?? 0);
 
       if (testDecision.rollback) {
         // Roll back to CODE when test report has high-severity issues.
@@ -1249,23 +1258,12 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
   if (result.passed) {
     console.log(`[Orchestrator] ✅ Real tests PASSED on first run.`);
     this.obs.recordTestResult({ passed: result.passed ? 1 : 0, failed: 0, skipped: 0, rounds: 1 });
-    // EvoMap feedback loop: tests passed on first run – the injected experiences
-    // (from buildTesterContextBlock) contributed to a successful outcome.
-    if (injectedExpIds.length > 0) {
-      // Defect H fix: first-run pass means no error context (tests passed immediately).
-      // Pass empty errorContext – POSITIVE experiences are always matched, NEGATIVE
-      // experiences are not matched (no errors occurred to match against).
-      // This correctly reflects: positive patterns guided the agent to success;
-      // negative pitfall warnings were not needed (no pitfalls were encountered).
-      const { matchedIds: firstRunMatchedIds, matchedCount: firstRunMatchedCount } =
-        this.experienceStore.computeMatchedIds(injectedExpIds, '');
-      const firstRunTriggers = this.experienceStore.markUsedBatch(firstRunMatchedIds);
-      // Improvement 4: report only confirmed matched hits to Observability
-      this.obs.recordExpUsage({ hits: firstRunMatchedCount });
-      // P1 fix: centralized evolution trigger
-      const firstRunEvolved = await this.experienceStore.triggerEvolutions(firstRunTriggers, this.skillEvolution, this.hooks, 'TEST');
-      console.log(`[Orchestrator] 📊 Marked ${firstRunMatchedCount}/${injectedExpIds.length} experience(s) as effective (TEST first-run pass). Evolution triggers: ${firstRunEvolved}`);
-    }
+    // EvoMap feedback loop (P1-3: extracted to runEvoMapFeedback)
+    await runEvoMapFeedback(this, {
+      injectedExpIds,
+      errorContext: '',
+      stageLabel: 'TEST (first-run pass)',
+    });
     this.experienceStore.record({
       type: ExperienceType.POSITIVE,
       category: ExperienceCategory.STABLE_PATTERN,
@@ -1555,25 +1553,12 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
     if (result.passed) {
       console.log(`[Orchestrator] ✅ Tests PASSED after fix round ${fixRound}.`);
       this.obs.recordTestResult({ passed: 1, failed: 0, skipped: 0, rounds: fixRound });
-      // EvoMap feedback loop: tests passed after auto-fix – the injected experiences
-      // contributed to a successful outcome (even if it took multiple fix rounds).
-      if (injectedExpIds.length > 0) {
-        // Defect H fix: use the initial failure output as error context.
-        // The fix loop started because tests failed – result.output contains the
-        // original failure text. NEGATIVE experiences whose tags/category appear
-        // in that failure text are counted as matched (they warned about the exact
-        // failure mode). POSITIVE experiences are always matched.
-        const fixErrorContext = (result.failureSummary || []).join(' ') || (result.output || '');
-        const { matchedIds: fixMatchedIds, matchedCount: fixMatchedCount } =
-          this.experienceStore.computeMatchedIds(injectedExpIds, fixErrorContext);
-        const fixPassTriggers = this.experienceStore.markUsedBatch(fixMatchedIds);
-        // Improvement 4: report only confirmed matched hits to Observability
-        this.obs.recordExpUsage({ hits: fixMatchedCount });
-        console.log(`[Orchestrator] 🎯 Experience hit-rate (TEST fix round ${fixRound}): ${fixMatchedCount}/${injectedExpIds.length} matched`);
-        // P1 fix: centralized evolution trigger
-        const fixEvolved = await this.experienceStore.triggerEvolutions(fixPassTriggers, this.skillEvolution, this.hooks, 'TEST');
-        console.log(`[Orchestrator] 📊 Marked ${fixMatchedCount}/${injectedExpIds.length} experience(s) as effective (TEST auto-fix round ${fixRound} pass). Evolution triggers: ${fixEvolved}`);
-      }
+      // EvoMap feedback loop (P1-3: extracted to runEvoMapFeedback)
+      await runEvoMapFeedback(this, {
+        injectedExpIds,
+        errorContext: (result.failureSummary || []).join(' ') || (result.output || ''),
+        stageLabel: `TEST (auto-fix round ${fixRound})`,
+      });
       this.experienceStore.record({
         type: ExperienceType.POSITIVE,
         category: ExperienceCategory.STABLE_PATTERN,

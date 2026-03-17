@@ -439,7 +439,7 @@ class CIIntegration {
         hostname: parsedUrl.hostname,
         path:     parsedUrl.pathname + parsedUrl.search,
         method:   'GET',
-        headers:  { 'User-Agent': 'WorkflowAgent/1.0', ...headers },
+        headers:  { 'User-Agent': 'CodexForge/1.0', ...headers },
       };
       const req = lib.request(options, (res) => {
         let data = '';

@@ -2,8 +2,15 @@
  * DryRunSandbox – File system write interception for safe preview mode.
  *
  * When dryRun: true is passed to the Orchestrator, all file-system mutations
- * (write, delete, rename) are intercepted and recorded as a pending operation
- * log instead of being executed immediately.
+ * (write, delete, rename, append) are intercepted and recorded as a pending
+ * operation log instead of being executed immediately.
+ *
+ * P1-5 fix: Added appendFile() and async variants (writeFileAsync,
+ * appendFileAsync) to intercept the two previously unguarded write paths:
+ *   - fs.appendFileSync (used heavily in orchestrator-stages.js for appending
+ *     coverage reports, entropy notes, retry context, etc.)
+ *   - fs.promises.writeFile / fs.createWriteStream (future-proofing for
+ *     async write patterns)
  *
  * This allows users to:
  *   1. Preview exactly what the workflow would change before committing.
@@ -13,6 +20,7 @@
  * Usage:
  *   const sandbox = new DryRunSandbox({ projectRoot, outputDir });
  *   sandbox.writeFile('src/foo.js', '// new content');   // recorded, not written
+ *   sandbox.appendFile('src/foo.js', '\n// extra');      // recorded, not appended
  *   sandbox.deleteFile('src/old.js');                    // recorded, not deleted
  *   console.log(sandbox.report());                       // print pending ops
  *   await sandbox.apply();                               // actually execute all ops
@@ -28,6 +36,7 @@ const path = require('path');
 
 const OpType = {
   WRITE:  'write',   // Create or overwrite a file
+  APPEND: 'append',  // Append content to an existing file (P1-5 fix)
   PATCH:  'patch',   // Apply a find-and-replace patch to an existing file
   DELETE: 'delete',  // Delete a file
   RENAME: 'rename',  // Rename / move a file
@@ -192,6 +201,105 @@ class DryRunSandbox {
     }
   }
 
+  // ─── Append Interception (P1-5 fix) ──────────────────────────────────────────
+
+  /**
+   * Records a file append operation.
+   *
+   * P1-5 fix: The workflow uses fs.appendFileSync extensively in
+   * orchestrator-stages.js (coverage reports, entropy notes, retry context,
+   * fix round results, etc.). Without this method, those appends bypass the
+   * sandbox and write directly to disk even in dry-run mode.
+   *
+   * @param {string} filePath - Absolute or project-relative path
+   * @param {string} content  - Content to append
+   */
+  appendFile(filePath, content) {
+    const absPath = this._resolve(filePath);
+    const relPath = this._rel(absPath);
+
+    // Update virtual FS: read current content (virtual or real), then append
+    const currentContent = this._virtualFS.has(absPath)
+      ? this._virtualFS.get(absPath)
+      : (fs.existsSync(absPath) ? fs.readFileSync(absPath, 'utf-8') : '');
+
+    this._virtualFS.set(absPath, currentContent + content);
+
+    const op = {
+      type: OpType.APPEND,
+      path: absPath,
+      relPath,
+      content,
+      timestamp: new Date().toISOString(),
+    };
+
+    this._ops.push(op);
+
+    if (this.verbose) {
+      console.log(`[DryRun] 📝 APPEND ${relPath} (+${content.length} chars)`);
+    }
+  }
+
+  // ─── Async Variants (P1-5 fix) ────────────────────────────────────────────────
+
+  /**
+   * Async version of writeFile(). Records the operation and returns a resolved
+   * promise (matching the fs.promises.writeFile signature).
+   *
+   * @param {string} filePath
+   * @param {string} content
+   * @returns {Promise<void>}
+   */
+  async writeFileAsync(filePath, content) {
+    this.writeFile(filePath, content);
+  }
+
+  /**
+   * Async version of appendFile(). Records the operation and returns a resolved
+   * promise (matching the fs.promises.appendFile signature).
+   *
+   * @param {string} filePath
+   * @param {string} content
+   * @returns {Promise<void>}
+   */
+  async appendFileAsync(filePath, content) {
+    this.appendFile(filePath, content);
+  }
+
+  /**
+   * Creates a writable stream interface that records to the virtual FS.
+   * This intercepts fs.createWriteStream patterns.
+   *
+   * P1-5 fix: Returns a minimal Writable-like object with write() and end()
+   * methods. Collected chunks are joined and recorded as a single WRITE op
+   * when end() is called.
+   *
+   * @param {string} filePath
+   * @returns {{ write: Function, end: Function, on: Function }}
+   */
+  createWriteStream(filePath) {
+    const chunks = [];
+    const self = this;
+    const handlers = {};
+
+    return {
+      write(chunk) {
+        chunks.push(typeof chunk === 'string' ? chunk : chunk.toString('utf-8'));
+        return true;
+      },
+      end(finalChunk) {
+        if (finalChunk) chunks.push(typeof finalChunk === 'string' ? finalChunk : finalChunk.toString('utf-8'));
+        const content = chunks.join('');
+        self.writeFile(filePath, content);
+        if (handlers.finish) handlers.finish();
+      },
+      on(event, cb) {
+        handlers[event] = cb;
+        return this;
+      },
+    };
+  }
+
   // ─── Virtual FS Read ──────────────────────────────────────────────────────────
 
   /**
@@ -259,6 +367,19 @@ class DryRunSandbox {
             fs.writeFileSync(tmp, patched, 'utf-8');
             fs.renameSync(tmp, op.path);
             console.log(`[DryRunSandbox] ✅ Patched: ${op.relPath}`);
+            applied++;
+            break;
+          }
+          case OpType.APPEND: {
+            if (!fs.existsSync(op.path)) {
+              // Target file doesn't exist – create it with the append content
+              const dir = path.dirname(op.path);
+              if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+              fs.writeFileSync(op.path, op.content, 'utf-8');
+            } else {
+              fs.appendFileSync(op.path, op.content, 'utf-8');
+            }
+            console.log(`[DryRunSandbox] ✅ Appended: ${op.relPath} (+${op.content.length} chars)`);
             applied++;
             break;
           }
@@ -366,6 +487,10 @@ class DryRunSandbox {
           lines.push(`**[${idx}] 🔧 PATCH** \`${op.relPath}\``);
           lines.push(`> Find: \`${op.findStr.slice(0, 80).replace(/\n/g, '↵')}\``);
           lines.push(`> Replace: \`${op.replaceStr.slice(0, 80).replace(/\n/g, '↵')}\``);
+          break;
+        case OpType.APPEND:
+          lines.push(`**[${idx}] 📝 APPEND** \`${op.relPath}\``);
+          lines.push(`> +${op.content.length} chars appended`);
           break;
         case OpType.DELETE:
           lines.push(`**[${idx}] 🗑️  DELETE** \`${op.relPath}\``);

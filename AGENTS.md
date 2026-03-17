@@ -1,4 +1,4 @@
-# AGENTS.md – WorkFlowAgent Root Index
+# AGENTS.md – CODEX FORGE Root Index
 
 > Entry point for AI agents. This is a directory index only.
 > Last updated: 2026-03-15
@@ -7,7 +7,7 @@
 
 | Package | Path | AGENTS.md |
 |---------|------|-----------|
-| **codebuddy-multi-agent-workflow** | `workflow/` | `workflow/AGENTS.md` |
+| **codex-forge** | `workflow/` | `workflow/AGENTS.md` |
 
 ## How to Start
 

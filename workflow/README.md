@@ -1,4 +1,4 @@
-# CodeBuddy Multi-Agent Workflow
+# CODEX FORGE
 
 An AI-driven automated software development workflow powered by multiple specialised agents.
 

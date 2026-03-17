@@ -16,6 +16,7 @@ const fs = require('fs');
 const { LLM } = require('../core/constants');
 const { estimateTokens } = require('../tools/thin-tools');
 const { ContextLoader } = require('./context-loader');
+const { PromptSlotManager } = require('./prompt-slot-manager');
 
 // ─── KV Cache Friendly Prompt Structure ──────────────────────────────────────
 
@@ -132,6 +133,37 @@ function _getRiskLevel(tokens) {
 // every time. Now we cache the loader and only recreate it when options change.
 let _cachedLoader = null;
 let _cachedLoaderKey = '';
+
+/**
+ * Module-level PromptSlotManager instance.
+ * Initialised lazily on first buildAgentPrompt() call, or eagerly via
+ * setPromptSlotManager(). When set, buildAgentPrompt() resolves the fixed
+ * prefix from the variant registry instead of using the hardcoded
+ * AGENT_FIXED_PREFIXES constant.
+ *
+ * @type {PromptSlotManager|null}
+ */
+let _promptSlotManager = null;
+
+/**
+ * Sets the module-level PromptSlotManager instance.
+ * Called by Orchestrator during initialisation.
+ *
+ * @param {PromptSlotManager} mgr
+ */
+function setPromptSlotManager(mgr) {
+  _promptSlotManager = mgr;
+}
+
+/**
+ * Returns the current PromptSlotManager instance (or null).
+ * Exposed so orchestrator-stages.js can call recordOutcome().
+ *
+ * @returns {PromptSlotManager|null}
+ */
+function getPromptSlotManager() {
+  return _promptSlotManager;
+}
 
 /**
  * Returns a (possibly cached) ContextLoader instance.
@@ -387,7 +419,26 @@ function buildSessionStartChecklist(options = {}) {
  * @returns {{ prompt: string, meta: PromptMeta }}
  */
 function buildAgentPrompt(role, dynamicInput, contextFiles = [], options = {}) {
-  const fixedPrefix = AGENT_FIXED_PREFIXES[role];
+  // ── Prompt Slot A/B resolution ───────────────────────────────────────────
+  // If PromptSlotManager is initialised and has a variant for this role,
+  // use the resolved variant instead of the hardcoded AGENT_FIXED_PREFIXES.
+  // This is the core integration point for Prefix-Level A/B testing.
+  let fixedPrefix = AGENT_FIXED_PREFIXES[role];
+  let _resolvedVariantId = null;
+  let _isExploration = false;
+
+  if (_promptSlotManager) {
+    const resolved = _promptSlotManager.resolve(role, 'fixed_prefix');
+    if (resolved && resolved.content) {
+      fixedPrefix = resolved.content;
+      _resolvedVariantId = resolved.variantId;
+      _isExploration = resolved.isExploration;
+      if (_isExploration) {
+        console.log(`[PromptBuilder] 🔬 A/B exploration: using variant "${resolved.variantId}" for ${role}`);
+      }
+    }
+  }
+
   if (!fixedPrefix) {
     const validRoles = Object.keys(AGENT_FIXED_PREFIXES).join(', ');
     throw new Error(`[PromptBuilder] Unknown agent role: "${role}". Valid roles: ${validRoles}`);
@@ -498,6 +549,11 @@ function buildAgentPrompt(role, dynamicInput, contextFiles = [], options = {}) {
 
   result.meta.noiseAnalysis = analysePromptNoise(result.prompt);
   result.meta.agentRole = role;
+  // Attach A/B variant info for downstream outcome tracking
+  if (_resolvedVariantId) {
+    result.meta.promptVariantId = _resolvedVariantId;
+    result.meta.promptVariantExploration = _isExploration;
+  }
 
   return result;
 }
@@ -523,6 +579,9 @@ module.exports = {
   buildAgentPrompt,
   buildSessionStartChecklist,
   AGENT_FIXED_PREFIXES,
+  // Prompt A/B testing
+  setPromptSlotManager,
+  getPromptSlotManager,
   // Long-running agent pattern modules
   FeatureList:    require('./feature-list').FeatureList,
   FeatureStatus:  require('./feature-list').FeatureStatus,

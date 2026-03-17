@@ -1,5 +1,5 @@
 /**
- * End-to-End Test Suite for the Multi-Agent Workflow
+ * End-to-End Test Suite for CODEX FORGE
  *
  * Covers:
  *  1. Full six-stage pipeline (INIT → FINISHED)
@@ -129,7 +129,7 @@ async function runTests() {
   smokeTestModuleLoad();
 
   console.log('\n' + '='.repeat(60));
-  console.log('  Multi-Agent Workflow – End-to-End Test Suite');
+  console.log('  CODEX FORGE – End-to-End Test Suite');
   console.log('='.repeat(60) + '\n');
 
   // ── Test 1: StateMachine – fresh start ──────────────────────────────────────

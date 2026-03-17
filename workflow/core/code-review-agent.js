@@ -5,6 +5,9 @@
  * CodeReviewAgent evaluates whether the code is CORRECT and SAFE by
  * checking it against a structured checklist of domain best practices.
  *
+ * Extends ReviewAgentBase for the shared review loop, adversarial verification,
+ * and reporting infrastructure.
+ *
  * Review dimensions (checklist categories):
  *   1. Syntax        – parseability, valid JS, intact comment blocks
  *   2. Security      – injection, auth, secrets, input validation
@@ -13,10 +16,6 @@
  *   5. Code Style    – naming, comments, dead code, magic numbers
  *   6. Requirements  – every acceptance criterion reflected in the diff
  *   7. Edge Cases    – null/undefined, empty collections, boundary values
- *
- * Self-correction loop:
- *   code.diff → checklist review → issues found → refinement prompt →
- *   DeveloperAgent re-generates → re-review → loop until clean or maxRounds
  *
  * Output:
  *   - Corrected code.diff (written back to output/code.diff)
@@ -28,6 +27,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { ReviewAgentBase } = require('./review-agent-base');
 
 // ─── Built-in Checklist ───────────────────────────────────────────────────────
 
@@ -152,17 +152,8 @@ const DEFAULT_CHECKLIST = [
   },
 ];
 
-// ─── Prompt Builders ──────────────────────────────────────────────────────────
+// ─── Prompt Builders (Code-specific) ──────────────────────────────────────────
 
-/**
- * Builds the checklist review prompt.
- * Asks LLM to evaluate each checklist item against the code diff.
- *
- * @param {object[]} checklist
- * @param {string}   codeDiff
- * @param {string}   [requirementText]
- * @returns {string}
- */
 function buildReviewPrompt(checklist, codeDiff, requirementText = '') {
   const itemList = checklist
     .map(item => `- [${item.id}] (${item.severity}) ${item.description}\n  Hint: ${item.hint}`)
@@ -209,17 +200,6 @@ You are performing a structured checklist code review.`,
   ].join('\n');
 }
 
-/**
- * Builds a developer refinement prompt from failed checklist items.
- *
- * Instead of asking LLM to rewrite the diff (which is error-prone due to strict
- * diff format requirements), we ask LLM to describe the specific code changes
- * needed as a structured fix plan. The caller applies these as annotations.
- *
- * @param {string}   originalDiff
- * @param {object[]} failures      - Failed checklist items with fixInstruction
- * @returns {string}
- */
 function buildFixPrompt(originalDiff, failures) {
   const fixList = failures
     .map((f, i) => `${i + 1}. [${f.id}] [${f.severity?.toUpperCase() ?? 'UNKNOWN'}] ${f.finding}\n   Fix: ${f.fixInstruction || 'Please review and fix this missing item.'}`)
@@ -254,19 +234,6 @@ You are performing a self-correction pass on a code diff. Fix every issue listed
   ].join('\n');
 }
 
-/**
- * Builds an adversarial verification prompt for code review.
- *
- * Problem it solves (P1-A):
- *   The main review LLM has systematic blind spots. An adversarial verifier
- *   uses a skeptical framing to surface issues the main reviewer missed.
- *
- * @param {object[]} checklist
- * @param {string}   codeDiff
- * @param {object[]} mainResults  - Results from the main review (PASS/N/A items only)
- * @param {string}   [requirementText]
- * @returns {string|null}
- */
 function buildAdversarialCodePrompt(checklist, codeDiff, mainResults, requirementText = '') {
   const passedItems = mainResults.filter(r => r.result === 'PASS' || r.result === 'N/A');
   if (passedItems.length === 0) return null;
@@ -334,34 +301,15 @@ You are performing an adversarial security-focused second-opinion code review. Y
  */
 function isValidDiff(content) {
   if (!content || content.trim().length === 0) return false;
-  // Must have at least one hunk header
   const hasHunk = /@@\s+-\d+[,\d]*\s+\+\d+[,\d]*\s+@@/.test(content);
   if (!hasHunk) return false;
-  // Must also have a file header (--- a/... or --- /dev/null or --- \w)
-  // to ensure it is a complete diff, not just a partial hunk fragment
   const hasFileHeader = /^---\s+/m.test(content);
   return hasFileHeader;
 }
 
-// ─── JSON Extractor ───────────────────────────────────────────────────────────
+// ─── CodeReviewAgent (extends ReviewAgentBase) ────────────────────────────────
 
-function extractJsonArray(response) {
-  const stripped = response.replace(/```(?:json)?\n?/g, '').replace(/```/g, '').trim();
-  try {
-    const parsed = JSON.parse(stripped);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    const match = stripped.match(/\[[\s\S]*\]/);
-    if (match) {
-      try { return JSON.parse(match[0]); } catch { return null; }
-    }
-    return null;
-  }
-}
-
-// ─── CodeReviewAgent ─────────────────────────────────────────────────────────
-
-class CodeReviewAgent {
+class CodeReviewAgent extends ReviewAgentBase {
   /**
    * @param {Function} llmCall            - async (prompt: string) => string
    * @param {object}   [options]
@@ -370,346 +318,111 @@ class CodeReviewAgent {
    * @param {object[]} [options.extraChecklist=[]]     - Additional checklist items
    * @param {string}   [options.outputDir]             - Where to write code-review.md
    * @param {object}   [options.investigationTools]    - Optional tools for deep investigation
-   * @param {Function} [options.adversarialLlmCall]    - Optional independent LLM for adversarial
-   *   verification (P1-A fix). If not provided, falls back to llmCall with an adversarial
-   *   system prompt. Pass a different LLM instance (higher temperature or different model)
-   *   for true independence. see CHANGELOG: P1-A
+   * @param {Function} [options.adversarialLlmCall]    - Optional independent LLM for adversarial verification
    */
-  constructor(llmCall, {
-    maxRounds = 2,
-    verbose = true,
-    extraChecklist = [],
-    outputDir = null,
-    investigationTools = null,
-    adversarialLlmCall = null,
-  } = {}) {
-    if (typeof llmCall !== 'function') {
-      throw new Error('[CodeReviewAgent] llmCall must be a function');
-    }
-    this.llmCall = llmCall;
-    // P1-A fix: adversarial verifier uses a different framing to surface blind spots.
-    // Falls back to the same llmCall if no independent verifier is provided.
-    this.adversarialLlmCall = (typeof adversarialLlmCall === 'function') ? adversarialLlmCall : llmCall;
-    this.maxRounds = maxRounds;
-    this.verbose = verbose;
-    this.checklist = [...DEFAULT_CHECKLIST, ...extraChecklist];
-    this.outputDir = outputDir || path.resolve(__dirname, '..', 'output');
-    this.investigationTools = investigationTools || null;
+  constructor(llmCall, options = {}) {
+    super(llmCall, {
+      ...options,
+      checklist: DEFAULT_CHECKLIST,
+    });
   }
 
-  /**
-   * Runs the full review + self-correction loop on code.diff.
-   *
-   * @param {string} codeDiffPath      - Path to output/code.diff
-   * @param {string} [requirementPath] - Path to output/requirements.md (optional, for REQ checks)
-   * @returns {Promise<CodeReviewResult>}
-   */
-  async review(codeDiffPath, requirementPath = null) {
-    this._log(`\n╔══════════════════════════════════════════════════════════╗`);
-    this._log(`║  🔍 CODE REVIEW  –  Checklist-based Analysis             ║`);
-    this._log(`╚══════════════════════════════════════════════════════════╝`);
+  // ─── Abstract method implementations ───────────────────────────────────────
 
-    // Read inputs
-    if (!fs.existsSync(codeDiffPath)) {
-      this._log(`[CodeReview] ⚠️  code.diff not found at: ${codeDiffPath}. Skipping.`);
-      return this._emptyResult('code.diff not found');
+  _getReviewContent(inputPath) {
+    if (!fs.existsSync(inputPath)) return null;
+    return fs.readFileSync(inputPath, 'utf-8');
+  }
+
+  _buildReviewPrompt(content, requirementText) {
+    return buildReviewPrompt(this.checklist, content, requirementText);
+  }
+
+  _buildAdversarialPrompt(content, mainResults, requirementText) {
+    return buildAdversarialCodePrompt(this.checklist, content, mainResults, requirementText);
+  }
+
+  _buildFixPrompt(content, failures) {
+    return { prompt: buildFixPrompt(content, failures), mode: 'full' };
+  }
+
+  _applyFix(currentContent, rawFixed, _mode) {
+    // Strip markdown fences if present – handle ```diff, ```patch, ``` variants
+    const diffMatch = rawFixed.match(/```(?:diff|patch)?\n([\s\S]*?)```/);
+    let candidate;
+    if (diffMatch) {
+      candidate = diffMatch[1].trim();
+    } else {
+      // Try to extract from the file header (--- a/...) to end of content.
+      const fileHeaderStart = rawFixed.search(/^---\s+/m);
+      if (fileHeaderStart !== -1) {
+        candidate = rawFixed.slice(fileHeaderStart).trim();
+      } else {
+        // Fallback: try from first @@ hunk header (may be partial, will fail isValidDiff)
+        const hunkStart = rawFixed.search(/@@\s+-\d+/);
+        candidate = hunkStart !== -1 ? rawFixed.slice(hunkStart).trim() : rawFixed.trim();
+      }
     }
 
-    let currentDiff = fs.readFileSync(codeDiffPath, 'utf-8');
-    const requirementText = (requirementPath && fs.existsSync(requirementPath))
-      ? fs.readFileSync(requirementPath, 'utf-8')
-      : '';
-
-    const history = [];
-    let round = 0;
-    let lastReviewResults = [];
-
-    while (round < this.maxRounds) {
-      round++;
-      this._log(`\n[CodeReview] 🔄 Round ${round}/${this.maxRounds}: Running checklist review...`);
-
-      // Run checklist review
-      const reviewResults = await this._runReview(currentDiff, requirementText);
-      lastReviewResults = reviewResults;
-
-      const failures = reviewResults.filter(r => r.result === 'FAIL');
-      const passes   = reviewResults.filter(r => r.result === 'PASS');
-      const nas      = reviewResults.filter(r => r.result === 'N/A');
-      // N50 fix: MISSING items (LLM did not return them) are counted as failures
-      // in the summary log so they are visible, not silently ignored.
-      const missing  = reviewResults.filter(r => r.result === 'MISSING');
-
-      this._log(`[CodeReview] 📊 Round ${round}: ${passes.length} PASS / ${failures.length} FAIL / ${nas.length} N/A / ${missing.length} MISSING`);
-
-      if (failures.length === 0 && missing.length === 0) {
-        this._log(`[CodeReview] ✅ All checklist items passed. Code review complete.\n`);
-        break;
-      }
-
-      // Log failures
-      this._log(`[CodeReview] ❌ Failures (${failures.length + missing.length}):`);
-      failures.forEach(f => this._log(`  • [${f.id}] ${f.finding}`));
-
-      // Last round – don't attempt another fix
-      if (round >= this.maxRounds) {
-        this._log(`[CodeReview] ⚠️  Max rounds reached. Remaining issues will be recorded as risks.`);
-        break;
-      }
-
-      // Self-correction: optionally run deep investigation before fix prompt
-      // so the developer LLM has experience-store context when rewriting.
-      let diffForFix = currentDiff;
-      if (this.investigationTools) {
-        const highFailures = failures.filter(f => {
-          const item = this.checklist.find(c => c.id === f.id);
-          return item?.severity === 'high';
-        });
-        if (highFailures.length > 0) {
-          this._log(`[CodeReview] 🔬 Running deep investigation for ${highFailures.length} high-severity failure(s)...`);
-          const findings = [];
-          for (const f of highFailures) {
-            if (typeof this.investigationTools.search === 'function') {
-              try {
-                const r = await this.investigationTools.search(`${f.id} code ${f.finding}`);
-                if (r) findings.push(`### Experience for [${f.id}]\n${r}`);
-              } catch (_) { /* ignore */ }
-            }
-            if (typeof this.investigationTools.queryExperience === 'function') {
-              try {
-                const r = await this.investigationTools.queryExperience('code');
-                if (r) findings.push(`### Code Development Experience Context\n${r}`);
-              } catch (_) { /* ignore */ }
-            }
-          }
-          if (findings.length > 0) {
-            // Prepend findings as a comment block before the diff
-            diffForFix = `# Investigation Findings (for self-correction context)\n` +
-              findings.map(f => `# ${f.replace(/\n/g, '\n# ')}`).join('\n') +
-              `\n# --- End of Findings ---\n\n` + currentDiff;
-            this._log(`[CodeReview] 📋 ${findings.length} finding(s) injected into fix context.`);
-          }
-        }
-      }
-
-      // Self-correction: send fix prompt to developer LLM
-      // N58 fix: include MISSING items in the fix prompt alongside FAIL items.
-      // MISSING means the LLM did not evaluate the item at all – it may simply have
-      // overlooked it. Re-prompting with the missing items gives the LLM a chance to
-      // address them. Without this, MISSING items are never corrected and always end
-      // up in riskNotes, even when the LLM could fix them with a nudge.
-      const itemsForFix = [...failures, ...missing];
-      this._log(`[CodeReview] 🔧 Sending fix prompt to DeveloperAgent...`);
-      const fixPrompt = buildFixPrompt(diffForFix, itemsForFix.map(f => ({
-        ...f,
-        severity: this.checklist.find(c => c.id === f.id)?.severity ?? 'medium',
-      })));
-
-      let fixedDiff = currentDiff;
-      try {
-        const rawFixed = await this.llmCall(fixPrompt);
-        // Strip markdown fences if present – handle ```diff, ```patch, ``` variants
-        const diffMatch = rawFixed.match(/```(?:diff|patch)?\n([\s\S]*?)```/);
-        // If no fence found, try to extract the diff portion directly from the raw response
-        // (LLM may output explanation text before/after the actual diff)
-        let candidate;
-        if (diffMatch) {
-          candidate = diffMatch[1].trim();
-        } else {
-          // Try to extract from the file header (--- a/...) to end of content.
-          // Prefer file header over hunk header to ensure a complete diff (N4 fix).
-          const fileHeaderStart = rawFixed.search(/^---\s+/m);
-          if (fileHeaderStart !== -1) {
-            candidate = rawFixed.slice(fileHeaderStart).trim();
-          } else {
-            // Fallback: try from first @@ hunk header (may be partial, will fail isValidDiff)
-            const hunkStart = rawFixed.search(/@@\s+-\d+/);
-            candidate = hunkStart !== -1 ? rawFixed.slice(hunkStart).trim() : rawFixed.trim();
-          }
-        }
-
-        // Validate the returned content looks like a real diff
-        if (isValidDiff(candidate)) {
-          fixedDiff = candidate;
-          this._log(`[CodeReview] ✅ Fix LLM returned a valid diff.`);
-        } else {
-          // LLM returned something that is not a valid diff (e.g. prose explanation)
-          // Keep the current diff and annotate it with fix instructions as comments
-          this._log(`[CodeReview] ⚠️  Fix LLM did not return a valid diff. Annotating original diff with fix notes.`);
-          const fixAnnotations = failures
-            .map(f => `# FIX NEEDED [${f.id}]: ${f.fixInstruction}`)
-            .join('\n');
-          fixedDiff = fixAnnotations + '\n' + currentDiff;
-        }
-      } catch (err) {
-        this._log(`[CodeReview] ❌ Fix LLM call failed: ${err.message}. Keeping current diff.`);
-        break;
-      }
-
-      history.push({
-        round,
-        failures: failures.map(f => ({ id: f.id, finding: f.finding })),
-        before: currentDiff,
-        after: fixedDiff,
-      });
-
-      currentDiff = fixedDiff;
-      this._log(`[CodeReview] ✏️  Round ${round} fix applied. Re-reviewing...`);
+    // Validate the returned content looks like a real diff
+    if (isValidDiff(candidate)) {
+      this._log(`[CodeReview] ✅ Fix LLM returned a valid diff.`);
+      return candidate;
     }
 
-    // Write corrected diff back
-    if (history.length > 0) {
-      fs.writeFileSync(codeDiffPath, currentDiff, 'utf-8');
-      this._log(`[CodeReview] 💾 Corrected diff written back to: ${codeDiffPath}`);
-    }
+    // LLM returned something that is not a valid diff (e.g. prose explanation)
+    // Keep the current diff unchanged. The base class review() loop will
+    // re-review and catch remaining issues in the next round.
+    this._log(`[CodeReview] ⚠️  Fix LLM did not return a valid diff. Keeping current diff unchanged.`);
+    return currentContent;
+  }
 
-    // Build final result
-    const finalFailures = lastReviewResults.filter(r => r.result === 'FAIL');
-    // N50 fix: MISSING items are treated as failures in the final result so they
-    // appear in riskNotes and are not silently excluded from the pass rate.
-    const finalMissing  = lastReviewResults.filter(r => r.result === 'MISSING');
-    const allFailed     = [...finalFailures, ...finalMissing];
-    const highFailures  = allFailed.filter(f => {
-      const item = this.checklist.find(c => c.id === f.id);
-      return item?.severity === 'high';
-    });
+  _writeBackArtifact(inputPath, content) {
+    fs.writeFileSync(inputPath, content, 'utf-8');
+  }
 
-    const riskNotes = allFailed.map(f => {
-      const item = this.checklist.find(c => c.id === f.id);
-      return `[CodeReview] ${f.id} (${item?.severity ?? 'unknown'}) ${f.finding}`;
-    });
-
-    const result = {
-      rounds: round,
-      totalItems: this.checklist.length,
-      passed: lastReviewResults.filter(r => r.result === 'PASS').length,
-      failed: allFailed.length,
-      na: lastReviewResults.filter(r => r.result === 'N/A').length,
-      failures: allFailed,
-      history,
-      riskNotes,
-      needsHumanReview: highFailures.length > 0,
-      skipped: false,
-    };
-
-    // Write review report
+  _writeReport(result) {
     const reportPath = path.join(this.outputDir, 'code-review.md');
     const report = this.formatReport(result);
     fs.writeFileSync(reportPath, report, 'utf-8');
     this._log(`[CodeReview] 📄 Review report written to: ${reportPath}`);
+  }
 
-    return result;
+  _getInvestigationDomain() { return 'code'; }
+  _getLabelPrefix() { return 'CodeReview'; }
+  _getHeaderLine() {
+    return [
+      `╔══════════════════════════════════════════════════════════╗`,
+      `║  🔍 CODE REVIEW  –  Checklist-based Analysis             ║`,
+      `╚══════════════════════════════════════════════════════════╝`,
+    ].join('\n');
   }
 
   /**
-   * Runs a single checklist review pass via LLM, followed by an adversarial
-   * second-opinion pass to surface blind spots. see CHANGELOG: P1-A
-   *
-   * Two-phase review:
-   *   Phase 1 (main):       this.llmCall evaluates all checklist items
-   *   Phase 2 (adversarial): this.adversarialLlmCall re-evaluates PASS/N/A items
-   *                          with a skeptical framing to find missed issues
-   *
-   * @param {string} codeDiff
-   * @param {string} requirementText
-   * @returns {Promise<object[]>} Array of { id, result, finding, fixInstruction }
+   * Code review: LLM failure defaults to N/A (not MISSING), preserving original behavior
+   * where a failed LLM call marks all items as N/A.
    */
-  async _runReview(codeDiff, requirementText) {
-    // ── Phase 1: Main review ──────────────────────────────────────────────────
-    const prompt = buildReviewPrompt(this.checklist, codeDiff, requirementText);
-    let response;
-    try {
-      response = await this.llmCall(prompt);
-    } catch (err) {
-      this._log(`[CodeReview] ❌ Review LLM call failed: ${err.message}`);
-      return this.checklist.map(item => ({
-        id: item.id,
-        result: 'N/A',
-        finding: `LLM call failed: ${err.message}`,
-        fixInstruction: null,
-      }));
-    }
-
-    const parsed = extractJsonArray(response);
-    if (!parsed) {
-      this._log(`[CodeReview] ⚠️  Could not parse LLM review response. Treating all as N/A.`);
-      return this.checklist.map(item => ({
-        id: item.id,
-        result: 'N/A',
-        finding: 'LLM response parse error',
-        fixInstruction: null,
-      }));
-    }
-
-    const resultMap = new Map(parsed.map(r => [r.id, r]));
-    const mainResults = this.checklist.map(item => resultMap.get(item.id) ?? {
-      id: item.id,
-      result: 'MISSING',
-      finding: 'Not evaluated by LLM (response did not include this item)',
-      fixInstruction: null,
-    });
-
-    // ── Phase 2: Adversarial verification (P1-A fix) ──────────────────────────
-    const passedItems = mainResults.filter(r => r.result === 'PASS' || r.result === 'N/A');
-    if (passedItems.length === 0) {
-      this._log(`[CodeReview] ⚡ Adversarial pass skipped (no PASS/N/A items to challenge).`);
-      return mainResults;
-    }
-
-    const adversarialPrompt = buildAdversarialCodePrompt(
-      this.checklist, codeDiff, mainResults, requirementText
-    );
-    if (!adversarialPrompt) return mainResults;
-
-    this._log(`[CodeReview] 🔴 Running adversarial verification on ${passedItems.length} PASS/N/A item(s)...`);
-    let adversarialResults = [];
-    try {
-      const adversarialResponse = await this.adversarialLlmCall(adversarialPrompt);
-      adversarialResults = extractJsonArray(adversarialResponse) || [];
-    } catch (err) {
-      this._log(`[CodeReview] ⚠️  Adversarial LLM call failed: ${err.message}. Using main results only.`);
-      return mainResults;
-    }
-
-    // Merge: adversarial FAIL overrides main PASS/N/A
-    const adversarialMap = new Map(adversarialResults.map(r => [r.id, r]));
-    let downgrades = 0;
-    const mergedResults = mainResults.map(mainItem => {
-      if (mainItem.result !== 'PASS' && mainItem.result !== 'N/A') return mainItem;
-      const adversarialItem = adversarialMap.get(mainItem.id);
-      if (adversarialItem && adversarialItem.result === 'FAIL') {
-        downgrades++;
-        this._log(`[CodeReview] 🔴 Adversarial downgrade: [${mainItem.id}] PASS → FAIL – ${adversarialItem.finding}`);
-        return {
-          ...adversarialItem,
-          finding: `[Adversarial] ${adversarialItem.finding}`,
-        };
-      }
-      return mainItem;
-    });
-
-    if (downgrades > 0) {
-      this._log(`[CodeReview] 🔴 Adversarial pass found ${downgrades} additional issue(s) missed by main review.`);
-    } else {
-      this._log(`[CodeReview] ✅ Adversarial pass confirmed main review (no additional issues found).`);
-    }
-
-    return mergedResults;
-  }
+  _getFailureDefault() { return 'N/A'; }
 
   /**
-   * Formats the review result as a Markdown report.
-   * @param {CodeReviewResult} result
-   * @returns {string}
+   * Code review: investigation findings are injected as diff comments (# prefix)
+   * rather than as markdown sections.
    */
+  _injectInvestigationFindings(content, findings) {
+    return `# Investigation Findings (for self-correction context)\n` +
+      findings.map(f => `# ${f.replace(/\n/g, '\n# ')}`).join('\n') +
+      `\n# --- End of Findings ---\n\n` + content;
+  }
+
+  // ─── Report Formatting (Code-specific) ──────────────────────────────────────
+
   formatReport(result) {
     if (result.skipped) {
       return `# Code Review Report\n\n> Skipped: ${result.skipReason}\n`;
     }
 
     // N26 fix: guard against division by zero when all items are N/A
-    // N50 fix: MISSING items are NOT N/A – they are counted as failures (included in
-    // result.failed), so they must NOT be subtracted from the evaluatedItems denominator.
-    // Only true N/A items (explicitly marked by LLM as not applicable) are excluded.
+    // N50 fix: MISSING items are NOT N/A – they are counted as failures
     const evaluatedItems = result.totalItems - result.na;
     const passRate = evaluatedItems > 0
       ? Math.round((result.passed / evaluatedItems) * 100)
@@ -734,7 +447,6 @@ class CodeReviewAgent {
       ``,
     ];
 
-    // Failures by category
     if (result.failures.length > 0) {
       const byCategory = {};
       for (const f of result.failures) {
@@ -757,7 +469,6 @@ class CodeReviewAgent {
       }
     }
 
-    // Self-correction history
     if (result.history.length > 0) {
       lines.push(`## Self-Correction History`);
       lines.push(``);
@@ -776,18 +487,6 @@ class CodeReviewAgent {
 
     return lines.join('\n');
   }
-
-  _emptyResult(skipReason) {
-    return {
-      rounds: 0, totalItems: 0, passed: 0, failed: 0, na: 0,
-      failures: [], history: [], riskNotes: [], needsHumanReview: false,
-      skipped: true, skipReason,
-    };
-  }
-
-  _log(msg) {
-    if (this.verbose) console.log(msg);
-  }
 }
 
 /**
@@ -797,7 +496,7 @@ class CodeReviewAgent {
  * @property {number}   passed           - Items that passed
  * @property {number}   failed           - Items that failed after all rounds
  * @property {number}   na               - Items marked N/A
- * @property {object[]} failures         - Remaining failed items: { id, result, finding, fixInstruction }
+ * @property {object[]} failures         - Remaining failed items
  * @property {object[]} history          - Per-round fix history
  * @property {string[]} riskNotes        - Risk notes for Orchestrator
  * @property {boolean}  needsHumanReview - True if high-severity failures remain

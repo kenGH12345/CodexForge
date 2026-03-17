@@ -46,6 +46,8 @@ const PATHS = {
   DRYRUN_REPORT_MD: path.join(WORKFLOW_ROOT, 'output', 'dry-run-report.md'),
   /** LLM query expansion synonym/alias table (auto-accumulated, persistent) */
   SYNONYM_TABLE_JSON: path.join(WORKFLOW_ROOT, 'output', 'synonym-table.json'),
+  /** Prompt A/B variant registry (auto-managed by PromptSlotManager) */
+  PROMPT_VARIANTS_JSON: path.join(WORKFLOW_ROOT, 'output', 'prompt-variants.json'),
 };
 
 // ─── Output Artifact File Names ────────────────────────────────────────────────
@@ -112,6 +114,9 @@ const HOOK_EVENTS = {
   DRYRUN_OP_RECORDED:   'dryrun_op_recorded',    // A file operation was intercepted
   DRYRUN_REPORT_SAVED:  'dryrun_report_saved',   // Dry-run report written to disk
   DRYRUN_APPLIED:       'dryrun_applied',        // Pending ops applied to real FS
+  // Prompt A/B testing events
+  PROMPT_VARIANT_PROMOTED:  'prompt_variant_promoted',   // A variant outperformed the active and was promoted
+  PROMPT_VARIANT_ROLLEDBACK:'prompt_variant_rolledback', // Active variant rolled back to baseline after failures
 };
 
 module.exports = {

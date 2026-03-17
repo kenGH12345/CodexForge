@@ -4,10 +4,8 @@
  * Evaluates whether the architecture is CORRECT and REASONABLE by checking
  * it against a structured checklist of architecture best practices.
  *
- * This solves the key limitation of SelfCorrectionEngine (regex-based):
- *   - Can judge whether architecture decisions are JUSTIFIED (not just worded clearly)
- *   - Can detect logical flaws in the design (e.g. HA requirement + single instance)
- *   - Can verify that non-functional requirements (perf, security, scalability) are addressed
+ * Extends ReviewAgentBase for the shared review loop, adversarial verification,
+ * and reporting infrastructure.
  *
  * Review dimensions (checklist categories):
  *   1. Decision Justification – every major tech choice has a stated rationale
@@ -17,10 +15,6 @@
  *   5. Observability          – logging, metrics, tracing, alerting
  *   6. Requirements Alignment – architecture covers all functional + non-functional requirements
  *   7. Consistency            – no internal contradictions between sections
- *
- * Self-correction loop:
- *   architecture.md → checklist review → issues found → refinement prompt →
- *   ArchitectAgent re-generates → re-review → loop until clean or maxRounds
  *
  * Output:
  *   - Corrected architecture.md (written back)
@@ -32,6 +26,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { ReviewAgentBase } = require('./review-agent-base');
 
 // ─── Architecture Checklist ───────────────────────────────────────────────────
 
@@ -167,17 +162,8 @@ const ARCHITECTURE_CHECKLIST = [
   },
 ];
 
-// ─── Prompt Builders ──────────────────────────────────────────────────────────
+// ─── Prompt Builders (Architecture-specific) ──────────────────────────────────
 
-/**
- * Builds the architecture checklist review prompt.
- * Uses evaluationGuide to give LLM precise instructions per item.
- *
- * @param {object[]} checklist
- * @param {string}   archContent
- * @param {string}   [requirementText]
- * @returns {string}
- */
 function buildArchReviewPrompt(checklist, archContent, requirementText = '') {
   const itemList = checklist
     .map(item => [
@@ -230,26 +216,6 @@ You are performing a structured architecture review.`,
   ].join('\n');
 }
 
-/**
- * Builds an adversarial verification prompt.
- *
- * Problem it solves (P1-A):
- *   The main review LLM has systematic blind spots – if it doesn't consider
- *   "assuming the DB can handle 10k QPS" a risk, it will PASS that item in
- *   both the detection and verification steps. An adversarial verifier uses a
- *   different framing ("find what was missed") to surface these blind spots.
- *
- * The adversarial prompt is intentionally skeptical:
- *   - It is told that the main reviewer may have been too lenient
- *   - It is asked to focus ONLY on items the main reviewer marked PASS or N/A
- *   - It must justify any downgrade with a specific, concrete finding
- *
- * @param {object[]} checklist
- * @param {string}   archContent
- * @param {object[]} mainResults  - Results from the main review (PASS/N/A items only)
- * @param {string}   [requirementText]
- * @returns {string}
- */
 function buildAdversarialArchPrompt(checklist, archContent, mainResults, requirementText = '') {
   const passedItems = mainResults.filter(r => r.result === 'PASS' || r.result === 'N/A');
   if (passedItems.length === 0) return null;
@@ -307,23 +273,11 @@ You are performing an adversarial second-opinion architecture review. Your job i
   ].join('\n');
 }
 
-/**
- * Builds an architect refinement prompt from failed checklist items.
- *
- * For long documents (>4000 chars), uses a patch-based approach:
- * asks LLM to return only the new/modified sections rather than the full document,
- * then merges them back. This avoids LLM output truncation on large documents.
- *
- * @param {string}   originalContent
- * @param {object[]} failures
- * @returns {{ prompt: string, mode: 'full' | 'patch' }}
- */
 function buildArchFixPrompt(originalContent, failures) {
   const fixList = failures
     .map((f, i) => `${i + 1}. [${f.id}] [${f.severity?.toUpperCase() ?? 'UNKNOWN'}] ${f.finding}\n   Fix: ${f.fixInstruction || 'Please review and fix this missing item.'}`)
     .join('\n\n');
 
-  // For long documents, use patch mode to avoid LLM output truncation
   const LONG_DOC_THRESHOLD = 4000;
   const isLongDoc = originalContent.length > LONG_DOC_THRESHOLD;
 
@@ -365,7 +319,8 @@ You are performing a self-correction pass on an architecture document. Fix every
 
   const prompt = [
     `You are **Martin Fowler** – Chief Scientist at ThoughtWorks, author of *Refactoring* and *Patterns of Enterprise Application Architecture*.
-You are performing a self-correction pass on an architecture document. Fix every issue listed below with the precision of someone who has refactored thousands of designs.`,    ``,
+You are performing a self-correction pass on an architecture document. Fix every issue listed below with the precision of someone who has refactored thousands of designs.`,
+    ``,
     `## Issues to Fix`,
     ``,
     fixList,
@@ -385,14 +340,6 @@ You are performing a self-correction pass on an architecture document. Fix every
   return { prompt, mode: 'full' };
 }
 
-/**
- * Applies patch-mode LLM response back to the original document.
- * Finds each "### PATCH: <heading>" block and replaces or appends the section.
- *
- * @param {string} originalContent
- * @param {string} patchResponse
- * @returns {string}
- */
 function applyArchPatches(originalContent, patchResponse) {
   const patchRegex = /###\s+PATCH:\s+(.+?)\n([\s\S]*?)(?=###\s+PATCH:|$)/g;
   let result = originalContent;
@@ -402,57 +349,27 @@ function applyArchPatches(originalContent, patchResponse) {
     const heading = match[1].trim();
     const newContent = match[2].trim();
 
-    // Strip any leading '#' characters from the heading to get the plain title
-    // so we can match it regardless of the heading level used in the original document
     const plainHeading = heading.replace(/^#+\s*/, '');
     const escapedHeading = plainHeading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // Match any heading level (one or more '#') followed by the heading text,
-    // then capture everything until the next same-or-higher-level heading or end of document.
-    // Use greedy [\s\S]* (not lazy) so the match extends to the LAST possible position
-    // before the next heading – avoids the lazy+zero-width-lookahead early-exit bug.
-    // N39 fix: the original code used [\s\S]*? (non-greedy / lazy), which caused the regex
-    // to stop at the FIRST sub-heading (e.g. ### Sub-section) inside the target section,
-    // leaving old sub-heading content intact and only partially applying the patch.
-    // Greedy [\s\S]* correctly consumes the entire section body including sub-headings.
-    // P7 fix: use `(?=\n#+\s|$)` instead of `(?=\n#+\s|\s*$)` – the `\s*$` variant
-    // matches trailing whitespace at end-of-string, which can cause the regex to
-    // over-consume and replace content beyond the target section boundary.
     const sectionRegex = new RegExp(
       `(#+\\s+${escapedHeading}[^\\n]*)\\n[\\s\\S]*(?=\\n#+\\s|$)`,
       'i'
     );
 
     if (sectionRegex.test(result)) {
-      // Replace existing section, preserving the original heading line
       result = result.replace(sectionRegex, `$1\n\n${newContent}\n`);
     } else {
-      // Section not found – append as a new ## section at the end
       result = result.trimEnd() + `\n\n## ${plainHeading}\n\n${newContent}\n`;
     }
   }
 
   return result;
 }
-// ─── JSON Extractor (shared utility) ─────────────────────────────────────────
 
-function extractJsonArray(response) {
-  const stripped = response.replace(/```(?:json)?\n?/g, '').replace(/```/g, '').trim();
-  try {
-    const parsed = JSON.parse(stripped);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    const match = stripped.match(/\[[\s\S]*\]/);
-    if (match) {
-      try { return JSON.parse(match[0]); } catch { return null; }
-    }
-    return null;
-  }
-}
+// ─── ArchitectureReviewAgent (extends ReviewAgentBase) ────────────────────────
 
-// ─── ArchitectureReviewAgent ──────────────────────────────────────────────────
-
-class ArchitectureReviewAgent {
+class ArchitectureReviewAgent extends ReviewAgentBase {
   /**
    * @param {Function} llmCall            - async (prompt: string) => string
    * @param {object}   [options]
@@ -461,325 +378,82 @@ class ArchitectureReviewAgent {
    * @param {object[]} [options.extraChecklist=[]]     - Additional checklist items
    * @param {string}   [options.outputDir]             - Where to write architecture-review.md
    * @param {object}   [options.investigationTools]    - Optional tools for deep investigation
-   * @param {Function} [options.adversarialLlmCall]    - Optional independent LLM for adversarial
-   *   verification (P1-A fix). If not provided, falls back to llmCall with an adversarial
-   *   system prompt. Pass a different LLM instance (higher temperature or different model)
-   *   for true independence. see CHANGELOG: P1-A
+   * @param {Function} [options.adversarialLlmCall]    - Optional independent LLM for adversarial verification
    */
-  constructor(llmCall, {
-    maxRounds = 2,
-    verbose = true,
-    extraChecklist = [],
-    outputDir = null,
-    investigationTools = null,
-    adversarialLlmCall = null,
-  } = {}) {
-    if (typeof llmCall !== 'function') {
-      throw new Error('[ArchitectureReviewAgent] llmCall must be a function');
-    }
-    this.llmCall = llmCall;
-    // P1-A fix: adversarial verifier uses a different framing to surface blind spots.
-    // Falls back to the same llmCall if no independent verifier is provided.
-    this.adversarialLlmCall = (typeof adversarialLlmCall === 'function') ? adversarialLlmCall : llmCall;
-    this.maxRounds = maxRounds;
-    this.verbose = verbose;
-    this.checklist = [...ARCHITECTURE_CHECKLIST, ...extraChecklist];
-    this.outputDir = outputDir || path.resolve(__dirname, '..', 'output');
-    this.investigationTools = investigationTools || null;
+  constructor(llmCall, options = {}) {
+    super(llmCall, {
+      ...options,
+      checklist: ARCHITECTURE_CHECKLIST,
+    });
   }
 
-  /**
-   * Runs the full review + self-correction loop on architecture.md.
-   *
-   * @param {string} archPath         - Path to output/architecture.md
-   * @param {string} [requirementPath] - Path to output/requirements.md (optional)
-   * @returns {Promise<ArchReviewResult>}
-   */
-  async review(archPath, requirementPath = null) {
-    this._log(`\n╔══════════════════════════════════════════════════════════╗`);
-    this._log(`║  🏛️  ARCHITECTURE REVIEW  –  Checklist-based Analysis    ║`);
-    this._log(`╚══════════════════════════════════════════════════════════╝`);
+  // ─── Abstract method implementations ───────────────────────────────────────
 
-    if (!fs.existsSync(archPath)) {
-      this._log(`[ArchReview] ⚠️  architecture.md not found at: ${archPath}. Skipping.`);
-      return this._emptyResult('architecture.md not found');
+  _getReviewContent(inputPath) {
+    if (!fs.existsSync(inputPath)) return null;
+    return fs.readFileSync(inputPath, 'utf-8');
+  }
+
+  _buildReviewPrompt(content, requirementText) {
+    return buildArchReviewPrompt(this.checklist, content, requirementText);
+  }
+
+  _buildAdversarialPrompt(content, mainResults, requirementText) {
+    return buildAdversarialArchPrompt(this.checklist, content, mainResults, requirementText);
+  }
+
+  _buildFixPrompt(content, failures) {
+    return buildArchFixPrompt(content, failures);
+  }
+
+  _applyFix(currentContent, rawFixed, mode) {
+    // Strip markdown fences if present
+    const mdMatch = rawFixed.match(/```(?:markdown|md)?\n([\s\S]*?)```/);
+    const candidate = mdMatch ? mdMatch[1].trim() : rawFixed.trim();
+
+    if (mode === 'patch') {
+      const patched = applyArchPatches(currentContent, candidate);
+      this._log(`[ArchReview] ✅ Patch mode: applied ${(candidate.match(/###\s+PATCH:/g) || []).length} patch(es).`);
+      return patched;
     }
 
-    let currentContent = fs.readFileSync(archPath, 'utf-8');
-    const requirementText = (requirementPath && fs.existsSync(requirementPath))
-      ? fs.readFileSync(requirementPath, 'utf-8')
-      : '';
-
-    const history = [];
-    let round = 0;
-    let lastReviewResults = [];
-
-    while (round < this.maxRounds) {
-      round++;
-      this._log(`\n[ArchReview] 🔄 Round ${round}/${this.maxRounds}: Running checklist review...`);
-
-      const reviewResults = await this._runReview(currentContent, requirementText);
-      lastReviewResults = reviewResults;
-
-      const failures = reviewResults.filter(r => r.result === 'FAIL');
-      const passes   = reviewResults.filter(r => r.result === 'PASS');
-      const nas      = reviewResults.filter(r => r.result === 'N/A');
-
-      this._log(`[ArchReview] 📊 Round ${round}: ${passes.length} PASS / ${failures.length} FAIL / ${nas.length} N/A`);
-
-      if (failures.length === 0) {
-        this._log(`[ArchReview] ✅ All checklist items passed. Architecture review complete.\n`);
-        break;
-      }
-
-      this._log(`[ArchReview] ❌ Failures (${failures.length}):`);
-      failures.forEach(f => this._log(`  • [${f.id}] ${f.finding}`));
-
-      if (round >= this.maxRounds) {
-        this._log(`[ArchReview] ⚠️  Max rounds reached. Remaining issues will be recorded as risks.`);
-        break;
-      }
-
-      // Self-correction: optionally run deep investigation before fix prompt
-      // so the architect LLM has experience-store context when rewriting.
-      let contentForFix = currentContent;
-      if (this.investigationTools) {
-        const highFailures = failures.filter(f => {
-          const item = this.checklist.find(c => c.id === f.id);
-          return item?.severity === 'high';
-        });
-        if (highFailures.length > 0) {
-          this._log(`[ArchReview] 🔬 Running deep investigation for ${highFailures.length} high-severity failure(s)...`);
-          const findings = [];
-          for (const f of highFailures) {
-            if (typeof this.investigationTools.search === 'function') {
-              try {
-                const r = await this.investigationTools.search(`${f.id} architecture ${f.finding}`);
-                if (r) findings.push(`### Experience for [${f.id}]\n${r}`);
-              } catch (_) { /* ignore */ }
-            }
-            if (typeof this.investigationTools.queryExperience === 'function') {
-              try {
-                const r = await this.investigationTools.queryExperience('architecture');
-                if (r) findings.push(`### Architecture Experience Context\n${r}`);
-              } catch (_) { /* ignore */ }
-            }
-          }
-          if (findings.length > 0) {
-            contentForFix = currentContent + '\n\n---\n## Investigation Findings\n\n' + findings.join('\n\n');
-            this._log(`[ArchReview] 📋 ${findings.length} finding(s) injected into fix context.`);
-          }
-        }
-      }
-
-      // Self-correction: send fix prompt to architect LLM
-      this._log(`[ArchReview] 🔧 Sending fix prompt to ArchitectAgent...`);
-      const { prompt: fixPrompt, mode: fixMode } = buildArchFixPrompt(contentForFix, failures.map(f => ({
-        ...f,
-        severity: this.checklist.find(c => c.id === f.id)?.severity ?? 'medium',
-      })));
-
-      if (fixMode === 'patch') {
-        this._log(`[ArchReview] 📄 Document is long (>${4000} chars). Using patch mode to avoid truncation.`);
-      }
-
-      let fixedContent = currentContent;
-      try {
-        const rawFixed = await this.llmCall(fixPrompt);
-        // Strip markdown fences if present
-        const mdMatch = rawFixed.match(/```(?:markdown|md)?\n([\s\S]*?)```/);
-        const candidate = mdMatch ? mdMatch[1].trim() : rawFixed.trim();
-
-        if (fixMode === 'patch') {
-          // Apply patch-mode response: merge sections back into original
-          fixedContent = applyArchPatches(currentContent, candidate);
-          this._log(`[ArchReview] ✅ Patch mode: applied ${(candidate.match(/###\s+PATCH:/g) || []).length} patch(es).`);
-        } else {
-          // Full rewrite mode: validate output is not truncated
-          if (candidate.length >= currentContent.length * 0.7) {
-            fixedContent = candidate;
-          } else {
-            this._log(`[ArchReview] ⚠️  Fix LLM output too short (${candidate.length} vs ${currentContent.length}). Possible truncation. Keeping current content.`);
-          }
-        }
-      } catch (err) {
-        this._log(`[ArchReview] ❌ Fix LLM call failed: ${err.message}. Keeping current content.`);
-        break;
-      }
-
-      history.push({
-        round,
-        failures: failures.map(f => ({ id: f.id, finding: f.finding })),
-        before: currentContent,
-        after: fixedContent,
-      });
-
-      currentContent = fixedContent;
-      this._log(`[ArchReview] ✏️  Round ${round} fix applied. Re-reviewing...`);
+    // Full rewrite mode: validate output is not truncated
+    if (candidate.length >= currentContent.length * 0.7) {
+      return candidate;
     }
+    this._log(`[ArchReview] ⚠️  Fix LLM output too short (${candidate.length} vs ${currentContent.length}). Possible truncation. Keeping current content.`);
+    return currentContent;
+  }
 
-    // Write corrected architecture back
-    if (history.length > 0) {
-      fs.writeFileSync(archPath, currentContent, 'utf-8');
-      this._log(`[ArchReview] 💾 Corrected architecture written back to: ${archPath}`);
-    }
+  _writeBackArtifact(inputPath, content) {
+    fs.writeFileSync(inputPath, content, 'utf-8');
+  }
 
-    // Build final result
-    const finalFailures = lastReviewResults.filter(r => r.result === 'FAIL');
-    // N55 fix: MISSING items (LLM did not return them or LLM call failed) are treated
-    // as failures in the final result so they appear in riskNotes and are not silently
-    // excluded from the pass rate. This mirrors the N50 fix in CodeReviewAgent.
-    const finalMissing  = lastReviewResults.filter(r => r.result === 'MISSING');
-    const allFailed     = [...finalFailures, ...finalMissing];
-    const highFailures  = allFailed.filter(f => {
-      const item = this.checklist.find(c => c.id === f.id);
-      return item?.severity === 'high';
-    });
-
-    const riskNotes = allFailed.map(f => {
-      const item = this.checklist.find(c => c.id === f.id);
-      return `[ArchReview] ${f.id} (${item?.severity ?? 'unknown'}) ${f.finding}`;
-    });
-
-    const result = {
-      rounds: round,
-      totalItems: this.checklist.length,
-      passed: lastReviewResults.filter(r => r.result === 'PASS').length,
-      failed: allFailed.length,
-      na: lastReviewResults.filter(r => r.result === 'N/A').length,
-      missing: finalMissing.length,
-      failures: allFailed,
-      history,
-      riskNotes,
-      needsHumanReview: highFailures.length > 0,
-      skipped: false,
-    };
-
-    // Write review report
+  _writeReport(result) {
     const reportPath = path.join(this.outputDir, 'architecture-review.md');
     const report = this.formatReport(result);
     fs.writeFileSync(reportPath, report, 'utf-8');
     this._log(`[ArchReview] 📄 Review report written to: ${reportPath}`);
-
-    return result;
   }
 
-  /**
-   * Runs a single checklist review pass via LLM, followed by an adversarial
-   * second-opinion pass to surface blind spots. see CHANGELOG: P1-A
-   *
-   * Two-phase review:
-   *   Phase 1 (main):       this.llmCall evaluates all checklist items
-   *   Phase 2 (adversarial): this.adversarialLlmCall re-evaluates PASS/N/A items
-   *                          with a skeptical framing to find missed issues
-   *
-   * A PASS item that the adversarial verifier downgrades to FAIL is treated as
-   * FAIL in the merged result. This prevents systematic blind spots from causing
-   * false positives ("passed" items that are actually broken).
-   *
-   * @param {string} archContent
-   * @param {string} requirementText
-   * @returns {Promise<object[]>}
-   */
-  async _runReview(archContent, requirementText) {
-    // ── Phase 1: Main review ──────────────────────────────────────────────────
-    const prompt = buildArchReviewPrompt(this.checklist, archContent, requirementText);
-    let response;
-    try {
-      response = await this.llmCall(prompt);
-    } catch (err) {
-      this._log(`[ArchReview] ❌ Review LLM call failed: ${err.message}`);
-      return this.checklist.map(item => ({
-        id: item.id,
-        result: 'MISSING',
-        finding: `LLM call failed: ${err.message}`,
-        fixInstruction: null,
-      }));
-    }
-
-    const parsed = extractJsonArray(response);
-    if (!parsed) {
-      this._log(`[ArchReview] ⚠️  Could not parse LLM review response. Treating all as MISSING.`);
-      return this.checklist.map(item => ({
-        id: item.id,
-        result: 'MISSING',
-        finding: 'LLM response parse error',
-        fixInstruction: null,
-      }));
-    }
-
-    const resultMap = new Map(parsed.map(r => [r.id, r]));
-    const mainResults = this.checklist.map(item => resultMap.get(item.id) ?? {
-      id: item.id,
-      result: 'MISSING',
-      finding: 'Not evaluated by LLM (response did not include this item)',
-      fixInstruction: null,
-    });
-
-    // ── Phase 2: Adversarial verification (P1-A fix) ──────────────────────────
-    // Only run adversarial pass if there are PASS/N/A items to challenge.
-    // Skip if all items already failed (no point re-checking failures).
-    const passedItems = mainResults.filter(r => r.result === 'PASS' || r.result === 'N/A');
-    if (passedItems.length === 0) {
-      this._log(`[ArchReview] ⚡ Adversarial pass skipped (no PASS/N/A items to challenge).`);
-      return mainResults;
-    }
-
-    const adversarialPrompt = buildAdversarialArchPrompt(
-      this.checklist, archContent, mainResults, requirementText
-    );
-    if (!adversarialPrompt) return mainResults;
-
-    this._log(`[ArchReview] 🔴 Running adversarial verification on ${passedItems.length} PASS/N/A item(s)...`);
-    let adversarialResults = [];
-    try {
-      const adversarialResponse = await this.adversarialLlmCall(adversarialPrompt);
-      adversarialResults = extractJsonArray(adversarialResponse) || [];
-    } catch (err) {
-      this._log(`[ArchReview] ⚠️  Adversarial LLM call failed: ${err.message}. Using main results only.`);
-      return mainResults;
-    }
-
-    // Merge: adversarial FAIL overrides main PASS/N/A
-    const adversarialMap = new Map(adversarialResults.map(r => [r.id, r]));
-    let downgrades = 0;
-    const mergedResults = mainResults.map(mainItem => {
-      if (mainItem.result !== 'PASS' && mainItem.result !== 'N/A') return mainItem;
-      const adversarialItem = adversarialMap.get(mainItem.id);
-      if (adversarialItem && adversarialItem.result === 'FAIL') {
-        downgrades++;
-        this._log(`[ArchReview] 🔴 Adversarial downgrade: [${mainItem.id}] PASS → FAIL – ${adversarialItem.finding}`);
-        return {
-          ...adversarialItem,
-          finding: `[Adversarial] ${adversarialItem.finding}`,
-        };
-      }
-      return mainItem;
-    });
-
-    if (downgrades > 0) {
-      this._log(`[ArchReview] 🔴 Adversarial pass found ${downgrades} additional issue(s) missed by main review.`);
-    } else {
-      this._log(`[ArchReview] ✅ Adversarial pass confirmed main review (no additional issues found).`);
-    }
-
-    return mergedResults;
+  _getInvestigationDomain() { return 'architecture'; }
+  _getLabelPrefix() { return 'ArchReview'; }
+  _getHeaderLine() {
+    return [
+      `╔══════════════════════════════════════════════════════════╗`,
+      `║  🏛️  ARCHITECTURE REVIEW  –  Checklist-based Analysis    ║`,
+      `╚══════════════════════════════════════════════════════════╝`,
+    ].join('\n');
   }
+  _getFailureDefault() { return 'MISSING'; }
 
-  /**
-   * Formats the review result as a Markdown report.
-   * @param {ArchReviewResult} result
-   * @returns {string}
-   */
+  // ─── Report Formatting (Architecture-specific) ─────────────────────────────
+
   formatReport(result) {
     if (result.skipped) {
       return `# Architecture Review Report\n\n> Skipped: ${result.skipReason}\n`;
     }
 
-    // N26 fix: guard against division by zero when all items are N/A
-    // N55 fix: MISSING items are NOT N/A – they are counted as failures (included in
-    // result.failed), so they must NOT be subtracted from the evaluatedItems denominator.
-    // Only true N/A items (explicitly marked by LLM as not applicable) are excluded.
     const evaluatedItems = result.totalItems - result.na;
     const passRate = evaluatedItems > 0
       ? Math.round((result.passed / evaluatedItems) * 100)
@@ -845,18 +519,6 @@ class ArchitectureReviewAgent {
     }
 
     return lines.join('\n');
-  }
-
-  _emptyResult(skipReason) {
-    return {
-      rounds: 0, totalItems: 0, passed: 0, failed: 0, na: 0,
-      failures: [], history: [], riskNotes: [], needsHumanReview: false,
-      skipped: true, skipReason,
-    };
-  }
-
-  _log(msg) {
-    if (this.verbose) console.log(msg);
   }
 }
 

@@ -1,6 +1,6 @@
 # CHANGELOG
 
-All notable fixes and improvements to WorkFlowAgent are recorded here.
+All notable fixes and improvements to CODEX FORGE are recorded here.
 Format: `[fix-id] File – Description`
 
 ---
