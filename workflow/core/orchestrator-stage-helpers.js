@@ -200,12 +200,37 @@ function storePlannerContext(orch, outputPath) {
 
   // Extract task count from the plan content
   let taskCount = 0;
+  let moduleGrouping = null;
   try {
     const fs = require('fs');
     if (fs.existsSync(outputPath)) {
       const content = fs.readFileSync(outputPath, 'utf-8');
       const taskMatches = content.match(/#### Task T-/g);
       taskCount = taskMatches ? taskMatches.length : 0;
+    }
+  } catch (_) { /* non-fatal */ }
+
+  // Extract moduleGrouping from JSON block (Phase 2.5A)
+  try {
+    const { extractJsonBlock } = require('./agent-output-schema');
+    const fs = require('fs');
+    if (fs.existsSync(outputPath)) {
+      const content = fs.readFileSync(outputPath, 'utf-8');
+      const jsonBlock = extractJsonBlock(content);
+      if (jsonBlock && jsonBlock.moduleGrouping) {
+        const mg = jsonBlock.moduleGrouping;
+        if (Array.isArray(mg.groups) && mg.groups.length > 0) {
+          moduleGrouping = {
+            groups: mg.groups.filter(g => g.moduleId && g.moduleName).map(g => ({
+              moduleId:   g.moduleId,
+              moduleName: g.moduleName,
+              taskIds:    Array.isArray(g.taskIds) ? g.taskIds : [],
+            })),
+            crossModuleTasks: Array.isArray(mg.crossModuleTasks) ? mg.crossModuleTasks : [],
+          };
+          console.log(`[Orchestrator] 📦 Module-Task Grouping extracted: ${moduleGrouping.groups.length} group(s), ${moduleGrouping.crossModuleTasks.length} cross-module task(s).`);
+        }
+      }
     }
   } catch (_) { /* non-fatal */ }
 
@@ -216,10 +241,12 @@ function storePlannerContext(orch, outputPath) {
     risks:        [],
     meta: {
       taskCount,
+      moduleGrouping,
     },
   });
-  console.log(`[Orchestrator] 🔗 PLAN context stored: ${ctx.keyDecisions.length} key decision(s), ${taskCount} task(s).`);
-  return { ...ctx, taskCount };
+  const mgMsg = moduleGrouping ? `, ${moduleGrouping.groups.length} module group(s)` : '';
+  console.log(`[Orchestrator] 🔗 PLAN context stored: ${ctx.keyDecisions.length} key decision(s), ${taskCount} task(s)${mgMsg}.`);
+  return { ...ctx, taskCount, moduleGrouping };
 }
 
 /**

@@ -112,7 +112,23 @@ graph TD
 ### 6. Verification Checklist
 A final checklist mapping each architecture component to its corresponding task(s), ensuring nothing is missed.
 
+### 7. Module-Task Grouping *(mandatory when Module Map is available)*
+If a Functional Module Map was provided in the upstream context, produce a module-task mapping:
+- For each module in the map, list which tasks (T-N) belong to that module
+- Tasks that span multiple modules should be listed under "Cross-Module Tasks"
+- This grouping enables the CODE stage to assign workers to specific modules, reducing cross-module conflicts
+
+Format:
+| Module ID | Module Name | Tasks |
+|-----------|-------------|-------|
+| mod-auth  | Authentication | T-1, T-2, T-5 |
+| mod-db    | Database Layer | T-3, T-4 |
+| cross-module | Cross-Module | T-6 |
+
 ${jsonInstruction}
+
+## Upstream Module Map Context
+${this._formatModuleMapForPlanner(expContext)}
 
 ## Architecture Document
 ${inputContent}
@@ -124,7 +140,34 @@ ${expSection}
 First output the JSON metadata block (as instructed above), then write the full Markdown document.
 Remember: NO code, NO pseudocode – planning and task decomposition ONLY.
 **CRITICAL**: Every task MUST have acceptance criteria. Tasks without acceptance criteria are incomplete.
-**CRITICAL**: The dependency graph MUST be present and use Mermaid syntax.`;
+**CRITICAL**: The dependency graph MUST be present and use Mermaid syntax.
+**CRITICAL**: If a Functional Module Map is present in the upstream context, you MUST produce the Module-Task Grouping table (Section 7) AND include the moduleGrouping field in the JSON metadata block.`;
+  }
+
+  /**
+   * Extracts and formats the Module Map from experience context for the planner.
+   * The moduleMap is embedded in the experience context block by buildPlannerUpstreamCtx().
+   *
+   * @param {string|null} expContext - Experience context that may contain module map
+   * @returns {string} Formatted module map section or empty guidance
+   */
+  _formatModuleMapForPlanner(expContext) {
+    // The module map is already formatted in the upstream context by buildPlannerUpstreamCtx()
+    // Check if it's present
+    if (expContext && typeof expContext === 'string' && expContext.includes('Functional Module Map')) {
+      return `The Functional Module Map is available in the upstream context below. You MUST use it to:
+1. Group tasks by module in Section 7 (Module-Task Grouping table)
+2. Include a "moduleGrouping" field in the JSON metadata block with this structure:
+   "moduleGrouping": {
+     "groups": [
+       { "moduleId": "mod-xxx", "moduleName": "Module Name", "taskIds": ["T-1", "T-2"] }
+     ],
+     "crossModuleTasks": ["T-6"]
+   }
+3. Prefer scheduling isolatable modules in parallel phases
+4. Schedule modules with dependencies after their dependencies are complete`;
+    }
+    return `No Functional Module Map available from ANALYSE stage. Proceed with standard task decomposition.`;
   }
 
   /**
@@ -165,6 +208,32 @@ Remember: NO code, NO pseudocode – planning and task decomposition ONLY.
     const criteriaCount = (llmResponse.match(criteriaPattern) || []).length;
     if (taskCount > 0 && criteriaCount < taskCount) {
       console.warn(`[PlannerAgent] ⚠️  Only ${criteriaCount}/${taskCount} tasks have acceptance criteria. All tasks should have acceptance criteria.`);
+    }
+
+    // Phase 2.5A: Validate moduleGrouping in JSON block
+    if (jsonBlock && jsonBlock.moduleGrouping) {
+      const mg = jsonBlock.moduleGrouping;
+      if (Array.isArray(mg.groups) && mg.groups.length > 0) {
+        const totalGroupedTasks = mg.groups.reduce((sum, g) => sum + (Array.isArray(g.taskIds) ? g.taskIds.length : 0), 0);
+        const crossCount = Array.isArray(mg.crossModuleTasks) ? mg.crossModuleTasks.length : 0;
+        console.log(`[PlannerAgent] ✅ Module-Task Grouping: ${mg.groups.length} module group(s), ${totalGroupedTasks} grouped task(s), ${crossCount} cross-module task(s).`);
+
+        // Validate: every task should appear in some group or crossModuleTasks
+        const allGroupedTaskIds = new Set();
+        for (const g of mg.groups) {
+          for (const tid of (g.taskIds || [])) allGroupedTaskIds.add(tid);
+        }
+        for (const tid of (mg.crossModuleTasks || [])) allGroupedTaskIds.add(tid);
+
+        if (taskCount > 0 && allGroupedTaskIds.size < taskCount) {
+          console.warn(`[PlannerAgent] ⚠️  Module grouping covers ${allGroupedTaskIds.size}/${taskCount} tasks. Some tasks are not assigned to any module.`);
+        }
+      } else {
+        console.warn(`[PlannerAgent] ⚠️  moduleGrouping present but has no valid groups.`);
+      }
+    } else if (llmResponse.includes('Functional Module Map')) {
+      // Module Map was available but no moduleGrouping was produced
+      console.warn(`[PlannerAgent] ⚠️  Functional Module Map was available but no moduleGrouping was produced in JSON block.`);
     }
 
     // Detect implementation code (multi-line code blocks with logic)

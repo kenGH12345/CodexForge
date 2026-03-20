@@ -321,6 +321,7 @@ class QualityGate {
         content:  contentLines.join('\n'),
         skill,
         tags:     [stageName.toLowerCase(), 'passed', 'quality-gate', `rounds-${rounds}`],
+        moduleId: stageConfig.moduleId || null,
       });
 
     } else {
@@ -359,6 +360,7 @@ class QualityGate {
           content:  diagnosticContent,
           skill,
           tags:     [stageName.toLowerCase(), 'failed', 'quality-gate', 'pitfall', 'high-severity'],
+          moduleId: stageConfig.moduleId || null,
         });
       }
     }

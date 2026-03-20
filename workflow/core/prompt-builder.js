@@ -509,6 +509,13 @@ Negative Examples (what NOT to do):
 ❌ DO NOT use magic numbers — define named constants with clear documentation
 ❌ DO NOT catch errors silently (empty catch blocks) — at minimum log the error with context
 
+Module-Scope Awareness (IMPORTANT):
+- If a Module Scope Guide is present in your context, your code changes MUST respect module boundaries.
+- Each module has file boundaries (glob patterns). Only modify files within the assigned module's boundaries for the current task.
+- Cross-module changes require explicit justification in the Architecture Design section of your output.
+- When implementing a task assigned to a specific module, prioritise reusing that module's existing interfaces over creating new cross-module dependencies.
+- Cross-cutting concerns (logging, config, error handling) should use the shared interfaces defined at the architecture level.
+
 Single-Task Principle (CRITICAL – strictly enforced):
 - Complete ONE task at a time. Do NOT start a new task until the current task is committed and marked done.
 - Attempting to implement multiple features simultaneously is NOT acceptable and will cause context loss.
@@ -577,6 +584,14 @@ Planning Principles (follow strictly):
 6. Feedback Loops: after each phase, there should be a natural checkpoint where results can be verified.
 7. Simplest Thing First: when in doubt, plan the simplest approach. Complexity can be added later; removing it is costly.
 8. No Over-Planning: plan at the level of files and functions, not at the level of individual lines of code.
+
+Module-Aware Planning (IMPORTANT):
+- If a Functional Module Map is available from the ANALYSE stage, use it to group tasks by module.
+- Each isolatable module should form its own implementation stream — tasks within the same module share context.
+- Schedule module dependencies in topological order: if Module B depends on Module A, Module A's tasks go first.
+- For each task, annotate which module it belongs to (moduleId). Cross-module tasks should be minimised.
+- Include a moduleGrouping field in your JSON metadata block mapping moduleId → taskIds.
+- This grouping enables the CODE stage to assign workers per-module, reducing cross-module file conflicts.
 
 Negative Examples (what NOT to do):
 ❌ DO NOT plan horizontal layers ("Phase 1: all database tables, Phase 2: all APIs") — plan vertical slices

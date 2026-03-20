@@ -65,14 +65,15 @@ const ARCHITECT_SCHEMA = {
  */
 const PLANNER_SCHEMA = {
   role: 'planner',
-  version: '1.0',
+  version: '1.1',
   fields: {
-    tasks:         { type: 'array',  description: 'Ordered list of implementation tasks',    required: true },
-    dependencies:  { type: 'array',  description: 'Task dependency relationships',           required: false },
-    phases:        { type: 'array',  description: 'Implementation phases grouping',          required: true },
-    totalEstimate: { type: 'string', description: 'Total estimated complexity',              required: false },
-    keyDecisions:  { type: 'array',  description: 'Planning decisions made',                 required: false },
-    risks:         { type: 'array',  description: 'Identified execution risks',              required: false },
+    tasks:           { type: 'array',  description: 'Ordered list of implementation tasks',    required: true },
+    dependencies:    { type: 'array',  description: 'Task dependency relationships',           required: false },
+    phases:          { type: 'array',  description: 'Implementation phases grouping',          required: true },
+    totalEstimate:   { type: 'string', description: 'Total estimated complexity',              required: false },
+    keyDecisions:    { type: 'array',  description: 'Planning decisions made',                 required: false },
+    risks:           { type: 'array',  description: 'Identified execution risks',              required: false },
+    moduleGrouping:  { type: 'object', description: 'Module-aware task grouping: { groups: [{ moduleId, moduleName, taskIds: [] }], crossModuleTasks: [] }', required: false },
   },
 };
 
@@ -281,6 +282,16 @@ function extractSummary(jsonBlock, stageName) {
       ? ` | ${jsonBlock.moduleMap.modules.length} functional module(s) identified`
       : '';
     return `${jsonBlock.requirements.length} requirement(s) identified${scope}${modCount}.`;
+  }
+
+  // Planner: synthesise from task count + phase count + moduleGrouping
+  if (Array.isArray(jsonBlock.tasks) && Array.isArray(jsonBlock.phases)) {
+    const phaseCount = jsonBlock.phases.length;
+    const taskCount = jsonBlock.tasks.length;
+    const mgInfo = jsonBlock.moduleGrouping && Array.isArray(jsonBlock.moduleGrouping.groups)
+      ? ` | ${jsonBlock.moduleGrouping.groups.length} module group(s)`
+      : '';
+    return `${taskCount} task(s) in ${phaseCount} phase(s)${mgInfo}.`;
   }
 
   // Tester: synthesise from pass/fail counts

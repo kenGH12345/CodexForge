@@ -71,7 +71,7 @@ const ExperienceQueryMixin = {
    * @param {object} query
    * @returns {Experience[]}
    */
-  search({ keyword = null, type = null, category = null, skill = null, tags = null, sourceFile = null, limit = 10, scoreSort = false } = {}) {
+  search({ keyword = null, type = null, category = null, skill = null, tags = null, sourceFile = null, moduleId = null, limit = 10, scoreSort = false } = {}) {
     const now = Date.now();
     let results = this.experiences.filter(e => !e.expiresAt || new Date(e.expiresAt).getTime() > now);
 
@@ -79,6 +79,7 @@ const ExperienceQueryMixin = {
     if (category) results = results.filter(e => e.category === category);
     if (skill) results = results.filter(e => e.skill === skill);
     if (sourceFile) results = results.filter(e => e.sourceFile && e.sourceFile.includes(sourceFile));
+    if (moduleId) results = results.filter(e => e.moduleId === moduleId);
     if (tags && tags.length > 0) {
       results = results.filter(e =>
         tags.some(tag => e.tags.some(t => t.toLowerCase().includes(tag.toLowerCase())))

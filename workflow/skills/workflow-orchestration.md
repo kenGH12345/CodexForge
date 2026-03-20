@@ -116,39 +116,46 @@ All inter-agent communication uses **file path references only** (never raw cont
 **Hook**: `HOOK_EVENTS.HUMAN_REVIEW_REQUIRED` (blocks until confirmed)
 ---
 
-### Step 3.5 �?PLAN
-**Actor**: PlannerAgent (Kent Beck �?XP creator, TDD pioneer)  
+### Step 3.5 → PLAN
+**Actor**: PlannerAgent (Kent Beck — XP creator, TDD pioneer)  
 **Input**: `output/architecture.md` (via FileRefBus)  
 **Action**:
-1. Orchestrator calls `FileRefBus.consume('planner')` �?gets `architectureMdPath`
-2. Inject upstream context (ANALYSE + ARCHITECT summaries) + experience context
-3. Call `PlannerAgent.run(architectureMdPath)` �?decomposes architecture into vertical-slice implementation tasks
-4. Agent reads architecture, writes `output/execution-plan.md` with:
+1. Orchestrator calls `FileRefBus.consume('planner')` → gets `architectureMdPath`
+2. Inject upstream context (ANALYSE + ARCHITECT summaries + **Functional Module Map**) + experience context
+3. Call `PlannerAgent.run(architectureMdPath)` → decomposes architecture into vertical-slice implementation tasks
+4. Agent reads architecture + Module Map, writes `output/execution-plan.md` with:
    - Implementation phases (vertical slices, not horizontal layers)
    - File/function-level task breakdown with acceptance criteria (TDD mindset)
    - Dependency graph (Mermaid)
    - Complexity estimates and risk assessment
-5. **SocraticEngine checkpoint**: User reviews and approves/rejects the execution plan
-6. State machine transitions: `ARCHITECT �?PLAN`
-7. `FileRefBus.publish('planner', 'developer', architectureMdPath, { executionPlanPath })`
+   - **Module-Task Grouping** (Section 7): maps each task to its owning module from the Module Map
+   - **JSON metadata block** includes `moduleGrouping` field: `{ groups: [{ moduleId, moduleName, taskIds }], crossModuleTasks: [] }`
+5. Orchestrator calls `storePlannerContext()` which extracts `moduleGrouping` from JSON block and stores in `stageCtx.meta.moduleGrouping`
+6. **SocraticEngine checkpoint**: User reviews and approves/rejects the execution plan
+7. State machine transitions: `ARCHITECT → PLAN`
+8. `FileRefBus.publish('planner', 'developer', architectureMdPath, { executionPlanPath })`
 
-**Output**: `output/execution-plan.md`  
+**Output**: `output/execution-plan.md` (with Module-Task Grouping)  
+**Downstream Impact**: The moduleGrouping enables the CODE stage to inject module-scope boundaries into each Worker, reducing cross-module file conflicts.  
 **Hook**: SocraticEngine approval (approve / reject / approve with reservations)
-
 ---
 
-### Step 4 �?CODE
+### Step 4 → CODE
 **Actor**: DeveloperAgent  
 **Input**: `output/architecture.md` + `output/execution-plan.md` (via FileRefBus metadata)  
 **Action**:
-1. Orchestrator calls `FileRefBus.consume('developer')` �?gets `architectureMdPath`
+1. Orchestrator calls `FileRefBus.consume('developer')` → gets `architectureMdPath`
 2. Read execution plan from bus metadata (`executionPlanPath`)
-3. Call `DeveloperAgent.run(architectureMdPath)` �?follows execution plan task order
-4. Agent reads architecture + plan, writes `output/code.diff`
-5. State machine transitions: `PLAN �?CODE`
+3. **Module-Scope Injection** (Phase 2.5B): If moduleMap and moduleGrouping are available:
+   - Inject a Module Scope Guide into DeveloperAgent context with per-module file boundaries
+   - In task-based mode: each Worker receives its task's module scope (boundaries, dependencies)
+   - Workers are effectively constrained to their module's file boundaries, reducing cross-module conflicts
+4. Call `DeveloperAgent.run(architectureMdPath)` → follows execution plan task order
+5. Agent reads architecture + plan + module scope, writes `output/code.diff`
+6. **Module-Granular Experience** (Phase 2.5C): Experiences are recorded with `moduleId` tags, enabling module-level knowledge accumulation
+7. State machine transitions: `PLAN → CODE`
 
 **Output**: `output/code.diff`
-
 ---
 
 ### Step 5 �?TEST

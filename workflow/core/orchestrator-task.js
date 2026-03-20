@@ -351,6 +351,7 @@ module.exports = {
             skill: task.skill,
             tags: result.experience.tags || [],
             codeExample: result.experience.codeExample || null,
+            moduleId: result.experience.moduleId || null,
           });
         }
 
@@ -491,6 +492,40 @@ module.exports = {
       ? `## Global Goal\nThis task is part of a larger objective: ${globalGoal.slice(0, 300)}${globalGoal.length > 300 ? '...' : ''}\nEnsure your output aligns with and contributes to this overall goal.`
       : '';
 
+    // Phase 2.5B: Module-Scope Injection for task-based execution
+    let moduleContext = '';
+    let taskModuleId = null;
+    try {
+      const planCtx = this.stageCtx?.get(WorkflowState.PLAN);
+      const analyseCtx = this.stageCtx?.get('ANALYSE');
+      const moduleGrouping = planCtx?.meta?.moduleGrouping;
+      const moduleMap = analyseCtx?.meta?.moduleMap;
+      if (moduleGrouping && moduleMap && task.id) {
+        // Find which module this task belongs to
+        for (const g of (moduleGrouping.groups || [])) {
+          if (Array.isArray(g.taskIds) && g.taskIds.includes(task.id)) {
+            taskModuleId = g.moduleId;
+            const mod = moduleMap.modules.find(m => m.id === g.moduleId);
+            if (mod) {
+              moduleContext = `\n## Module Scope (Task ${task.id} → ${mod.name})\n` +
+                `You are implementing a task within module **${mod.name}** (${mod.id}).\n` +
+                `- **Description**: ${mod.description}\n` +
+                `- **File boundaries**: ${(mod.boundaries || []).join(', ') || 'N/A'}\n` +
+                `- **Complexity**: ${mod.complexity}\n` +
+                `> **IMPORTANT**: Restrict your code changes to files within this module's boundaries. Cross-module changes require explicit justification.`;
+              console.log(`[Orchestrator] 🗺️  Task ${task.id} → Module ${mod.id} (${mod.name}), boundaries: [${(mod.boundaries || []).join(', ')}]`);
+            }
+            break;
+          }
+        }
+        if (!taskModuleId && moduleGrouping.crossModuleTasks?.includes(task.id)) {
+          taskModuleId = '_cross_module';
+          moduleContext = `\n## Module Scope (Task ${task.id} → Cross-Module)\nThis task spans multiple modules. Document which module boundary each file change belongs to.`;
+          console.log(`[Orchestrator] 🗺️  Task ${task.id} → Cross-module task`);
+        }
+      }
+    } catch (_) { /* non-fatal */ }
+
     // Task-specific instruction block
     const taskBlock = [
       `## Task Assignment`,
@@ -530,6 +565,7 @@ module.exports = {
         const assembledCtx = devCtxBlock.assembled || devCtxBlock;
         const taskSpecificInput = [
           goalContext,
+          moduleContext,
           typeof assembledCtx === 'string' ? assembledCtx : '',
           skillContent ? `## Skill Context\n${skillContent}` : '',
           codeGraphContext ? `## Code Graph Context\n${codeGraphContext}` : '',
@@ -681,8 +717,9 @@ module.exports = {
       category: role === AgentRole.ARCHITECT ? ExperienceCategory.ARCHITECTURE
                : role === AgentRole.TESTER   ? ExperienceCategory.DEBUG_TECHNIQUE
                : ExperienceCategory.STABLE_PATTERN,
-      tags: [role.toLowerCase(), 'task-based', 'completed'],
+      tags: [role.toLowerCase(), 'task-based', 'completed', ...(taskModuleId && taskModuleId !== '_cross_module' ? [`module:${taskModuleId}`] : [])],
       codeExample: null,
+      moduleId: taskModuleId && taskModuleId !== '_cross_module' ? taskModuleId : null,
     };
 
     return { summary: output, raw: output, experience, reviewRiskNotes };

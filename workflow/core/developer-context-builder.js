@@ -138,12 +138,51 @@ async function buildDeveloperContextBlock(orch, upstreamCtx) {
     console.log(`[Orchestrator] 📋 Execution plan injected into DeveloperAgent context (${executionPlanCtx.length} chars).`);
   }
 
+  // ── Module Scope from ANALYSE + PLAN stages (Phase 2.5B) ──────────────
+  let moduleScopeCtx = '';
+  try {
+    const analyseCtx = orch.stageCtx?.get(WorkflowState.ANALYSE);
+    const planCtx = orch.stageCtx?.get(WorkflowState.PLAN);
+    const moduleMap = analyseCtx?.meta?.moduleMap;
+    const moduleGrouping = planCtx?.meta?.moduleGrouping;
+
+    if (moduleMap && Array.isArray(moduleMap.modules) && moduleMap.modules.length > 0) {
+      const parts = [`\n## Module Scope Guide (from ANALYSE + PLAN stages)`];
+      parts.push(`> Each module has file boundaries. Focus your code changes within the assigned module's boundaries to reduce cross-module conflicts.`);
+      parts.push(``);
+      parts.push(`| Module | Boundaries | Complexity | Isolatable |`);
+      parts.push(`|--------|-----------|-----------|-----------|`);
+      for (const m of moduleMap.modules) {
+        parts.push(`| **${m.id}** (${m.name}) | ${(m.boundaries || []).join(', ') || 'N/A'} | ${m.complexity} | ${m.isolatable ? 'yes' : 'no'} |`);
+      }
+      if (moduleMap.crossCuttingConcerns && moduleMap.crossCuttingConcerns.length > 0) {
+        parts.push(``);
+        parts.push(`**Cross-cutting concerns** (shared across modules): ${moduleMap.crossCuttingConcerns.join(', ')}`);
+      }
+      if (moduleGrouping && Array.isArray(moduleGrouping.groups)) {
+        parts.push(``);
+        parts.push(`### Task-Module Assignments`);
+        for (const g of moduleGrouping.groups) {
+          parts.push(`- **${g.moduleId}** (${g.moduleName}): Tasks ${(g.taskIds || []).join(', ')}`);
+        }
+        if (moduleGrouping.crossModuleTasks && moduleGrouping.crossModuleTasks.length > 0) {
+          parts.push(`- **cross-module**: Tasks ${moduleGrouping.crossModuleTasks.join(', ')}`);
+        }
+        parts.push(``);
+        parts.push(`> **Module-Scope Rule**: When implementing a task, restrict your file changes to the module's boundaries listed above. If a task is cross-module, document which module boundary each file change belongs to.`);
+      }
+      moduleScopeCtx = parts.join('\n');
+      console.log(`[Orchestrator] 🗺️  Module scope context injected into DeveloperAgent (${moduleScopeCtx.length} chars, ${moduleMap.modules.length} module(s)).`);
+    }
+  } catch (_) { /* non-fatal */ }
+
   // ── Token Budget Guard (DEVELOPER) ─────────────────────────────────────
   const devLabelledBlocks = [
     { label: 'JSON Instruction',    content: jsonInstruction,                                          priority: BLOCK_PRIORITY.JSON_INSTRUCTION, _order: 0 },
     { label: 'AGENTS.md',           content: agentsMd ? `## Project Context (AGENTS.md)\n${agentsMd}` : '', priority: BLOCK_PRIORITY.AGENTS_MD, _order: 1 },
     { label: 'Upstream Context',    content: typeof upstreamCtx === 'string' ? upstreamCtx : (upstreamCtx || '').toString(), priority: BLOCK_PRIORITY.UPSTREAM_CTX, _order: 2 },
     { label: 'Execution Plan',     content: executionPlanCtx,                                          priority: BLOCK_PRIORITY.UPSTREAM_CTX + 1, _order: 3 },
+    { label: 'Module Scope',       content: moduleScopeCtx,                                            priority: BLOCK_PRIORITY.UPSTREAM_CTX + 2, _order: 3.5 },
     { label: 'Experience',          content: expCtx,                                                   priority: BLOCK_PRIORITY.EXPERIENCE, _order: 4 },
     { label: 'Complaints',          content: complaintBlock,                                           priority: BLOCK_PRIORITY.COMPLAINTS, _order: 5 },
     { label: 'Code Graph',          content: codeGraphCtx ? `\n\n${codeGraphCtx}` : '',                priority: BLOCK_PRIORITY.CODE_GRAPH, _order: 6 },
