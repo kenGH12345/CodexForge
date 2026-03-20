@@ -93,17 +93,27 @@ All inter-agent communication uses **file path references only** (never raw cont
 **Actor**: ArchitectAgent  
 **Input**: `output/requirement.md` (via FileRefBus)  
 **Action**:
-1. Orchestrator calls `FileRefBus.consume('architect')` �?gets `requirementMdPath`
-2. Call `ArchitectAgent.run(requirementMdPath)`
-3. Agent reads file, writes `output/architecture.md`
-4. **Human review hook**: emit `HOOK_EVENTS.HUMAN_REVIEW_REQUIRED` with architecture.md path
-5. Wait for human confirmation (Socratic question: "Does this architecture meet your expectations?")
-6. State machine transitions: `ANALYSE �?ARCHITECT`
-7. `FileRefBus.publish('architect', 'planner', architectureMdPath)`
+1. Orchestrator calls `FileRefBus.consume('architect')` → gets `requirementMdPath`
+2. **Module-Split Decision** (P2): Check if ANALYSE produced a `moduleMap` with ≥2 isolatable modules:
+   - **YES (Module-Split Mode)**: `runModuleAwareArchitect()` executes N focused LLM calls (one per module, serial):
+     - Each call designs ONLY one module's internal architecture
+     - Interface contracts from previously designed modules are injected into subsequent calls
+     - Topological sort ensures dependencies are designed before dependents
+     - Outputs are merged into a unified `architecture.md` with cross-module interface contracts
+   - **NO (Standard Mode)**: Single `ArchitectAgent.run(requirementMdPath)` call (existing behavior)
+3. Agent writes `output/architecture.md` (either merged or single-pass)
+4. **Parallel quality gates**: CoverageChecker + ArchitectureReviewAgent run in parallel
+5. **Human review hook**: emit `HOOK_EVENTS.HUMAN_REVIEW_REQUIRED` with architecture.md path
+6. Wait for human confirmation (Socratic question: "Does this architecture meet your expectations?")
+7. State machine transitions: `ANALYSE → ARCHITECT`
+8. `FileRefBus.publish('architect', 'planner', architectureMdPath)` — includes `moduleSplit` and `moduleCount` metadata
 
 **Output**: `output/architecture.md`  
+**Module-Split Metadata**: When module-split mode is used, `stageCtx.meta.moduleSplit` contains:
+- `moduleCount`, `successCount`, `failedCount`
+- `moduleOrder` (topological), `crossCuttingConcerns`
+- `totalElapsedMs`  
 **Hook**: `HOOK_EVENTS.HUMAN_REVIEW_REQUIRED` (blocks until confirmed)
-
 ---
 
 ### Step 3.5 �?PLAN

@@ -28,6 +28,7 @@ const {
   formatWebSearchBlock,
   securityCVEHelper,
 } = require('./orchestrator-stage-helpers');
+const { runModuleAwareArchitect } = require('./module-architect-runner');
 
 // Forward reference: _runAnalyst is needed for rollback. Lazy-loaded to avoid circular deps.
 let _runAnalyst = null;
@@ -115,7 +116,35 @@ async function _runArchitect() {
   const archExpContextWithComplaints = await buildArchitectContextBlock(this, techStackPrefix, upstreamCtxForArch);
   this.obs.recordExpUsage({ injected: (archExpContextWithComplaints._injectedExpIds || []).length });
 
-  const outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExpContextWithComplaints);
+  // ── P2-ModuleSplit: Attempt module-aware architecture design ───────────
+  // If ANALYSE produced a moduleMap with ≥2 isolatable modules, split the
+  // single ARCHITECT call into N focused calls (one per module, serial with
+  // interface contract propagation). Falls back to standard single-pass if
+  // the module map is absent or has too few modules.
+  let outputPath;
+  let _moduleSplitMeta = null;
+  try {
+    const requirementContent = fs.readFileSync(inputPath, 'utf-8');
+    const moduleSplitResult = await runModuleAwareArchitect(
+      this,
+      requirementContent,
+      typeof archExpContextWithComplaints === 'string' ? archExpContextWithComplaints : archExpContextWithComplaints.toString(),
+      { inputPath, outputPath: path.join(PATHS.OUTPUT_DIR, 'architecture.md') },
+    );
+    if (moduleSplitResult.used) {
+      outputPath = moduleSplitResult.outputPath;
+      _moduleSplitMeta = moduleSplitResult.meta;
+      console.log(`[Orchestrator] 🗺️  Module-split architecture completed: ${moduleSplitResult.moduleCount} module(s) designed.`);
+    }
+  } catch (msErr) {
+    console.warn(`[Orchestrator] ⚠️  Module-split architecture failed (non-fatal): ${msErr.message}. Falling back to standard single-pass.`);
+    _moduleSplitMeta = null;
+  }
+
+  // Standard single-pass fallback (or if module-split was not applicable)
+  if (!outputPath) {
+    outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExpContextWithComplaints);
+  }
 
   // ── Adapter Telemetry ─────────────────────────────────────────────────────
   if (this._adapterTelemetry && outputPath && fs.existsSync(outputPath)) {
@@ -390,13 +419,15 @@ async function _runArchitect() {
   }
 
   // ── Store ARCHITECT stage context ──────────────────────────────────────
-  const archOutputCtx = storeArchitectContext(this, outputPath, archReviewResult, coverageResult);
+  const archOutputCtx = storeArchitectContext(this, outputPath, archReviewResult, coverageResult, { moduleSplitMeta: _moduleSplitMeta });
 
   this.bus.publish(AgentRole.ARCHITECT, AgentRole.PLANNER, outputPath, {
     reviewRounds:   archReviewResult.rounds ?? 0,
     failedItems:    archReviewResult.failed ?? 0,
     riskNotes:      archReviewResult.riskNotes ?? [],
     contextSummary: archOutputCtx.summary,
+    moduleSplit:    !!_moduleSplitMeta,
+    moduleCount:    _moduleSplitMeta?.moduleCount ?? 0,
   });
 
   translateMdFile(outputPath, this._rawLlmCall).catch(() => {});

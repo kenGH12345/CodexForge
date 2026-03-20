@@ -157,13 +157,16 @@ function storeAnalyseContext(orch, outputPath, clarResult) {
  * @param {string} outputPath
  * @param {object} archReviewResult
  * @param {object} coverageResult
+ * @param {object} [opts]
+ * @param {object|null} [opts.moduleSplitMeta] - P2: metadata from module-split architecture design
  * @returns {{ summary: string, keyDecisions: string[] }}
  */
-function storeArchitectContext(orch, outputPath, archReviewResult, coverageResult) {
+function storeArchitectContext(orch, outputPath, archReviewResult, coverageResult, opts = {}) {
   if (!orch.stageCtx) throw new Error('[storeArchitectContext] orch.stageCtx is null – StageContextStore was not initialised.');
   const ctx = StageContextStore.extractFromFile(outputPath, WorkflowState.ARCHITECT);
 
   const correctionHistory = _extractCorrectionHistory(archReviewResult.history);
+  const moduleSplitMeta = opts.moduleSplitMeta || null;
 
   orch.stageCtx.set(WorkflowState.ARCHITECT, {
     summary:           ctx.summary,
@@ -175,10 +178,12 @@ function storeArchitectContext(orch, outputPath, archReviewResult, coverageResul
       reviewRounds: archReviewResult.rounds ?? 0,
       failedItems:  archReviewResult.failed ?? 0,
       coverageRate: coverageResult.coverageRate ?? null,
+      moduleSplit:  moduleSplitMeta,
     },
   });
   const corrMsg = correctionHistory.length > 0 ? `, ${correctionHistory.length} correction round(s)` : '';
-  console.log(`[Orchestrator] 🔗 ARCHITECT context stored: ${ctx.keyDecisions.length} key decision(s), ${archReviewResult.riskNotes?.length ?? 0} risk(s)${corrMsg}.`);
+  const msMsg = moduleSplitMeta ? `, module-split (${moduleSplitMeta.moduleCount} modules)` : '';
+  console.log(`[Orchestrator] 🔗 ARCHITECT context stored: ${ctx.keyDecisions.length} key decision(s), ${archReviewResult.riskNotes?.length ?? 0} risk(s)${corrMsg}${msMsg}.`);
   return ctx;
 }
 
