@@ -157,6 +157,24 @@ async function _runAnalyst(rawRequirement) {
     this.obs.recordClarificationQuality(clarResult.qualityMetrics, clarResult.rounds);
   }
 
+  // ── P0-1: Inject Code Graph seed information for Module Map generation ────
+  // Instead of letting the LLM guess module boundaries from scratch, we provide
+  // the real directory-level structure from the Code Graph. This gives the
+  // AnalystAgent concrete, grounded data to base its Functional Module Map on.
+  try {
+    if (this.codeGraph && typeof this.codeGraph.getModuleSummaryMarkdown === 'function') {
+      const moduleSeedInfo = this.codeGraph.getModuleSummaryMarkdown({ maxDirs: 15 });
+      if (moduleSeedInfo && moduleSeedInfo.length > 0) {
+        clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n${moduleSeedInfo}`;
+        console.log(`[Orchestrator] 🗺️  Code Graph seed info injected into AnalystAgent (${moduleSeedInfo.length} chars). Module Map will be grounded in real codebase structure.`);
+      } else {
+        console.log(`[Orchestrator] 🗺️  Code Graph has no module summary (new project or single-directory). Module Map will be generated from scratch.`);
+      }
+    }
+  } catch (seedErr) {
+    console.warn(`[Orchestrator] ⚠️  Code Graph seed injection failed (non-fatal): ${seedErr.message}`);
+  }
+
   const outputPath = await this.agents[AgentRole.ANALYST].run(null, clarResult.enrichedRequirement);
 
   // ── Store ANALYSE stage context for downstream stages ─────────────────────

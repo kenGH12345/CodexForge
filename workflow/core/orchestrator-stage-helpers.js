@@ -129,6 +129,52 @@ function storeAnalyseContext(orch, outputPath, clarResult) {
         })),
         crossCuttingConcerns: Array.isArray(mm.crossCuttingConcerns) ? mm.crossCuttingConcerns : [],
       };
+
+      // P1-D: Auto-calculate isolatable field based on dependency graph.
+      // A module is isolatable if:
+      //   1. It has zero in-map dependencies (leaf module), OR
+      //   2. All its in-map dependencies are themselves isolatable (transitive leaf)
+      // AND it has no circular dependencies with other modules.
+      // This replaces the unreliable LLM-annotated isolatable field.
+      const moduleIds = new Set(moduleMap.modules.map(m => m.id));
+      const depGraph = new Map(moduleMap.modules.map(m => [m.id, (m.dependencies || []).filter(d => moduleIds.has(d))]));
+
+      // Detect circular dependencies
+      const circularModules = new Set();
+      for (const [modId, deps] of depGraph) {
+        for (const dep of deps) {
+          const depDeps = depGraph.get(dep) || [];
+          if (depDeps.includes(modId)) {
+            circularModules.add(modId);
+            circularModules.add(dep);
+          }
+        }
+      }
+
+      // Compute isolatable: leaf modules first, then propagate
+      const isolatableSet = new Set();
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const mod of moduleMap.modules) {
+          if (isolatableSet.has(mod.id)) continue;
+          if (circularModules.has(mod.id)) continue;
+          const inMapDeps = depGraph.get(mod.id) || [];
+          if (inMapDeps.length === 0 || inMapDeps.every(d => isolatableSet.has(d))) {
+            isolatableSet.add(mod.id);
+            changed = true;
+          }
+        }
+      }
+
+      // Apply auto-calculated isolatable (overrides LLM annotation)
+      for (const mod of moduleMap.modules) {
+        const wasIsolatable = mod.isolatable;
+        mod.isolatable = isolatableSet.has(mod.id);
+        if (wasIsolatable !== mod.isolatable) {
+          console.log(`[Orchestrator] 🔄 Module "${mod.id}" isolatable: ${wasIsolatable} → ${mod.isolatable} (auto-calculated from dependency graph)`);
+        }
+      }
       console.log(`[Orchestrator] 🗺️  Module Map extracted: ${moduleMap.modules.length} module(s), ${moduleMap.crossCuttingConcerns.length} cross-cutting concern(s).`);
     }
   }

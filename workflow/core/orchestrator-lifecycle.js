@@ -308,6 +308,21 @@ module.exports = {
     // Persist the inter-agent communication log
     this.bus.saveLog();
 
+    // P0-B: Check FileRefBus contract violations and record them as risks.
+    // Previously, contract violations were detected and logged as warnings during
+    // publish(), but never checked at workflow finalization — they were silently
+    // ignored. Now we surface them as formal risks in the manifest so they're
+    // visible in the RISK SUMMARY and HTML report.
+    const contractViolations = this.bus.getContractViolations();
+    if (contractViolations.length > 0) {
+      console.warn(`[Orchestrator] ⚠️  ${contractViolations.length} FileRefBus contract violation(s) detected during this run:`);
+      for (const v of contractViolations) {
+        const desc = `[ContractViolation] ${v.from}→${v.to}: ${v.reason.slice(0, 200)}`;
+        console.warn(`  - ${desc}`);
+        this.stateMachine.recordRisk('medium', desc, false);
+      }
+    }
+
     // P1-C fix: flush ExperienceStore write queue before emitting WORKFLOW_COMPLETE.
     try {
       if (this.experienceStore && typeof this.experienceStore.flushDirty === 'function') {

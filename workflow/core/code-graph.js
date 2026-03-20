@@ -1587,6 +1587,112 @@ class CodeGraph {
   }
 
   /**
+   * Returns a compact module-level summary of the codebase as Markdown.
+   *
+   * P0-1: This is designed as "seed information" for the AnalystAgent's Module Map
+   * generation. Instead of letting the LLM guess module boundaries from scratch,
+   * this provides real directory-level structure data from the code graph:
+   *   - Directory paths (potential module boundaries)
+   *   - File counts, class counts, function counts per directory
+   *   - Inferred descriptions based on directory names and top symbol summaries
+   *   - Import relationships between directories (cross-module dependencies)
+   *
+   * The output is intentionally compact (target: <2000 chars) to fit within the
+   * analyst's context window without crowding out the user's actual requirement.
+   *
+   * @param {object} [opts]
+   * @param {number} [opts.maxDirs=15] - Maximum directories to include
+   * @returns {string} Markdown string, or empty string if code graph is not available
+   */
+  getModuleSummaryMarkdown({ maxDirs = 15 } = {}) {
+    if (this._symbols.size === 0) this._loadFromDisk();
+    if (this._symbols.size === 0) return '';
+
+    // ── Aggregate stats by directory ──────────────────────────────────────
+    const dirStats = new Map();  // dirPath → { files, classes, functions, methods, topSymbols }
+    const dirFiles = new Map();  // dirPath → Set<filePath>
+
+    for (const sym of this._symbols.values()) {
+      const dir = path.dirname(sym.file) || '.';
+      if (!dirStats.has(dir)) {
+        dirStats.set(dir, { files: 0, classes: 0, functions: 0, methods: 0, topSymbols: [] });
+        dirFiles.set(dir, new Set());
+      }
+      const ds = dirStats.get(dir);
+      const df = dirFiles.get(dir);
+      df.add(sym.file);
+      ds.files = df.size;
+      if (sym.kind === 'class' || sym.kind === 'interface') ds.classes++;
+      else if (sym.kind === 'function') ds.functions++;
+      else if (sym.kind === 'method') ds.methods++;
+      if (sym.summary && ds.topSymbols.length < 3 &&
+          !CodeGraph.isNoisyName(sym.name) && sym.name.length > 4 &&
+          (sym.kind === 'class' || sym.kind === 'function') &&
+          sym.summary.length > 10 && /^[A-Z]/.test(sym.summary) &&
+          !sym.summary.includes('`') && !sym.summary.includes('::')) {
+        ds.topSymbols.push(sym.summary.slice(0, 50));
+      }
+    }
+
+    if (dirStats.size <= 1) return '';
+
+    // ── Build cross-directory import edges ────────────────────────────────
+    const dirImports = new Map(); // dirA → Set<dirB> (dirA imports from dirB)
+    for (const [filePath, importedFiles] of this._importEdges.entries()) {
+      const srcDir = path.dirname(filePath) || '.';
+      for (const imp of importedFiles) {
+        const tgtDir = path.dirname(imp) || '.';
+        if (srcDir !== tgtDir && dirStats.has(srcDir) && dirStats.has(tgtDir)) {
+          if (!dirImports.has(srcDir)) dirImports.set(srcDir, new Set());
+          dirImports.get(srcDir).add(tgtDir);
+        }
+      }
+    }
+
+    // ── Sort by symbol count descending, cap at maxDirs ──────────────────
+    const sorted = [...dirStats.entries()]
+      .sort((a, b) => (b[1].classes + b[1].functions + b[1].methods) - (a[1].classes + a[1].functions + a[1].methods))
+      .slice(0, maxDirs);
+
+    const lines = [
+      `## 📦 Codebase Module Structure (from Code Graph)`,
+      `> This is the actual directory-level structure of the codebase. Use this as seed information when generating the Functional Module Map.`,
+      ``,
+      `| Directory | Files | Classes | Functions | Description |`,
+      `|-----------|-------|---------|-----------|-------------|`,
+    ];
+
+    for (const [dir, ds] of sorted) {
+      const inferred = _inferModuleDescription(dir);
+      const isGenericInferred = ['Root module', dir.split('/').pop()].some(g =>
+        inferred.toLowerCase() === g.toLowerCase());
+      const desc = (isGenericInferred && ds.topSymbols.length > 0)
+        ? ds.topSymbols[0].slice(0, 50)
+        : inferred;
+      lines.push(`| \`${dir}\` | ${ds.files} | ${ds.classes} | ${ds.functions + ds.methods} | ${desc} |`);
+    }
+
+    // ── Cross-directory dependencies ─────────────────────────────────────
+    const depLines = [];
+    const sortedDirs = new Set(sorted.map(([d]) => d));
+    for (const [srcDir, tgtDirs] of dirImports.entries()) {
+      if (!sortedDirs.has(srcDir)) continue;
+      const relevantTargets = [...tgtDirs].filter(d => sortedDirs.has(d));
+      if (relevantTargets.length > 0) {
+        depLines.push(`- \`${srcDir}\` → ${relevantTargets.map(d => `\`${d}\``).join(', ')}`);
+      }
+    }
+    if (depLines.length > 0) {
+      lines.push(``);
+      lines.push(`### Cross-Directory Dependencies`);
+      lines.push(...depLines.slice(0, 15));
+    }
+
+    lines.push(``);
+    return lines.join('\n');
+  }
+
+  /**
    * Format hotspot analysis results as Markdown (for /graph hotspot command).
    * @param {number} [topN=20]
    * @returns {string}

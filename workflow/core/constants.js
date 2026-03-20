@@ -64,6 +64,27 @@ const ARTIFACTS = {
 
 // ─── LLM / Token Thresholds ────────────────────────────────────────────────────
 
+/**
+ * P1-B: Dynamic token threshold.
+ * Reads from workflow.config.js `llm.hallucinationRiskThreshold` if available,
+ * otherwise falls back to the built-in default (16000).
+ *
+ * P1-C: Configurable experience store capacity.
+ * Reads from workflow.config.js `experienceStore.maxCapacity` if available,
+ * otherwise falls back to the built-in default (500).
+ *
+ * Note: These are computed lazily on first access via getters so that
+ * config-loader has time to initialise before these values are read.
+ */
+const _LLM_DEFAULTS = {
+  HALLUCINATION_RISK_THRESHOLD: 16000,
+  CHARS_PER_TOKEN: 4,
+};
+
+const _EXPERIENCE_DEFAULTS = {
+  MAX_CAPACITY: 500,
+};
+
 const LLM = {
   /**
    * Token count above which a hallucination-risk warning is emitted.
@@ -71,12 +92,40 @@ const LLM = {
    * Rationale (R1-1 audit): previously 8000, which was far too conservative for
    * modern 128K–200K context-window models. At 8K, the degradation logic in
    * prompt-builder.js frequently stripped valuable skill/ADR context, reducing
-   * output quality. 16K keeps a healthy safety margin while allowing the full
-   * 3-layer skill injection + ADR digest + code graph to fit without degradation.
+   * output quality. Default 16K keeps a healthy safety margin while allowing the
+   * full 3-layer skill injection + ADR digest + code graph to fit without degradation.
+   *
+   * P1-B: Now configurable via workflow.config.js → llm.hallucinationRiskThreshold
    */
-  HALLUCINATION_RISK_THRESHOLD: 16000,
+  get HALLUCINATION_RISK_THRESHOLD() {
+    try {
+      const { getConfig } = require('./config-loader');
+      const cfg = getConfig();
+      if (cfg && cfg.llm && typeof cfg.llm.hallucinationRiskThreshold === 'number') {
+        return cfg.llm.hallucinationRiskThreshold;
+      }
+    } catch (_) { /* config not loaded yet — use default */ }
+    return _LLM_DEFAULTS.HALLUCINATION_RISK_THRESHOLD;
+  },
   /** Approximate chars-per-token ratio used for quick estimation */
   CHARS_PER_TOKEN: 4,
+};
+
+/**
+ * P1-C: Experience Store configuration constants.
+ * Configurable via workflow.config.js → experienceStore.maxCapacity
+ */
+const EXPERIENCE = {
+  get MAX_CAPACITY() {
+    try {
+      const { getConfig } = require('./config-loader');
+      const cfg = getConfig();
+      if (cfg && cfg.experienceStore && typeof cfg.experienceStore.maxCapacity === 'number') {
+        return cfg.experienceStore.maxCapacity;
+      }
+    } catch (_) { /* config not loaded yet — use default */ }
+    return _EXPERIENCE_DEFAULTS.MAX_CAPACITY;
+  },
 };
 
 // ─── Project Scale Thresholds ─────────────────────────────────────────────────
@@ -144,6 +193,7 @@ module.exports = {
   PATHS,
   ARTIFACTS,
   LLM,
+  EXPERIENCE,
   PROJECT_SCALE,
   HOOK_EVENTS,
 };

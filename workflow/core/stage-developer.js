@@ -139,6 +139,61 @@ async function _runDeveloper() {
   codeSubtaskCoordinator.cacheSubtaskResult(WorkflowState.CODE, 'CodeGeneration', { outputPath });
   codeSubtaskCoordinator.cacheSubtaskResult(WorkflowState.CODE, 'CodeReview', reviewResult);
 
+  // ── P0-2: Module Boundary Violation Check ─────────────────────────────────
+  // After code generation, verify that the developer's file changes respect the
+  // module boundaries defined in the Module Map. This is "Trust but Verify":
+  // the developer was told to stay within boundaries, now we check compliance.
+  try {
+    const analyseCtx = this.stageCtx?.get(WorkflowState.ANALYSE);
+    const planCtx = this.stageCtx?.get(WorkflowState.PLAN);
+    const moduleMap = analyseCtx?.meta?.moduleMap;
+    const moduleGrouping = planCtx?.meta?.moduleGrouping;
+
+    if (moduleMap && Array.isArray(moduleMap.modules) && moduleMap.modules.length > 0 && outputPath && fs.existsSync(outputPath)) {
+      // Parse the developer's output to extract files mentioned/changed
+      const devOutput = fs.readFileSync(outputPath, 'utf-8');
+      // Extract file paths from common diff patterns: +++ b/path, --- a/path, or explicit file references
+      const filePatterns = [
+        /^[+]{3}\s+b\/(.+)$/gm,    // unified diff: +++ b/path
+        /^[-]{3}\s+a\/(.+)$/gm,    // unified diff: --- a/path
+        /^\+\+\+\s+(.+)$/gm,       // other diff formats
+      ];
+      const mentionedFiles = new Set();
+      for (const pattern of filePatterns) {
+        let m;
+        while ((m = pattern.exec(devOutput)) !== null) {
+          const filePath = m[1].trim().replace(/\\/g, '/');
+          if (filePath && filePath !== '/dev/null' && !filePath.startsWith('null')) {
+            mentionedFiles.add(filePath);
+          }
+        }
+      }
+
+      if (mentionedFiles.size > 0) {
+        // Determine which module(s) the current task belongs to
+        // Use all module boundaries combined for a comprehensive check
+        const allBoundaries = moduleMap.modules.flatMap(m => m.boundaries || []);
+        if (allBoundaries.length > 0) {
+          const boundaryCheck = QualityGate.checkModuleBoundaryViolation(
+            [...mentionedFiles],
+            { moduleId: 'all-modules', boundaries: allBoundaries }
+          );
+          if (!boundaryCheck.clean) {
+            console.warn(`[Orchestrator] ⚠️  ${boundaryCheck.summary}`);
+            this.stateMachine.recordRisk('low',
+              `[ModuleBoundary] ${boundaryCheck.violations.length} file(s) modified outside defined module boundaries: ${boundaryCheck.violations.slice(0, 3).join(', ')}`,
+              false
+            );
+          } else {
+            console.log(`[Orchestrator] ✅ Module boundary check passed: ${boundaryCheck.summary}`);
+          }
+        }
+      }
+    }
+  } catch (boundaryErr) {
+    console.warn(`[Orchestrator] ⚠️  Module boundary check failed (non-fatal): ${boundaryErr.message}`);
+  }
+
   for (const note of reviewResult.riskNotes) {
     const severity = note.includes('(high)') ? 'high' : 'medium';
     this.stateMachine.recordRisk(severity, note, false);

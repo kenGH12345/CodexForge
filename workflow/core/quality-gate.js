@@ -365,6 +365,52 @@ class QualityGate {
       }
     }
   }
+  /**
+   * P0-2: Checks whether files changed by a developer worker respect the
+   * module boundary constraints from the Module Map.
+   *
+   * This implements a "Trust but Verify" pattern: the developer is TOLD
+   * to stay within module boundaries (via Module Scope Guide), and this
+   * method VERIFIES compliance after the code is generated.
+   *
+   * @param {string[]} filesChanged - List of file paths modified by the developer
+   * @param {object} moduleScope - Module scope to check against
+   * @param {string} moduleScope.moduleId - The assigned module ID
+   * @param {string[]} moduleScope.boundaries - Glob patterns defining module boundaries (e.g. ["src/auth/*", "src/middleware/auth*"])
+   * @param {string[]} [moduleScope.crossCuttingConcerns] - Known cross-cutting files/patterns that are allowed to cross boundaries
+   * @returns {{ violations: string[], clean: boolean, summary: string }}
+   */
+  static checkModuleBoundaryViolation(filesChanged, moduleScope) {
+    if (!filesChanged || filesChanged.length === 0 || !moduleScope || !moduleScope.boundaries || moduleScope.boundaries.length === 0) {
+      return { violations: [], clean: true, summary: 'No boundary check applicable (missing data).' };
+    }
+
+    const violations = [];
+    const boundaries = moduleScope.boundaries;
+
+    for (const file of filesChanged) {
+      // Normalise path separators
+      const normalised = file.replace(/\\/g, '/');
+      const matched = boundaries.some(pattern => _matchGlobSimple(normalised, pattern));
+      if (!matched) {
+        violations.push(file);
+      }
+    }
+
+    if (violations.length === 0) {
+      return {
+        violations: [],
+        clean: true,
+        summary: `All ${filesChanged.length} file(s) are within module "${moduleScope.moduleId}" boundaries.`,
+      };
+    }
+
+    return {
+      violations,
+      clean: false,
+      summary: `⚠️ Module boundary violation: ${violations.length}/${filesChanged.length} file(s) are outside module "${moduleScope.moduleId}" boundaries [${boundaries.join(', ')}]. Violating files: ${violations.slice(0, 5).join(', ')}${violations.length > 5 ? ` (+${violations.length - 5} more)` : ''}`,
+    };
+  }
 }
 
 module.exports = { QualityGate };
@@ -448,6 +494,99 @@ function _extractFixedIssues(history) {
         const desc = s.label ? `${sev}${s.label.slice(0, 130)}` : 'signal resolved';
         result.push({ round, description: desc });
       }
+    }
+  }
+  return result;
+}
+
+/**
+ * P1-A: Robust glob matching for module boundary checks.
+ *
+ * Replaces the earlier _matchGlobSimple() with a more complete implementation
+ * inspired by picomatch/micromatch, but without external dependencies.
+ *
+ * Supported patterns:
+ *   - `*`   — matches any characters within a single path segment (no /)
+ *   - `**`  — matches zero or more path segments (including nested dirs)
+ *   - `?`   — matches exactly one non-separator character
+ *   - `{a,b}` — matches any of the comma-separated alternatives (one level, no nesting)
+ *   - Exact string matching (no wildcards)
+ *   - Directory prefix matching (pattern without wildcards matches as dir prefix)
+ *
+ * Path normalisation:
+ *   Both filePath and pattern are normalised to forward slashes before matching.
+ *
+ * @param {string} filePath - File path to test (will be normalised)
+ * @param {string} pattern  - Glob pattern from module boundaries
+ * @returns {boolean}
+ */
+function _matchGlobSimple(filePath, pattern) {
+  // Normalise separators
+  const normPath    = filePath.replace(/\\/g, '/');
+  const normPattern = pattern.replace(/\\/g, '/');
+
+  // Expand brace groups {a,b,c} into alternatives and test each
+  const braceMatch = normPattern.match(/^([^{]*)\{([^}]+)\}(.*)$/);
+  if (braceMatch) {
+    const [, prefix, alternatives, suffix] = braceMatch;
+    return alternatives.split(',').some(alt =>
+      _matchGlobSimple(normPath, prefix + alt.trim() + suffix)
+    );
+  }
+
+  // Convert glob pattern to regex
+  const regexStr = _globToRegex(normPattern);
+  const regex = new RegExp('^' + regexStr + '$');
+
+  if (regex.test(normPath)) return true;
+
+  // Fallback: if pattern has no wildcards, treat as directory prefix
+  if (!normPattern.includes('*') && !normPattern.includes('?') && !normPattern.includes('{')) {
+    return normPath.startsWith(normPattern + '/') || normPath === normPattern;
+  }
+
+  return false;
+}
+
+/**
+ * Converts a glob pattern string into a regex source string.
+ * Handles **, *, and ? metacharacters.
+ *
+ * @param {string} glob - Normalised glob pattern (forward slashes)
+ * @returns {string} Regex source (without anchors)
+ * @private
+ */
+function _globToRegex(glob) {
+  let result = '';
+  let i = 0;
+  while (i < glob.length) {
+    const ch = glob[i];
+
+    if (ch === '*') {
+      if (glob[i + 1] === '*') {
+        // ** — match zero or more path segments (including files within)
+        i += 2;
+        if (glob[i] === '/') i++;
+        if (i >= glob.length) {
+          // ** at end of pattern: match everything remaining
+          result += '.*';
+        } else {
+          // ** in middle: match zero or more directory segments
+          result += '(?:.*/)?';
+        }
+      } else {
+        // * — match anything within a single segment (no /)
+        i++;
+        result += '[^/]*';
+      }
+    }    else if (ch === '?') {
+      // ? — match exactly one non-separator character
+      i++;
+      result += '[^/]';
+    } else {
+      // Escape regex special characters
+      result += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+      i++;
     }
   }
   return result;

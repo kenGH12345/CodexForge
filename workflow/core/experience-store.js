@@ -15,7 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('./constants');
+const { PATHS, EXPERIENCE } = require('./constants');
 const { ExperienceType, ExperienceCategory, UNIVERSAL_CATEGORIES } = require('./experience-types');
 const { extractKeywords, ExperienceQueryMixin, STOPWORDS, SHORT_WORD_WHITELIST } = require('./experience-query');
 const { ExperienceEvolutionMixin } = require('./experience-evolution');
@@ -264,7 +264,8 @@ class ExperienceStore {
         }
 
         // P2-1 fix: enforce capacity cap
-        const MAX_CAPACITY = 500;
+        // P1-C: MAX_CAPACITY is now configurable via workflow.config.js → experienceStore.maxCapacity
+        const MAX_CAPACITY = EXPERIENCE.MAX_CAPACITY;
         if (this.experiences.length > MAX_CAPACITY) {
           this.experiences.sort((a, b) => {
             if (a.hitCount !== b.hitCount) return a.hitCount - b.hitCount;

@@ -46,6 +46,40 @@ module.exports = {
     scopeDirs: [],             // Large monorepo only: ['packages/core', 'lua']. Empty = full scan
   },
 
+  // ─── LLM Tuning ──────────────────────────────────────────────────────────────
+  //
+  // Fine-tune LLM prompt behaviour for your specific model and context window.
+  //
+  // hallucinationRiskThreshold (tokens):
+  //   When a prompt exceeds this token count, the PromptBuilder enters "degradation
+  //   mode" — it progressively drops low-priority context sections (auto-injected
+  //   skills, ADR digest) to stay under budget. This prevents sending oversized
+  //   prompts that cause hallucination or quality degradation.
+  //
+  //   Default: 16000 — suitable for 128K-200K context window models.
+  //   For smaller models (8K-32K windows), lower this to 6000-10000.
+  //   For large-context models (1M+ windows like Gemini), raise to 50000+.
+  //
+  llm: {
+    hallucinationRiskThreshold: 16000,   // Token count that triggers prompt degradation
+  },
+
+  // ─── Experience Store ─────────────────────────────────────────────────────────
+  //
+  // Configures the persistent experience accumulation system.
+  //
+  // maxCapacity:
+  //   Maximum number of experience records to keep. When exceeded on load,
+  //   the store evicts the lowest-value entries (sorted by hitCount ascending,
+  //   then by createdAt ascending — least-used and oldest first).
+  //
+  //   Default: 500. Increase for long-running projects with many modules.
+  //   Decrease for lightweight projects to save disk and speed up search.
+  //
+  experienceStore: {
+    maxCapacity: 500,                    // Max experience records before eviction
+  },
+
   // ─── Automated Verification Loop ─────────────────────────────────────────────
   //
   // testCommand: Shell command to run the project's real test suite.

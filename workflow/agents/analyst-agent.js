@@ -172,6 +172,7 @@ Produce a Markdown document with the following sections:
    - Also identify cross-cutting concerns that span multiple modules (e.g. logging, error-handling, config).
    - This module map is used by downstream ARCHITECT stage to enable parallel architecture design.
    - If the requirement is small and touches only 1 module, still produce the map with that single module.
+   - **If a "Codebase Module Structure (from Code Graph)" section is provided below, use it as seed information** to align your module boundaries with the actual directory structure. Your module boundaries (glob patterns) should correspond to real directories listed in the Code Graph summary.
    - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
    - Output format example:
      \`\`\`

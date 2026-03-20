@@ -237,7 +237,7 @@ These principles apply to all code produced by the DeveloperAgent and any human 
 
 2. **FileRefBus is the only inter-agent communication channel** �?Agents must NEVER pass raw content directly. All communication goes through file path references published to the bus. This ensures traceability and enables replay/debugging.
 
-3. **State machine transitions are irreversible within a run** �?Once the workflow advances from PLAN to CODE, you cannot go back to PLAN. If a fundamental flaw is discovered, the workflow must complete (or be aborted) and restarted.
+3. **State machine transitions are forward-only by default, with controlled rollback for quality recovery** → The normal flow advances strictly forward (INIT→ANALYSE→…→FINISHED). However, when a QualityGate detects high-severity issues (e.g. ArchitectureReview failures), the orchestrator can trigger a **controlled rollback**: the state machine rolls back to the previous stage, stale downstream FileRefBus messages are invalidated, and the stage re-runs with correction context injected. This rollback is bounded by a per-stage budget (maxRollbacks, default 1) to prevent infinite loops. If the rollback budget is exhausted and issues persist, the gate escalates to human review. Arbitrary backward jumps (e.g. skipping from TEST back to ANALYSE) are NOT supported — rollback is always to the immediately preceding stage.
 
 4. **Human review checkpoints are blocking** �?The orchestrator must WAIT for human approval at ARCHITECT and PLAN stages. Never auto-approve on timeout. The human review exists to catch architectural mistakes that are expensive to fix later.
 
@@ -319,3 +319,4 @@ These principles apply to all code produced by the DeveloperAgent and any human 
 |---------|------|--------|
 | v1.0.0 | 2026-03-17 | Initial creation with 7-stage pipeline, Steps SOP, Coding Principles, Error Handling, Artifacts |
 | v2.0.0 | 2026-03-19 | Skill-enrich-all: added 7 standard sections (Rules, Checklist, Best Practices, Anti-Patterns, Gotchas, Context Hints) |
+| v2.1.0 | 2026-03-21 | Deep Review P0: Rule 3 rewritten to document controlled rollback mechanism (was incorrectly stated as irreversible). Aligns docs with actual code behavior (QualityGate rollback + FileRefBus.clearDownstream). |
