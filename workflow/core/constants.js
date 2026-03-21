@@ -186,6 +186,9 @@ const HOOK_EVENTS = {
   // Agent Negotiation Protocol events (P1-2, ADR-40)
   NEGOTIATE_REQUEST:        'negotiate_request',         // Downstream agent raises a concern about upstream artifact
   NEGOTIATE_RESPONSE:       'negotiate_response',        // Orchestrator responds with a resolution
+  // P0-2/P0-3: Stage execution lifecycle events (Temporal heartbeat inspired)
+  STAGE_HEARTBEAT:          'stage_heartbeat',           // Periodic progress heartbeat during long-running stage execution
+  STAGE_TIMEOUT:            'stage_timeout',             // Stage exceeded MAX_STAGE_DURATION_MS budget ceiling
 };
 
 module.exports = {

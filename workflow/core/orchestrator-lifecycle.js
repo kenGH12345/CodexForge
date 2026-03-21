@@ -101,105 +101,143 @@ module.exports = {
    * Initialises StateMachine, builds memory context, loads AGENTS.md, and
    * prints any open complaints so agents are aware before execution begins.
    *
+   * P1-4: Side Effect Isolation — each setup step is:
+   *   1. Wrapped in an idempotent guard (safe to call multiple times)
+   *   2. Isolated in its own try/catch (one failure doesn't block others)
+   *   3. Labelled for structured logging and debugging
+   *
+   * Reference: Temporal — "Workflow code must be deterministic; side effects
+   * belong in Activities." We isolate each side effect so re-entry after crash
+   * doesn't re-execute already-completed setup steps.
+   *
    * @returns {string} resumeState – the state to resume from (from StateMachine)
    */
   async _initWorkflow() {
-    // 1. Initialise state machine (handles checkpoint resume)
+    // P1-4: Track which init steps have completed (idempotent re-entry guard)
+    if (!this._initCompleted) this._initCompleted = new Set();
+
+    // ── Step 1: StateMachine init (MUST run first, not idempotent-guarded) ──
     const resumeState = await this.stateMachine.init();
     console.log(`[Orchestrator] StateMachine initialised. Resume state: ${resumeState}`);
 
-    // 2. Build global memory context and cache content for Agent injection
-    await this.memory.buildGlobalContext().catch(err =>
-      console.warn(`[Orchestrator] Memory build warning: ${err.message}`)
-    );
-    // Start file watcher so AGENTS.md auto-syncs when project files change during the run.
-    this.memory.startWatching();
-    // Read AGENTS.md content once and cache it for all Agent stages
-    this._agentsMdContent = fs.existsSync(PATHS.AGENTS_MD)
-      ? fs.readFileSync(PATHS.AGENTS_MD, 'utf-8')
-      : '';
-    if (this._agentsMdContent) {
-      console.log(`[Orchestrator] 📋 AGENTS.md loaded (${this._agentsMdContent.length} chars) – will be injected into all Agent prompts.`);
-    }
-
-    // 3. Print open complaints before starting (awareness check)
-    const openComplaints = this.complaintWall.getOpenComplaints();
-    if (openComplaints.length > 0) {
-      console.warn(`[Orchestrator] ⚠️  ${openComplaints.length} open complaint(s) need attention:`);
-      for (const c of openComplaints.slice(0, 3)) {
-        console.warn(`  [${c.severity}] ${c.description}`);
+    // ── Step 2: Memory context + AGENTS.md (idempotent: re-reading is safe) ──
+    if (!this._initCompleted.has('memory')) {
+      try {
+        await this.memory.buildGlobalContext().catch(err =>
+          console.warn(`[Orchestrator] Memory build warning: ${err.message}`)
+        );
+        this.memory.startWatching();
+        this._agentsMdContent = fs.existsSync(PATHS.AGENTS_MD)
+          ? fs.readFileSync(PATHS.AGENTS_MD, 'utf-8')
+          : '';
+        if (this._agentsMdContent) {
+          console.log(`[Orchestrator] 📋 AGENTS.md loaded (${this._agentsMdContent.length} chars) – will be injected into all Agent prompts.`);
+        }
+        this._initCompleted.add('memory');
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  [P1-4] Step 2 (Memory/AGENTS.md) failed (non-fatal): ${err.message}`);
       }
     }
 
-    // 4. Start SkillWatcher for hot-reload of skill files
-    // Fix: ContextLoader is a module-level cached singleton inside prompt-builder.js,
-    // not an Orchestrator property. Use getCachedLoader() to retrieve it.
-    const cachedLoader = getCachedLoader();
-    if (cachedLoader && this.skillEvolution) {
-      this._skillWatcher = new SkillWatcher(cachedLoader, PATHS.SKILLS_DIR, {
-        skillEvolution: this.skillEvolution,
-      });
-      this._skillWatcher.on('skill:changed', ({ filename, eventType }) => {
-        console.log(`[Orchestrator] 🔄 Skill hot-reload: ${filename} (${eventType})`);
-      });
-      this._skillWatcher.start();
-    } else if (!cachedLoader) {
-      // SkillWatcher deferred: ContextLoader hasn't been created yet (lazy init
-      // in prompt-builder.js). Register a one-shot callback so the watcher starts
-      // automatically on the first buildAgentPrompt() call.
-      this._skillWatcherDeferred = true;
-      onLoaderReady((loader) => {
-        if (this._skillWatcher || !this.skillEvolution) return; // already started or shutdown
-        this._skillWatcher = new SkillWatcher(loader, PATHS.SKILLS_DIR, {
-          skillEvolution: this.skillEvolution,
-        });
-        this._skillWatcher.on('skill:changed', ({ filename, eventType }) => {
-          console.log(`[Orchestrator] 🔄 Skill hot-reload: ${filename} (${eventType})`);
-        });
-        this._skillWatcher.start();
-        this._skillWatcherDeferred = false;
-        console.log(`[Orchestrator] 🔄 SkillWatcher started (deferred → ContextLoader now available).`);
-      });
-      console.log(`[Orchestrator] ℹ️  SkillWatcher deferred: ContextLoader not yet initialised (will activate on first LLM call).`);
+    // ── Step 3: Complaint awareness check (idempotent: read-only) ──
+    if (!this._initCompleted.has('complaints')) {
+      try {
+        const openComplaints = this.complaintWall.getOpenComplaints();
+        if (openComplaints.length > 0) {
+          console.warn(`[Orchestrator] ⚠️  ${openComplaints.length} open complaint(s) need attention:`);
+          for (const c of openComplaints.slice(0, 3)) {
+            console.warn(`  [${c.severity}] ${c.description}`);
+          }
+        }
+        this._initCompleted.add('complaints');
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  [P1-4] Step 3 (Complaints) failed (non-fatal): ${err.message}`);
+      }
     }
 
-    // 5. Connect MCP adapters (fire-and-forget, non-blocking)
-    // Uses ServiceContainer.resolve() to access the MCPRegistry instance –
-    // this is the first real consumption of the DI container, activating the
-    // ServiceContainer that was previously registered-but-never-consumed.
-    if (this.services.has('mcpRegistry')) {
-      const registry = this.services.resolve('mcpRegistry');
-      registry.connectAll().catch(err =>
-        console.warn(`[Orchestrator] ⚠️  MCP connectAll failed (non-fatal): ${err.message}`)
-      );
-    }
-
-    // 6. ADR-30 P1: Experience Store cold-start preheating
-    // When the experience store is empty (new project), search external knowledge
-    // sources for common experiences and inject them as seed entries. This solves
-    // the cold-start problem where getContextBlock() returns nothing until the
-    // first few workflow runs accumulate real experiences.
-    // Fire-and-forget: must not block workflow startup.
-    if (this.experienceStore) {
-      const stats = this.experienceStore.getStats();
-      if (stats.total < 3) {
-        const { preheatExperienceStore } = require('./context-budget-manager');
-        // Detect tech stack from AGENTS.md / skill files for targeted preheating
-        const techStack = this._detectTechStackForPreheat();
-        preheatExperienceStore(this, { techStack, projectType: this._detectProjectType() })
-          .then(r => {
-            if (r.success && r.seeded > 0) {
-              console.log(`[Orchestrator] 🌱 Experience cold-start preheated: ${r.seeded} seed experiences injected.`);
-            }
-          })
-          .catch(err => {
-            console.warn(`[Orchestrator] ⚠️  Experience preheat failed (non-fatal): ${err.message}`);
+    // ── Step 4: SkillWatcher (idempotent: guarded by this._skillWatcher check) ──
+    if (!this._initCompleted.has('skillWatcher')) {
+      try {
+        const cachedLoader = getCachedLoader();
+        if (cachedLoader && this.skillEvolution) {
+          this._skillWatcher = new SkillWatcher(cachedLoader, PATHS.SKILLS_DIR, {
+            skillEvolution: this.skillEvolution,
           });
+          this._skillWatcher.on('skill:changed', ({ filename, eventType }) => {
+            console.log(`[Orchestrator] 🔄 Skill hot-reload: ${filename} (${eventType})`);
+          });
+          this._skillWatcher.start();
+        } else if (!cachedLoader) {
+          this._skillWatcherDeferred = true;
+          onLoaderReady((loader) => {
+            if (this._skillWatcher || !this.skillEvolution) return;
+            this._skillWatcher = new SkillWatcher(loader, PATHS.SKILLS_DIR, {
+              skillEvolution: this.skillEvolution,
+            });
+            this._skillWatcher.on('skill:changed', ({ filename, eventType }) => {
+              console.log(`[Orchestrator] 🔄 Skill hot-reload: ${filename} (${eventType})`);
+            });
+            this._skillWatcher.start();
+            this._skillWatcherDeferred = false;
+            console.log(`[Orchestrator] 🔄 SkillWatcher started (deferred → ContextLoader now available).`);
+          });
+          console.log(`[Orchestrator] ℹ️  SkillWatcher deferred: ContextLoader not yet initialised (will activate on first LLM call).`);
+        }
+        this._initCompleted.add('skillWatcher');
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  [P1-4] Step 4 (SkillWatcher) failed (non-fatal): ${err.message}`);
       }
     }
 
-    // 7-9. Initialise island modules (Logger, NegotiationEngine, ExperienceRouter)
-    await this._initIslandModules(resumeState);
+    // ── Step 5: MCP adapters (idempotent: connectAll is safe to re-call) ──
+    if (!this._initCompleted.has('mcpAdapters')) {
+      try {
+        if (this.services.has('mcpRegistry')) {
+          const registry = this.services.resolve('mcpRegistry');
+          registry.connectAll().catch(err =>
+            console.warn(`[Orchestrator] ⚠️  MCP connectAll failed (non-fatal): ${err.message}`)
+          );
+        }
+        this._initCompleted.add('mcpAdapters');
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  [P1-4] Step 5 (MCP Adapters) failed (non-fatal): ${err.message}`);
+      }
+    }
+
+    // ── Step 6: Experience preheat (idempotent: only fires when total < 3) ──
+    if (!this._initCompleted.has('experiencePreheat')) {
+      try {
+        if (this.experienceStore) {
+          const stats = this.experienceStore.getStats();
+          if (stats.total < 3) {
+            const { preheatExperienceStore } = require('./context-budget-manager');
+            const techStack = this._detectTechStackForPreheat();
+            preheatExperienceStore(this, { techStack, projectType: this._detectProjectType() })
+              .then(r => {
+                if (r.success && r.seeded > 0) {
+                  console.log(`[Orchestrator] 🌱 Experience cold-start preheated: ${r.seeded} seed experiences injected.`);
+                }
+              })
+              .catch(err => {
+                console.warn(`[Orchestrator] ⚠️  Experience preheat failed (non-fatal): ${err.message}`);
+              });
+          }
+        }
+        this._initCompleted.add('experiencePreheat');
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  [P1-4] Step 6 (Experience Preheat) failed (non-fatal): ${err.message}`);
+      }
+    }
+
+    // ── Steps 7-9: Island modules (Logger, Negotiation, ExperienceRouter) ──
+    if (!this._initCompleted.has('islandModules')) {
+      try {
+        await this._initIslandModules(resumeState);
+        this._initCompleted.add('islandModules');
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  [P1-4] Steps 7-9 (Island Modules) failed (non-fatal): ${err.message}`);
+      }
+    }
 
     return resumeState;
   },
@@ -912,6 +950,15 @@ const resolvedComplaints = this.complaintWall.complaints.filter(c => c.status ==
     const MAX_STAGE_RETRIES = (this._adaptiveStrategy && this._adaptiveStrategy.maxStageRetries) || 2;
     const BASE_BACKOFF_MS = 2000; // 2 seconds base
 
+    // P0-2: Stage budget ceiling — maximum allowed execution time per stage attempt.
+    // Reference: Temporal Activity heartbeat timeout — if no progress after N seconds, abort.
+    // Default: 10 minutes. Configurable via workflow.config.js adaptiveStrategy.maxStageDurationMs.
+    const MAX_STAGE_DURATION_MS = (this._adaptiveStrategy && this._adaptiveStrategy.maxStageDurationMs) || 10 * 60 * 1000;
+
+    // P0-3: Heartbeat interval — emit STAGE_HEARTBEAT every N ms during execution.
+    // Reference: Temporal Activity heartbeat — periodic liveness signal.
+    const HEARTBEAT_INTERVAL_MS = (this._adaptiveStrategy && this._adaptiveStrategy.heartbeatIntervalMs) || 30 * 1000;
+
     // Observability: track stage timing
     const stageLabel = `${fromState}→${toState}`;
     this.obs.stageStart(stageLabel);
@@ -937,9 +984,62 @@ const resolvedComplaints = this.complaintWall.complaints.filter(c => c.status ==
           }
         }
 
-        const stageResult = await stageRunner();
-        const alreadyTransitioned = stageResult && stageResult.__alreadyTransitioned === true;
-        const artifactPath = alreadyTransitioned ? stageResult.artifactPath : stageResult;
+        // P0-2 + P0-3: Wrap stageRunner() with budget ceiling timeout and heartbeat.
+        // - Budget Ceiling: if the stage doesn't complete within MAX_STAGE_DURATION_MS, abort.
+        // - Heartbeat: emit STAGE_HEARTBEAT every HEARTBEAT_INTERVAL_MS during execution.
+        const stageStartMs = Date.now();
+        let heartbeatTimer = null;
+
+        // P0-3: Start heartbeat interval
+        if (this.hooks) {
+          heartbeatTimer = setInterval(() => {
+            const elapsedMs = Date.now() - stageStartMs;
+            this.hooks.emit(HOOK_EVENTS.STAGE_HEARTBEAT, {
+              stage: stageLabel,
+              elapsedMs,
+              attempt,
+              maxDurationMs: MAX_STAGE_DURATION_MS,
+            }).catch(() => {}); // fire-and-forget
+          }, HEARTBEAT_INTERVAL_MS);
+        }
+
+        let stageResult;
+        try {
+          // P0-2: Race stageRunner against timeout
+          stageResult = await Promise.race([
+            stageRunner(),
+            new Promise((_, reject) => {
+              setTimeout(() => {
+                const elapsedMs = Date.now() - stageStartMs;
+                // Emit timeout event before rejecting
+                if (this.hooks) {
+                  this.hooks.emit(HOOK_EVENTS.STAGE_TIMEOUT, {
+                    stage: stageLabel,
+                    timeoutMs: MAX_STAGE_DURATION_MS,
+                    elapsedMs,
+                    attempt,
+                  }).catch(() => {});
+                }
+                reject(new Error(
+                  `[StageBudgetCeiling] Stage ${stageLabel} exceeded ${(MAX_STAGE_DURATION_MS / 1000 / 60).toFixed(1)}min budget ceiling (elapsed: ${(elapsedMs / 1000).toFixed(0)}s). ` +
+                  `Aborting to prevent runaway execution. Configure via adaptiveStrategy.maxStageDurationMs.`
+                ));
+              }, MAX_STAGE_DURATION_MS);
+            }),
+          ]);
+        } finally {
+          // Always clean up heartbeat timer
+          if (heartbeatTimer) clearInterval(heartbeatTimer);
+        }
+
+        // P1-3: Unified StageResult type handling
+        // Supports both new StageResult.rolledBack() and legacy { __alreadyTransitioned } pattern
+        const { StageResult } = require('./types');
+        const alreadyTransitioned = StageResult.isRolledBack(stageResult) ||
+          (stageResult && stageResult.__alreadyTransitioned === true);
+        const artifactPath = StageResult.isStageResult(stageResult)
+          ? StageResult.getArtifactPath(stageResult)
+          : (alreadyTransitioned ? stageResult.artifactPath : stageResult);
         if (!alreadyTransitioned) {
           await this.stateMachine.transition(artifactPath, `Stage ${fromState} → ${toState} completed`);
         } else {

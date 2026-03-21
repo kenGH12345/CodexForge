@@ -145,10 +145,22 @@ class HookSystem {
       console.warn(`[Hook] 🗣️  Complaint filed: ${complaintId}`);
     });
 
-    this.on(HOOK_EVENTS.COMPLAINT_RESOLVED, async ({ complaintId }) => {
+    this.on(HOOK_EVENTS.NEGOTIATE_RESPONSE, async ({ complaintId }) => {
       console.log(`[Hook] 🔧 Complaint resolved: ${complaintId}`);
     });
 
+    // P0-3: Heartbeat / progress reporting during long-running stage execution
+    // Reference: Temporal Activity heartbeat — periodic liveness signal during execution.
+    this.on(HOOK_EVENTS.STAGE_HEARTBEAT, async ({ stage, elapsedMs, attempt }) => {
+      const elapsed = (elapsedMs / 1000).toFixed(0);
+      console.log(`[Hook] 💓 Stage heartbeat: ${stage} running for ${elapsed}s (attempt ${attempt + 1})`);
+    });
+
+    // P0-2: Stage timeout notification — stage exceeded budget ceiling
+    this.on(HOOK_EVENTS.STAGE_TIMEOUT, async ({ stage, timeoutMs, elapsedMs }) => {
+      const limit = (timeoutMs / 1000 / 60).toFixed(1);
+      console.warn(`[Hook] ⏰ STAGE TIMEOUT: ${stage} exceeded ${limit}min budget ceiling. Aborting.`);
+    });
     // CI pipeline events
     this.on(HOOK_EVENTS.CI_PIPELINE_STARTED, async ({ command }) => {
       console.log(`[Hook] 🚀 CI pipeline started${command ? `: ${command}` : ''}`);

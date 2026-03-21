@@ -392,7 +392,9 @@ async function _runArchitect() {
           meta: { ...(existingArch.meta || {}), _archRollbackCount: rollbackCount + 1, rollbackTriggered: true },
         });
       }
-      return { __alreadyTransitioned: true, artifactPath: reanalysedPath };
+      // P1-3: Use unified StageResult type instead of ad-hoc { __alreadyTransitioned }
+      const { StageResult } = require('./types');
+      return StageResult.rolledBack(reanalysedPath);
     } catch (rollbackErr) {
       console.warn(`[Orchestrator] Rollback failed (non-fatal): ${rollbackErr.message}. Proceeding with risks recorded.`);
     }
