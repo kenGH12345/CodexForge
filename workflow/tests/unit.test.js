@@ -1820,6 +1820,276 @@ async function runEnrichmentCacheTests() {
   });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Direction 4: DecisionTrail Tests (Structured Decision Audit Log)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function runDecisionTrailTests() {
+  console.log('\n📌 DecisionTrail Tests');
+
+  const { DecisionTrail, DecisionCategory } = require('../core/decision-trail');
+
+  await test('DecisionTrail: record returns incrementing seq numbers', async () => {
+    const trail = new DecisionTrail();
+    const seq1 = trail.record({ category: 'stage', stage: 'ANALYSE', action: 'enter_stage', reason: 'starting' });
+    const seq2 = trail.record({ category: 'stage', stage: 'ARCHITECT', action: 'enter_stage', reason: 'starting' });
+    assertEqual(seq1, 0);
+    assertEqual(seq2, 1);
+    assertEqual(trail.length, 2);
+  });
+
+  await test('DecisionTrail: disabled trail returns -1 and records nothing', async () => {
+    const trail = new DecisionTrail({ enabled: false });
+    const seq = trail.record({ category: 'stage', stage: 'CODE', action: 'enter', reason: 'test' });
+    assertEqual(seq, -1);
+    assertEqual(trail.length, 0);
+  });
+
+  await test('DecisionTrail: setOutcome updates an existing entry', async () => {
+    const trail = new DecisionTrail();
+    const seq = trail.record({ category: 'stage', stage: 'CODE', action: 'enter_stage', reason: 'test' });
+    trail.setOutcome(seq, 'success');
+    const entries = trail.query();
+    assertEqual(entries[0].outcome, 'success');
+  });
+
+  await test('DecisionTrail: query filters by category', async () => {
+    const trail = new DecisionTrail();
+    trail.record({ category: 'stage', stage: 'ANALYSE', action: 'enter', reason: 'a' });
+    trail.record({ category: 'routing', stage: 'ANALYSE', action: 'tier_change', reason: 'b' });
+    trail.record({ category: 'stage', stage: 'CODE', action: 'enter', reason: 'c' });
+    const routing = trail.query({ category: 'routing' });
+    assertEqual(routing.length, 1);
+    assertEqual(routing[0].action, 'tier_change');
+  });
+
+  await test('DecisionTrail: query filters by stage', async () => {
+    const trail = new DecisionTrail();
+    trail.record({ category: 'stage', stage: 'ANALYSE', action: 'enter', reason: 'a' });
+    trail.record({ category: 'stage', stage: 'CODE', action: 'enter', reason: 'b' });
+    trail.record({ category: 'recovery', stage: 'CODE', action: 'retry', reason: 'c' });
+    const codeEntries = trail.query({ stage: 'CODE' });
+    assertEqual(codeEntries.length, 2);
+  });
+
+  await test('DecisionTrail: query filters by action', async () => {
+    const trail = new DecisionTrail();
+    trail.record({ category: 'skip', stage: 'PLAN', action: 'skip_stage', reason: 'simple task' });
+    trail.record({ category: 'stage', stage: 'CODE', action: 'enter_stage', reason: 'running' });
+    const skips = trail.query({ action: 'skip_stage' });
+    assertEqual(skips.length, 1);
+    assertEqual(skips[0].stage, 'PLAN');
+  });
+
+  await test('DecisionTrail: evidence is recorded correctly', async () => {
+    const trail = new DecisionTrail();
+    trail.record({
+      category: 'resource',
+      stage: 'DEVELOPER',
+      action: 'budget_warning',
+      reason: 'Budget at 35%',
+      evidence: { budgetPct: 35, tierMode: 'downgraded' },
+    });
+    const entries = trail.query();
+    assertEqual(entries[0].evidence.budgetPct, 35);
+    assertEqual(entries[0].evidence.tierMode, 'downgraded');
+  });
+
+  await test('DecisionTrail: getSummary returns structured breakdown', async () => {
+    const trail = new DecisionTrail();
+    trail.record({ category: 'stage', stage: 'ANALYSE', action: 'enter', reason: 'a' });
+    trail.record({ category: 'stage', stage: 'CODE', action: 'enter', reason: 'b' });
+    trail.record({ category: 'skip', stage: 'PLAN', action: 'skip', reason: 'c' });
+    const summary = trail.getSummary();
+    assertEqual(summary.total, 3);
+    assertEqual(summary.byCategory['stage'], 2);
+    assertEqual(summary.byCategory['skip'], 1);
+    assertEqual(summary.byStage['ANALYSE'], 1);
+    assertEqual(summary.byStage['CODE'], 1);
+  });
+
+  await test('DecisionTrail: formatTimeline returns readable output', async () => {
+    const trail = new DecisionTrail();
+    trail.record({ category: 'stage', stage: 'ANALYSE', action: 'enter_stage', reason: 'Starting analysis' });
+    trail.record({ category: 'skip', stage: 'PLAN', action: 'skip_stage', reason: 'Simple task (score=15)', outcome: 'skipped' });
+    trail.record({ category: 'stage', stage: 'CODE', action: 'enter_stage', reason: 'Starting coding' });
+    const timeline = trail.formatTimeline();
+    assertContains(timeline, 'DECISION TRAIL');
+    assertContains(timeline, 'ANALYSE');
+    assertContains(timeline, 'skip_stage');
+    assertContains(timeline, 'CODE');
+  });
+
+  await test('DecisionTrail: formatTimeline returns empty when disabled', async () => {
+    const trail = new DecisionTrail({ enabled: false });
+    assertEqual(trail.formatTimeline(), '');
+  });
+
+  await test('DecisionTrail: trims entries when exceeding maxEntries', async () => {
+    const trail = new DecisionTrail({ maxEntries: 5 });
+    for (let i = 0; i < 10; i++) {
+      trail.record({ category: 'stage', stage: `S${i}`, action: 'enter', reason: `step ${i}` });
+    }
+    assertEqual(trail.length, 5);
+    // Should keep the latest 5 entries (S5..S9)
+    const entries = trail.query();
+    assertEqual(entries[0].stage, 'S5');
+    assertEqual(entries[4].stage, 'S9');
+  });
+
+  await test('DecisionCategory: exports all expected categories', async () => {
+    assert.ok(DecisionCategory.STAGE);
+    assert.ok(DecisionCategory.ROUTING);
+    assert.ok(DecisionCategory.RECOVERY);
+    assert.ok(DecisionCategory.QUALITY);
+    assert.ok(DecisionCategory.RESOURCE);
+    assert.ok(DecisionCategory.SKIP);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Direction 5: StageSmartSkip Tests (Adaptive Stage Skipping)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function runStageSmartSkipTests() {
+  console.log('\n📌 StageSmartSkip Tests');
+
+  const { StageSmartSkip, DEFAULT_SKIP_RULES, NEVER_SKIP_STAGES } = require('../core/stage-smart-skip');
+  const { DecisionTrail } = require('../core/decision-trail');
+
+  await test('StageSmartSkip: never skips ANALYSE', async () => {
+    const skip = new StageSmartSkip();
+    const result = skip.shouldSkip('ANALYSE', { complexity: { level: 'simple', score: 10 } });
+    assertEqual(result.skip, false);
+  });
+
+  await test('StageSmartSkip: never skips CODE', async () => {
+    const skip = new StageSmartSkip();
+    const result = skip.shouldSkip('CODE', { complexity: { level: 'simple', score: 10 } });
+    assertEqual(result.skip, false);
+  });
+
+  await test('StageSmartSkip: never skips TEST', async () => {
+    const skip = new StageSmartSkip();
+    const result = skip.shouldSkip('TEST', { complexity: { level: 'simple', score: 10 } });
+    assertEqual(result.skip, false);
+  });
+
+  await test('StageSmartSkip: skips PLAN for simple tasks (score < 51)', async () => {
+    const skip = new StageSmartSkip();
+    const result = skip.shouldSkip('PLAN', { complexity: { level: 'simple', score: 15 } });
+    assertEqual(result.skip, true);
+    assertContains(result.reason, 'decomposition not needed');
+  });
+
+  await test('StageSmartSkip: skips PLAN for moderate tasks (score < 51)', async () => {
+    const skip = new StageSmartSkip();
+    const result = skip.shouldSkip('PLAN', { complexity: { level: 'moderate', score: 40 } });
+    assertEqual(result.skip, true);
+  });
+
+  await test('StageSmartSkip: does NOT skip PLAN for complex tasks (score >= 51)', async () => {
+    const skip = new StageSmartSkip();
+    const result = skip.shouldSkip('PLAN', { complexity: { level: 'complex', score: 65 } });
+    assertEqual(result.skip, false);
+  });
+
+  await test('StageSmartSkip: skips ARCHITECT for simple tasks (score < 26)', async () => {
+    const skip = new StageSmartSkip();
+    const result = skip.shouldSkip('ARCHITECT', { complexity: { level: 'simple', score: 15 } });
+    assertEqual(result.skip, true);
+    assertContains(result.reason, 'architecture design not needed');
+  });
+
+  await test('StageSmartSkip: does NOT skip ARCHITECT for moderate tasks (score >= 26)', async () => {
+    const skip = new StageSmartSkip();
+    const result = skip.shouldSkip('ARCHITECT', { complexity: { level: 'moderate', score: 40 } });
+    assertEqual(result.skip, false);
+  });
+
+  await test('StageSmartSkip: does not skip when no complexity data available', async () => {
+    const skip = new StageSmartSkip();
+    const result = skip.shouldSkip('PLAN', {});
+    assertEqual(result.skip, false);
+    assertContains(result.reason, 'No complexity assessment');
+  });
+
+  await test('StageSmartSkip: disabled instance never skips', async () => {
+    const skip = new StageSmartSkip({ enabled: false });
+    const result = skip.shouldSkip('PLAN', { complexity: { level: 'simple', score: 10 } });
+    assertEqual(result.skip, false);
+  });
+
+  await test('StageSmartSkip: reads complexity from stageCtx', async () => {
+    const skip = new StageSmartSkip();
+    const mockStageCtx = {
+      get: (stage) => stage === 'ANALYSE' ? { meta: { complexity: { level: 'simple', score: 20 } } } : null,
+    };
+    const result = skip.shouldSkip('PLAN', { stageCtx: mockStageCtx });
+    assertEqual(result.skip, true);
+  });
+
+  await test('StageSmartSkip: records decisions in DecisionTrail', async () => {
+    const trail = new DecisionTrail();
+    const skip = new StageSmartSkip({ decisionTrail: trail });
+    skip.shouldSkip('PLAN', { complexity: { level: 'simple', score: 15 } });
+    const decisions = trail.query({ action: 'skip_stage' });
+    assertEqual(decisions.length, 1);
+    assertEqual(decisions[0].stage, 'PLAN');
+    assertEqual(decisions[0].outcome, 'skipped');
+  });
+
+  await test('StageSmartSkip: getSummary returns correct counts', async () => {
+    const skip = new StageSmartSkip();
+    skip.shouldSkip('ARCHITECT', { complexity: { level: 'simple', score: 10 } });
+    skip.shouldSkip('PLAN', { complexity: { level: 'simple', score: 10 } });
+    skip.shouldSkip('CODE', { complexity: { level: 'simple', score: 10 } });
+    const summary = skip.getSummary();
+    assertEqual(summary.skippedCount, 2);  // ARCHITECT + PLAN
+    assertEqual(summary.executedCount, 0); // CODE is never-skip, so not tracked in executed
+  });
+
+  await test('StageSmartSkip: formatSummary returns readable output', async () => {
+    const skip = new StageSmartSkip();
+    skip.shouldSkip('PLAN', { complexity: { level: 'simple', score: 15 } });
+    const formatted = skip.formatSummary();
+    assertContains(formatted, 'Smart-Skip');
+    assertContains(formatted, 'PLAN');
+  });
+
+  await test('StageSmartSkip: custom skipRules override defaults', async () => {
+    const skip = new StageSmartSkip({
+      skipRules: { PLAN: { skipBelow: 30, reason: 'Custom rule' } },
+    });
+    // score=25 < 30 → should skip
+    const r1 = skip.shouldSkip('PLAN', { complexity: { level: 'simple', score: 25 } });
+    assertEqual(r1.skip, true);
+  });
+
+  await test('StageSmartSkip: custom rules cannot override safety-critical stages', async () => {
+    const skip = new StageSmartSkip({
+      skipRules: { ANALYSE: { skipBelow: 100 }, CODE: { skipBelow: 100 } },
+    });
+    const r1 = skip.shouldSkip('ANALYSE', { complexity: { level: 'simple', score: 10 } });
+    const r2 = skip.shouldSkip('CODE', { complexity: { level: 'simple', score: 10 } });
+    assertEqual(r1.skip, false);
+    assertEqual(r2.skip, false);
+  });
+
+  await test('NEVER_SKIP_STAGES: contains ANALYSE, CODE, TEST', async () => {
+    assert.ok(NEVER_SKIP_STAGES.has('ANALYSE'));
+    assert.ok(NEVER_SKIP_STAGES.has('CODE'));
+    assert.ok(NEVER_SKIP_STAGES.has('TEST'));
+  });
+
+  await test('DEFAULT_SKIP_RULES: defines rules for ARCHITECT and PLAN', async () => {
+    assert.ok(DEFAULT_SKIP_RULES.ARCHITECT);
+    assert.ok(DEFAULT_SKIP_RULES.PLAN);
+    assertEqual(DEFAULT_SKIP_RULES.ARCHITECT.skipBelow, 26);
+    assertEqual(DEFAULT_SKIP_RULES.PLAN.skipBelow, 51);
+  });
+}
+
 async function runTests() {
   console.log('\n' + '='.repeat(60));
   console.log('  Workflow Unit Tests – Functional Correctness');
@@ -1838,6 +2108,8 @@ async function runTests() {
   await runSkillMarketplaceTests();
   await runRunGuardTests();
   await runEnrichmentCacheTests();
+  await runDecisionTrailTests();
+  await runStageSmartSkipTests();
 
   console.log('\n' + '='.repeat(60));
   console.log(`  Results: ${passed} passed, ${failed} failed`);

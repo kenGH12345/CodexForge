@@ -72,6 +72,10 @@ const { AnalystStage, ArchitectStage, PlannerStage, DeveloperStage, TesterStage 
 const { LlmRouter } = require('./core/llm-router');
 // Direction 1+2: Cost-aware gateway + Global run guard
 const { RunGuard } = require('./core/run-guard');
+// Direction 4: Structured Decision Audit Log
+const { DecisionTrail } = require('./core/decision-trail');
+// Direction 5: Adaptive Stage Skipping based on task complexity
+const { StageSmartSkip } = require('./core/stage-smart-skip');
 // P1-2: Agent Negotiation Protocol (inter-agent concern resolution)
 const { NegotiationEngine } = require('./core/negotiation-engine');
 // P1-4: Structured Logger (JSON Lines logging)
@@ -574,6 +578,28 @@ class Orchestrator {
     this.runGuard = new RunGuard(runGuardOpts);
     this.services.registerValue('runGuard', this.runGuard);
 
+    // ── Direction 4: DecisionTrail (structured decision audit log) ──
+    // Records every key decision point during workflow execution for
+    // explainability, debugging, and audit compliance.
+    this.decisionTrail = new DecisionTrail({
+      enabled: !(this._config && this._config.decisionTrail && this._config.decisionTrail.enabled === false),
+      maxEntries: (this._config && this._config.decisionTrail && this._config.decisionTrail.maxEntries) || 200,
+    });
+    this.services.registerValue('decisionTrail', this.decisionTrail);
+
+    // ── Direction 5: StageSmartSkip (adaptive stage skipping) ──
+    // Evaluates task complexity (from ANALYSE) and skips non-essential stages
+    // for simple tasks (e.g. one-file bug fix doesn't need architecture design).
+    const smartSkipOpts = {
+      enabled: !(this._config && this._config.stageSmartSkip && this._config.stageSmartSkip.enabled === false),
+      decisionTrail: this.decisionTrail,
+    };
+    if (this._config && this._config.stageSmartSkip && this._config.stageSmartSkip.skipRules) {
+      smartSkipOpts.skipRules = this._config.stageSmartSkip.skipRules;
+    }
+    this.stageSmartSkip = new StageSmartSkip(smartSkipOpts);
+    this.services.registerValue('stageSmartSkip', this.stageSmartSkip);
+
     console.log(`[Orchestrator] 🏗️  ServiceContainer initialised with ${this.services.getRegisteredNames().length} service(s).`);
 
     // ── P0/P1-b: StageRegistry (stage registration) ─────────────────────────
@@ -967,6 +993,35 @@ class Orchestrator {
         const { name, runner } = stages[i];
         const fromState = stateOrder[i];     // e.g. INIT for first stage
         const toState   = stateOrder[i + 1]; // e.g. ANALYSE for first stage
+
+        // ── Direction 5: Stage Smart Skip ────────────────────────────────
+        // Evaluate whether this stage should be skipped based on task
+        // complexity determined during ANALYSE. Only non-critical stages
+        // (ARCHITECT, PLAN) can be skipped; ANALYSE, CODE, TEST are never skipped.
+        if (this.stageSmartSkip) {
+          const skipResult = this.stageSmartSkip.shouldSkip(name, {
+            stageCtx: this.stageCtx,
+            obs: this.obs,
+          });
+          if (skipResult.skip) {
+            console.log(`[Orchestrator] ⏭️  Smart-Skip: skipping stage ${name} (${fromState}→${toState}) — ${skipResult.reason}`);
+            // Record in Decision Trail
+            if (this.decisionTrail) {
+              this.decisionTrail.record({
+                category: 'skip',
+                stage: name,
+                action: 'skip_stage',
+                reason: skipResult.reason,
+                evidence: skipResult.complexity ? { level: skipResult.complexity.level, score: skipResult.complexity.score } : null,
+                outcome: 'skipped',
+              });
+            }
+            // Perform a direct state transition to advance past this stage
+            // without executing its runner. This keeps StateMachine in sync.
+            await this.stateMachine.transition(null, `Stage ${name} skipped by StageSmartSkip (${skipResult.reason})`);
+            continue;
+          }
+        }
 
         await this._runStage(fromState, toState, async () => {
           const stageContext = {

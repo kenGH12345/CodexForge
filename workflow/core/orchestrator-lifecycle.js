@@ -581,6 +581,33 @@ const resolvedComplaints = this.complaintWall.complaints.filter(c => c.status ==
       }
     }
 
+    // ── Direction 4: DecisionTrail — print structured decision timeline ──
+    // Shows the complete chain of decisions made during this workflow run,
+    // grouped by stage, with evidence and outcomes for each decision.
+    if (this.decisionTrail) {
+      try {
+        const timeline = this.decisionTrail.formatTimeline();
+        if (timeline) {
+          console.log(timeline);
+        }
+      } catch (dtErr) {
+        console.warn(`[Orchestrator] ⚠️  DecisionTrail summary failed (non-fatal): ${dtErr.message}`);
+      }
+    }
+
+    // ── Direction 5: StageSmartSkip — print skip summary ──
+    // Shows which stages were skipped and why (complexity assessment).
+    if (this.stageSmartSkip) {
+      try {
+        const skipSummary = this.stageSmartSkip.formatSummary();
+        if (skipSummary) {
+          console.log(skipSummary);
+        }
+      } catch (ssErr) {
+        console.warn(`[Orchestrator] ⚠️  StageSmartSkip summary failed (non-fatal): ${ssErr.message}`);
+      }
+    }
+
     // ── Skill Lifecycle: sync usage stats to SkillEvolutionEngine registry ──
     // Transfers per-session skill injection/effectiveness data from Observability
     // to the persistent SkillEvolutionEngine registry, enabling cross-session
@@ -1020,7 +1047,7 @@ const resolvedComplaints = this.complaintWall.complaints.filter(c => c.status ==
       this.logger.info('Stage', `Stage started: ${stageLabel}`, { fromState, toState });
     }
 
-    // ── Direction 1+2: RunGuard pre-stage check ─────────────────────────────
+    // ── Direction 1+2: RunGuard pre-stage check ─────────────────────────
     // Checks global execution limits (LLM calls, tokens, duration, budget).
     // If budget pressure is detected, automatically downgrades LlmRouter tier.
     // If hard limits are exceeded, throws RunGuardAbortError.
@@ -1030,8 +1057,18 @@ const resolvedComplaints = this.complaintWall.complaints.filter(c => c.status ==
         if (guardResult.warnings.length > 0 && this.logger) {
           this.logger.warn('RunGuard', `Pre-stage warnings for ${fromState}`, { warnings: guardResult.warnings, tierMode: guardResult.tierMode });
         }
-      } catch (guardErr) {
-        if (guardErr.code === 'RUN_GUARD_ABORT') {
+        // Direction 4: Record routing/resource decisions from RunGuard
+        if (this.decisionTrail && guardResult.tierMode !== 'normal') {
+          this.decisionTrail.record({
+            category: 'routing',
+            stage: fromState,
+            action: 'tier_downgrade',
+            reason: `RunGuard applied ${guardResult.tierMode} tier (${guardResult.warnings[0] || 'budget pressure'})`,
+            evidence: { tierMode: guardResult.tierMode },
+            outcome: 'tier_changed',
+          });
+        }
+      } catch (guardErr) {        if (guardErr.code === 'RUN_GUARD_ABORT') {
           console.error(`[Orchestrator] 🛑 RunGuard aborted workflow before stage ${fromState}: ${guardErr.message}`);
           this.obs.stageEnd(stageLabel, 'aborted');
           throw guardErr;
@@ -1043,6 +1080,18 @@ const resolvedComplaints = this.complaintWall.complaints.filter(c => c.status ==
 
     let stageStatus = 'ok';
     let lastErr = null;
+
+    // Direction 4: Record stage-enter decision in DecisionTrail
+    let stageDecisionSeq = -1;
+    if (this.decisionTrail) {
+      stageDecisionSeq = this.decisionTrail.record({
+        category: 'stage',
+        stage: fromState,
+        action: 'enter_stage',
+        reason: `Executing stage ${stageLabel}`,
+        evidence: null,
+      });
+    }
 
     try {
     for (let attempt = 0; attempt <= MAX_STAGE_RETRIES; attempt++) {
@@ -1157,6 +1206,10 @@ const resolvedComplaints = this.complaintWall.complaints.filter(c => c.status ==
         } catch (_reportErr) { /* non-fatal: don't let reporting break the pipeline */ }
 
         // Success – break out of retry loop
+        // Direction 4: Record stage-exit decision with outcome
+        if (this.decisionTrail) {
+          this.decisionTrail.setOutcome(stageDecisionSeq, attempt > 0 ? `success_after_${attempt}_retries` : 'success');
+        }
         return;
 
       } catch (err) {
@@ -1171,8 +1224,19 @@ const resolvedComplaints = this.complaintWall.complaints.filter(c => c.status ==
           this.obs.recordError(stageLabel, err.message);
 
           if (attempt > 0) {
-            // We retried but still failed – record the failure pattern
-            console.warn(`[Orchestrator] ❌ Recovery Hook: stage ${stageLabel} failed after ${attempt + 1} attempt(s). Error category: ${category}. Giving up.`);
+          // We retried but still failed – record the failure pattern
+          console.warn(`[Orchestrator] ❌ Recovery Hook: stage ${stageLabel} failed after ${attempt + 1} attempt(s). Error category: ${category}. Giving up.`);
+          // Direction 4: Record retry-exhausted decision
+          if (this.decisionTrail) {
+            this.decisionTrail.record({
+              category: 'recovery',
+              stage: fromState,
+              action: 'retry_exhausted',
+              reason: `${stageLabel} failed after ${attempt + 1} attempts (${category}: ${err.message.slice(0, 100)})`,
+              evidence: { attempts: attempt + 1, category },
+              outcome: 'fatal_error',
+            });
+          }
             try {
               if (this.experienceStore) {
                 const { ExperienceType, ExperienceCategory } = require('./experience-store');
@@ -1193,6 +1257,16 @@ const resolvedComplaints = this.complaintWall.complaints.filter(c => c.status ==
 
         // Transient error with retries remaining: log and continue to next attempt
         console.warn(`[Orchestrator] ⚠️  Recovery Hook: transient error in stage ${stageLabel} (category: ${category}). Will retry (attempt ${attempt + 1}/${MAX_STAGE_RETRIES + 1}).`);
+        // Direction 4: Record retry decision
+        if (this.decisionTrail) {
+          this.decisionTrail.record({
+            category: 'recovery',
+            stage: fromState,
+            action: 'retry_stage',
+            reason: `Transient error (${category}): ${err.message.slice(0, 100)} — retrying`,
+            evidence: { attempt: attempt + 1, maxAttempts: MAX_STAGE_RETRIES + 1, category },
+          });
+        }
         console.warn(`[Orchestrator]    Error: ${err.message.slice(0, 200)}`);
       }
     }
