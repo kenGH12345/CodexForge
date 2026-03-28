@@ -1,0 +1,297 @@
+{
+  "version": "1.0.0",
+  "description": "WorkflowAgent vs AI IDE Benchmark Task Bank",
+  "createdAt": "2026-03-25",
+  "tasks": [
+    {
+      "id": "simple-001",
+      "name": "REST API Endpoint",
+      "description": "Create a simple REST API endpoint for a todo list with CRUD operations. The endpoint should support GET (list), POST (create), PUT (update), and DELETE operations.",
+      "level": "simple",
+      "category": "api-development",
+      "expectedArtifacts": [
+        "src/routes/todo.js",
+        "src/controllers/todoController.js",
+        "src/models/todo.js",
+        "tests/todo.test.js"
+      ],
+      "evaluationCriteria": {
+        "codeCompleteness": "All CRUD operations implemented",
+        "errorHandling": "Basic error handling present",
+        "validation": "Input validation included",
+        "tests": "Unit tests for each endpoint"
+      },
+      "environment": {
+        "language": "javascript",
+        "framework": "express",
+        "timeLimit": 15,
+        "tokenBudget": 50000
+      }
+    },
+    {
+      "id": "simple-002",
+      "name": "Data Validation Utility",
+      "description": "Create a reusable data validation utility that can validate different types of input: email, phone number, URL, and custom regex patterns. Include TypeScript type definitions.",
+      "level": "simple",
+      "category": "utility-development",
+      "expectedArtifacts": [
+        "src/utils/validator.ts",
+        "src/types/validator.d.ts",
+        "tests/validator.test.ts"
+      ],
+      "evaluationCriteria": {
+        "typeCompleteness": "All validation types implemented",
+        "errorMessages": "Clear error messages for invalid input",
+        "extensibility": "Easy to add new validators",
+        "typeSafety": "Proper TypeScript types"
+      },
+      "environment": {
+        "language": "typescript",
+        "timeLimit": 12,
+        "tokenBudget": 40000
+      }
+    },
+    {
+      "id": "simple-003",
+      "name": "CSV Parser",
+      "description": "Implement a CSV parser that can read CSV files and convert them to JSON objects. Handle edge cases like quoted fields, newlines within fields, and different delimiters.",
+      "level": "simple",
+      "category": "data-processing",
+      "expectedArtifacts": [
+        "src/parsers/csvParser.js",
+        "tests/csvParser.test.js",
+        "fixtures/sample.csv"
+      ],
+      "evaluationCriteria": {
+        "correctness": "Parses standard CSV correctly",
+        "edgeCases": "Handles quoted fields and special characters",
+        "performance": "Efficient for large files",
+        "documentation": "Clear usage examples"
+      },
+      "environment": {
+        "language": "javascript",
+        "timeLimit": 15,
+        "tokenBudget": 45000
+      }
+    },
+    {
+      "id": "medium-001",
+      "name": "Refactor Callback to Async/Await",
+      "description": "Refactor a legacy Node.js module that uses callback-style async operations to use modern async/await. The module includes database queries, file operations, and HTTP requests. Maintain backward compatibility for exported API.",
+      "level": "medium",
+      "category": "refactoring",
+      "expectedArtifacts": [
+        "src/services/legacyService-refactored.js",
+        "src/services/legacyService-adapter.js",
+        "tests/legacyService.test.js",
+        "MIGRATION.md"
+      ],
+      "evaluationCriteria": {
+        "asyncPattern": "Proper async/await usage",
+        "errorHandling": "Improved error handling",
+        "backwardCompat": "Backward compatible API",
+        "performance": "No performance regression",
+        "testCoverage": "All edge cases tested"
+      },
+      "environment": {
+        "language": "javascript",
+        "timeLimit": 25,
+        "tokenBudget": 80000,
+        "sourceCode": "src/services/legacyService.js"
+      }
+    },
+    {
+      "id": "medium-002",
+      "name": "Add Pagination to List API",
+      "description": "Add cursor-based pagination to an existing list API endpoint. The endpoint currently returns all results. Implement cursor pagination with sorting options, and return metadata for client navigation.",
+      "level": "medium",
+      "category": "feature-enhancement",
+      "expectedArtifacts": [
+        "src/routes/items.js",
+        "src/middleware/pagination.js",
+        "src/utils/cursor.js",
+        "tests/pagination.test.js",
+        "API_CHANGELOG.md"
+      ],
+      "evaluationCriteria": {
+        "cursorLogic": "Correct cursor encoding/decoding",
+        "performance": "Efficient database queries",
+        "metadata": "Complete pagination metadata",
+        "backwardCompat": "Graceful fallback for old clients",
+        "edgeCases": "Handles empty results, last page"
+      },
+      "environment": {
+        "language": "javascript",
+        "framework": "express",
+        "database": "postgresql",
+        "timeLimit": 30,
+        "tokenBudget": 70000
+      }
+    },
+    {
+      "id": "medium-003",
+      "name": "Implement Rate Limiting",
+      "description": "Implement a distributed rate limiting middleware for an API. Support different strategies: fixed window, sliding window, and token bucket. Include Redis backend for distributed setups.",
+      "level": "medium",
+      "category": "infrastructure",
+      "expectedArtifacts": [
+        "src/middleware/rateLimiter.js",
+        "src/strategies/fixedWindow.js",
+        "src/strategies/slidingWindow.js",
+        "src/strategies/tokenBucket.js",
+        "src/backends/redis.js",
+        "src/backends/memory.js",
+        "tests/rateLimiter.test.js"
+      ],
+      "evaluationCriteria": {
+        "correctness": "Accurate rate limiting",
+        "flexibility": "Configurable strategies and backends",
+        "distributed": "Works across multiple instances",
+        "headers": "Proper rate limit headers",
+        "testCoverage": "Strategy tests + integration tests"
+      },
+      "environment": {
+        "language": "javascript",
+        "dependencies": ["redis", "express"],
+        "timeLimit": 35,
+        "tokenBudget": 90000
+      }
+    },
+    {
+      "id": "complex-001",
+      "name": "Fix Memory Leak in Event Handler",
+      "description": "Diagnose and fix a memory leak in an event-driven application. The application processes high-frequency events and memory usage grows unbounded over time. Provide a fix with proper cleanup logic.",
+      "level": "complex",
+      "category": "bug-fix",
+      "source": "github",
+      "sourceUrl": "internal/memory-leak-simulated",
+      "expectedArtifacts": [
+        "src/events/EventProcessor-fixed.js",
+        "MEMORY_LEAK_ANALYSIS.md",
+        "tests/memory-test.js",
+        "tests/load-test.js"
+      ],
+      "evaluationCriteria": {
+        "rootCause": "Correct identification of leak cause",
+        "fixQuality": "Clean and minimal fix",
+        "cleanup": "Proper resource cleanup",
+        "regression": "No functional regression",
+        "test": "Memory usage test included",
+        "documentation": "Clear explanation of the issue"
+      },
+      "environment": {
+        "language": "javascript",
+        "timeLimit": 45,
+        "tokenBudget": 120000,
+        "diagnostics": true
+      }
+    },
+    {
+      "id": "complex-002",
+      "name": "Implement Plugin System",
+      "description": "Design and implement a plugin system for an application. The system should support plugin discovery, loading, lifecycle management (init, start, stop), and inter-plugin communication. Include security sandboxing.",
+      "level": "complex",
+      "category": "architecture",
+      "expectedArtifacts": [
+        "src/plugin/PluginManager.js",
+        "src/plugin/PluginLoader.js",
+        "src/plugin/PluginSandbox.js",
+        "src/plugin/PluginRegistry.js",
+        "src/plugin/hooks.js",
+        "examples/sample-plugin.js",
+        "PLUGIN_GUIDE.md",
+        "tests/plugin.test.js"
+      ],
+      "evaluationCriteria": {
+        "apiDesign": "Clean and intuitive API",
+        "lifecycle": "Proper lifecycle management",
+        "isolation": "Plugin isolation and security",
+        "communication": "Inter-plugin communication",
+        "extensibility": "Easy to add new plugins",
+        "documentation": "Complete usage guide"
+      },
+      "environment": {
+        "language": "javascript",
+        "timeLimit": 60,
+        "tokenBudget": 150000
+      }
+    },
+    {
+      "id": "complex-003",
+      "name": "Database Migration Tool",
+      "description": "Create a database migration tool from scratch. Support creating and running migrations, rollback, versioning, and conflict detection. Handle various database backends (PostgreSQL, MySQL, SQLite).",
+      "level": "complex",
+      "category": "tool-development",
+      "expectedArtifacts": [
+        "src/cli/migrate.js",
+        "src/core/MigrationRunner.js",
+        "src/core/MigrationLoader.js",
+        "src/backends/PostgresBackend.js",
+        "src/backends/MySQLBackend.js",
+        "src/backends/SQLiteBackend.js",
+        "src/template.js",
+        "MIGRATION_GUIDE.md",
+        "tests/migration.test.js"
+      ],
+      "evaluationCriteria": {
+        "functionality": "All migration operations work",
+        "reliability": "Safe and reliable execution",
+        "rollback": "Complete rollback support",
+        "versioning": "Proper version tracking",
+        "multiDb": "Multiple database support",
+        "cli": "Intuitive CLI interface"
+      },
+      "environment": {
+        "language": "javascript",
+        "timeLimit": 60,
+        "tokenBudget": 140000
+      }
+    },
+    {
+      "id": "production-001",
+      "name": "SWE-bench Style: Fix Race Condition",
+      "description": "A concurrent Python service has a race condition causing intermittent test failures. The issue involves shared state in a multi-threaded context. Analyze the codebase, identify the race condition, and implement a fix.",
+      "level": "production",
+      "category": "concurrency-bug",
+      "source": "github",
+      "reference": "SWE-bench style task",
+      "expectedArtifacts": [
+        "src/concurrent_service.py",
+        "tests/test_concurrent.py",
+        "RACE_CONDITION_FIX.md"
+      ],
+      "evaluationCriteria": {
+        "identification": "Correctly identifies race condition",
+        "fix": "Minimal and correct fix",
+        "threadSafe": "Thread-safe implementation",
+        "performance": "No significant performance impact",
+        "tests": "Reproducible test case",
+        "explanation": "Clear technical explanation"
+      },
+      "environment": {
+        "language": "python",
+        "timeLimit": 50,
+        "tokenBudget": 120000,
+        "hasFailingTests": true
+      }
+    }
+  ],
+  "categories": {
+    "api-development": "REST/GraphQL API development",
+    "utility-development": "Reusable utility libraries",
+    "data-processing": "Data parsing and transformation",
+    "refactoring": "Code refactoring and modernization",
+    "feature-enhancement": "Adding new features to existing code",
+    "infrastructure": "Infrastructure and middleware",
+    "bug-fix": "Bug diagnosis and fixing",
+    "architecture": "System architecture and design",
+    "tool-development": "CLI and developer tools",
+    "concurrency-bug": "Concurrent programming issues"
+  },
+  "metrics": {
+    "simple": { "taskCount": 3, "avgTimeLimit": 14, "avgTokenBudget": 45000 },
+    "medium": { "taskCount": 3, "avgTimeLimit": 30, "avgTokenBudget": 80000 },
+    "complex": { "taskCount": 3, "avgTimeLimit": 55, "avgTokenBudget": 136667 },
+    "production": { "taskCount": 1, "avgTimeLimit": 50, "avgTokenBudget": 120000 }
+  }
+}

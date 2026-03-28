@@ -1,0 +1,78 @@
+{
+  "sessionId": "test-session-001",
+  "generatedAt": "2026-03-27T14:56:39.500Z",
+  "summary": {
+    "totalFeedback": 2,
+    "averageScore": 0.725,
+    "agents": [
+      "DEVELOPER"
+    ]
+  },
+  "reports": {
+    "DEVELOPER": {
+      "agent": "DEVELOPER",
+      "overallScore": 0.725,
+      "category": {
+        "min": 0.7,
+        "label": "Good",
+        "icon": "👍"
+      },
+      "trend": "insufficient",
+      "trendChange": 0,
+      "feedbackCount": 2,
+      "distribution": {
+        "excellent": 0,
+        "good": 1,
+        "fair": 1,
+        "poor": 0
+      },
+      "topIssues": [
+        [
+          "missing_tests",
+          2
+        ]
+      ],
+      "recommendations": []
+    }
+  },
+  "feedbackHistory": [
+    {
+      "id": "DEVELOPER-1774623399497-xnwz",
+      "timestamp": "2026-03-27T14:56:39.497Z",
+      "sessionId": "test-session-001",
+      "source": "TESTER",
+      "target": "DEVELOPER",
+      "type": "quality",
+      "score": 0.85,
+      "artifactId": null,
+      "issues": [
+        {
+          "type": "missing_tests",
+          "message": "Edge cases needed",
+          "severity": "medium"
+        }
+      ],
+      "comments": "Good implementation overall.",
+      "metadata": {}
+    },
+    {
+      "id": "DEVELOPER-1774623399499-v7h9",
+      "timestamp": "2026-03-27T14:56:39.499Z",
+      "sessionId": "test-session-001",
+      "source": "TESTER",
+      "target": "DEVELOPER",
+      "type": "quality",
+      "score": 0.6,
+      "artifactId": null,
+      "issues": [
+        {
+          "type": "missing_tests",
+          "message": "Critical path not tested",
+          "severity": "high"
+        }
+      ],
+      "comments": "Significant coverage gaps.",
+      "metadata": {}
+    }
+  ]
+}

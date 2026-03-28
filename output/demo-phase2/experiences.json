@@ -1,0 +1,177 @@
+[
+  {
+    "id": "EXP-1774577202571-MWXVCPT",
+    "type": "negative",
+    "category": "config_system",
+    "title": "Fix: Add Trae IDE detection",
+    "content": "Added Trae to the hardcoded IDE_SIGNATURES object. This is the 5th IDE added this quarter - maintenance burden increasing.",
+    "taskId": null,
+    "skill": null,
+    "tags": [
+      "ide",
+      "hardcoded",
+      "config"
+    ],
+    "codeExample": "const IDE_SIGNATURES = {\n  // ... existing entries\n  trae: {\n    name: 'Trae',\n    envVars: ['TRAE_SESSION'],\n  },\n};",
+    "sourceFile": null,
+    "namespace": null,
+    "moduleId": null,
+    "hitCount": 0,
+    "evolutionCount": 0,
+    "createdAt": "2026-03-27T02:06:42.571Z",
+    "updatedAt": "2026-03-27T02:06:42.571Z",
+    "expiresAt": "2026-06-25T02:06:42.571Z",
+    "patternCheck": {
+      "experienceId": "EXP-1774577202571-MWXVCPT",
+      "patternsMatched": 1,
+      "triggeredPatterns": [],
+      "requiresAttention": false
+    }
+  },
+  {
+    "id": "EXP-1774577202575-5OQUI9K",
+    "type": "negative",
+    "category": "config_system",
+    "title": "Fix: Add Zed IDE detection",
+    "content": "Added Zed to the hardcoded IDE_SIGNATURES object. This is the 5th IDE added this quarter - maintenance burden increasing.",
+    "taskId": null,
+    "skill": null,
+    "tags": [
+      "ide",
+      "hardcoded",
+      "config"
+    ],
+    "codeExample": "const IDE_SIGNATURES = {\n  // ... existing entries\n  zed: {\n    name: 'Zed',\n    envVars: ['ZED_SESSION'],\n  },\n};",
+    "sourceFile": null,
+    "namespace": null,
+    "moduleId": null,
+    "hitCount": 0,
+    "evolutionCount": 0,
+    "createdAt": "2026-03-27T02:06:42.575Z",
+    "updatedAt": "2026-03-27T02:06:42.575Z",
+    "expiresAt": "2026-06-25T02:06:42.575Z",
+    "patternCheck": {
+      "experienceId": "EXP-1774577202575-5OQUI9K",
+      "patternsMatched": 1,
+      "triggeredPatterns": [],
+      "requiresAttention": false
+    }
+  },
+  {
+    "id": "EXP-1774577202576-NMDOMZL",
+    "type": "negative",
+    "category": "config_system",
+    "title": "Fix: Add KimiCode IDE detection",
+    "content": "Added KimiCode to the hardcoded IDE_SIGNATURES object. This is the 5th IDE added this quarter - maintenance burden increasing.",
+    "taskId": null,
+    "skill": null,
+    "tags": [
+      "ide",
+      "hardcoded",
+      "config"
+    ],
+    "codeExample": "const IDE_SIGNATURES = {\n  // ... existing entries\n  kimicode: {\n    name: 'KimiCode',\n    envVars: ['KIMICODE_SESSION'],\n  },\n};",
+    "sourceFile": null,
+    "namespace": null,
+    "moduleId": null,
+    "hitCount": 0,
+    "evolutionCount": 0,
+    "createdAt": "2026-03-27T02:06:42.576Z",
+    "updatedAt": "2026-03-27T02:06:42.576Z",
+    "expiresAt": "2026-06-25T02:06:42.576Z",
+    "patternCheck": {
+      "experienceId": "EXP-1774577202576-NMDOMZL",
+      "patternsMatched": 1,
+      "triggeredPatterns": [
+        {
+          "patternId": "HARDCODED_CONFIG_ENTRY",
+          "patternName": "Hardcoded Configuration Entry",
+          "severity": "medium",
+          "confidence": 0.9,
+          "matchedSymptom": 0,
+          "matchedContent": "content",
+          "evidence": {
+            "experienceId": "EXP-1774577202576-NMDOMZL",
+            "category": "config_system",
+            "createdAt": "2026-03-27T02:06:42.576Z"
+          },
+          "occurrenceCount": 3,
+          "threshold": 3,
+          "recommendation": "Implement Provider Pattern for dynamic configuration",
+          "velocity": 0.5
+        }
+      ],
+      "requiresAttention": true
+    }
+  },
+  {
+    "id": "EXP-1774577202577-MRG7TC5",
+    "type": "negative",
+    "category": "config_system",
+    "title": "Fix: Add PearAI IDE detection",
+    "content": "Added PearAI to the hardcoded IDE_SIGNATURES object. This is the 5th IDE added this quarter - maintenance burden increasing.",
+    "taskId": null,
+    "skill": null,
+    "tags": [
+      "ide",
+      "hardcoded",
+      "config"
+    ],
+    "codeExample": "const IDE_SIGNATURES = {\n  // ... existing entries\n  pearai: {\n    name: 'PearAI',\n    envVars: ['PEARAI_SESSION'],\n  },\n};",
+    "sourceFile": null,
+    "namespace": null,
+    "moduleId": null,
+    "hitCount": 0,
+    "evolutionCount": 0,
+    "createdAt": "2026-03-27T02:06:42.577Z",
+    "updatedAt": "2026-03-27T02:06:42.577Z",
+    "expiresAt": "2026-06-25T02:06:42.577Z",
+    "patternCheck": {
+      "experienceId": "EXP-1774577202577-MRG7TC5",
+      "patternsMatched": 1,
+      "triggeredPatterns": [
+        {
+          "patternId": "HARDCODED_CONFIG_ENTRY",
+          "patternName": "Hardcoded Configuration Entry",
+          "severity": "medium",
+          "confidence": 0.9,
+          "matchedSymptom": 0,
+          "matchedContent": "content",
+          "evidence": {
+            "experienceId": "EXP-1774577202577-MRG7TC5",
+            "category": "config_system",
+            "createdAt": "2026-03-27T02:06:42.577Z"
+          },
+          "occurrenceCount": 4,
+          "threshold": 3,
+          "recommendation": "Implement Provider Pattern for dynamic configuration",
+          "velocity": 0.8
+        }
+      ],
+      "requiresAttention": true
+    }
+  },
+  {
+    "id": "EXP-1774577202579-QR8B6FV",
+    "type": "negative",
+    "category": "config_system",
+    "title": "Fix: Add VoidEditor IDE detection",
+    "content": "Added VoidEditor to the hardcoded IDE_SIGNATURES object. This is the 5th IDE added this quarter - maintenance burden increasing.",
+    "taskId": null,
+    "skill": null,
+    "tags": [
+      "ide",
+      "hardcoded",
+      "config"
+    ],
+    "codeExample": "const IDE_SIGNATURES = {\n  // ... existing entries\n  voideditor: {\n    name: 'VoidEditor',\n    envVars: ['VOIDEDITOR_SESSION'],\n  },\n};",
+    "sourceFile": null,
+    "namespace": null,
+    "moduleId": null,
+    "hitCount": 0,
+    "evolutionCount": 0,
+    "createdAt": "2026-03-27T02:06:42.579Z",
+    "updatedAt": "2026-03-27T02:06:42.579Z",
+    "expiresAt": "2026-06-25T02:06:42.579Z"
+  }
+]

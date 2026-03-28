@@ -4,7 +4,9 @@
 ## Purpose
 This file provides global context for all AI agents operating in this project.
 Agents should read this file at the start of each session to understand the project structure.
-## Sub-Packages (Monorepo)
+
+> **Last updated**: 2026-03-27
+> **Strategy**: **thin** (small single repo)
 
 - **codebuddy-multi-agent-workflow**: `workflow/`
 

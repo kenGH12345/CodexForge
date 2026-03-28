@@ -1,0 +1,86 @@
+[
+  {
+    "id": "EXP-1774519884653-IDX4E76",
+    "type": "negative",
+    "category": "config_system",
+    "title": "Added Trae to IDE_SIGNATURES",
+    "content": "Added support for Trae IDE by adding new entry to the hardcoded IDE_SIGNATURES object in ide-detection.js. The list is growing and becoming hard to maintain. Each new IDE requires editing the core file.",
+    "taskId": null,
+    "skill": null,
+    "tags": [
+      "ide",
+      "hardcoded",
+      "config",
+      "maintenance"
+    ],
+    "codeExample": "// ide-detection.js\nconst IDE_SIGNATURES = {\n  // ... existing entries\n  trae: {\n    name: 'Trae',\n    envVars: ['TRAE_SESSION'],\n    processNames: ['trae'],\n    capabilities: { /* ... */ },\n  },\n};",
+    "sourceFile": null,
+    "namespace": null,
+    "moduleId": null,
+    "hitCount": 0,
+    "evolutionCount": 0,
+    "createdAt": "2026-03-26T10:11:24.653Z",
+    "updatedAt": "2026-03-26T10:11:24.653Z",
+    "expiresAt": "2026-06-24T10:11:24.653Z",
+    "patternCheck": {
+      "experienceId": "EXP-1774519884653-IDX4E76",
+      "patternsMatched": 1,
+      "triggeredPatterns": [],
+      "requiresAttention": false
+    }
+  },
+  {
+    "id": "EXP-1774519884666-LDH3ZLT",
+    "type": "negative",
+    "category": "config_system",
+    "title": "Added Zed to IDE_SIGNATURES",
+    "content": "Added support for Zed IDE by adding new entry to the hardcoded IDE_SIGNATURES object in ide-detection.js. The list is growing and becoming hard to maintain. Each new IDE requires editing the core file.",
+    "taskId": null,
+    "skill": null,
+    "tags": [
+      "ide",
+      "hardcoded",
+      "config",
+      "maintenance"
+    ],
+    "codeExample": "// ide-detection.js\nconst IDE_SIGNATURES = {\n  // ... existing entries\n  zed: {\n    name: 'Zed',\n    envVars: ['ZED_SESSION'],\n    processNames: ['zed'],\n    capabilities: { /* ... */ },\n  },\n};",
+    "sourceFile": null,
+    "namespace": null,
+    "moduleId": null,
+    "hitCount": 0,
+    "evolutionCount": 0,
+    "createdAt": "2026-03-26T10:11:24.666Z",
+    "updatedAt": "2026-03-26T10:11:24.666Z",
+    "expiresAt": "2026-06-24T10:11:24.666Z",
+    "patternCheck": {
+      "experienceId": "EXP-1774519884666-LDH3ZLT",
+      "patternsMatched": 1,
+      "triggeredPatterns": [],
+      "requiresAttention": false
+    }
+  },
+  {
+    "id": "EXP-1774519884668-NATKX9H",
+    "type": "negative",
+    "category": "config_system",
+    "title": "Added KimiCode to IDE_SIGNATURES",
+    "content": "Added support for KimiCode IDE by adding new entry to the hardcoded IDE_SIGNATURES object in ide-detection.js. The list is growing and becoming hard to maintain. Each new IDE requires editing the core file.",
+    "taskId": null,
+    "skill": null,
+    "tags": [
+      "ide",
+      "hardcoded",
+      "config",
+      "maintenance"
+    ],
+    "codeExample": "// ide-detection.js\nconst IDE_SIGNATURES = {\n  // ... existing entries\n  kimicode: {\n    name: 'KimiCode',\n    envVars: ['KIMICODE_SESSION'],\n    processNames: ['kimicode'],\n    capabilities: { /* ... */ },\n  },\n};",
+    "sourceFile": null,
+    "namespace": null,
+    "moduleId": null,
+    "hitCount": 0,
+    "evolutionCount": 0,
+    "createdAt": "2026-03-26T10:11:24.668Z",
+    "updatedAt": "2026-03-26T10:11:24.668Z",
+    "expiresAt": "2026-06-24T10:11:24.668Z"
+  }
+]

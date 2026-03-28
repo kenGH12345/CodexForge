@@ -266,7 +266,9 @@ class ArticleScout {
             ttlDays: 180,
           });
           totalInjected++;
-        } catch (_) { /* non-fatal */ }
+        } catch (err) {
+          if (this.verbose) console.warn(`[ArticleScout] Failed to record experience: ${err.message}`);
+        }
       }
     }
 
@@ -362,7 +364,9 @@ class ArticleScout {
       if (this._orch && this._orch._manifest && this._orch._manifest.meta) {
         this._orch._manifest.meta.lastArticleScoutAt = new Date().toISOString();
       }
-    } catch (_) { /* non-fatal */ }
+    } catch (err) {
+      if (this.verbose) console.warn(`[ArticleScout] Failed to update timestamp: ${err.message}`);
+    }
   }
 
   _log(msg) {

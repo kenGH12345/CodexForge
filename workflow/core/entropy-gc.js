@@ -502,7 +502,9 @@ class EntropyGC {
         filesScanned,
         violations,
       }, null, 2), 'utf-8');
-    } catch (_) {}
+} catch (e) {
+      this._logger?.warn('EntropyGC', 'Failed during entry cleanup', { error: e.message });
+    }
   }
 }
 

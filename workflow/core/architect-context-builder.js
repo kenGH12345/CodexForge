@@ -164,7 +164,9 @@ async function buildArchitectContextBlock(orch, techStackPrefix, upstreamCtx) {
         console.log(`[Orchestrator] 📖 Recall Memory injected for ArchitectAgent (${archRecallMemoryCtx.length} chars)`);
       }
     }
-  } catch (_) { /* non-fatal */ }
+  } catch (err) {
+    if (process.env.DEBUG) console.warn(`[ArchitectContext] Recall memory loading failed: ${err.message}`);
+  }
 
   // ── Token Budget Guard ──────────────────────────────────────────────────
   // Core blocks (non-adapter, always present) + plugin blocks (dynamic adapter data)
@@ -189,6 +191,7 @@ async function buildArchitectContextBlock(orch, techStackPrefix, upstreamCtx) {
   const { assembled, stats } = _applyTokenBudget(adjustedBlocks, undefined, {
     telemetry: archTelemetry,
     stage: 'ARCHITECT',
+    profile: _archProfile || null,
   });
   if (stats.dropped.length > 0 || stats.truncated.length > 0) {
     console.log(`[Orchestrator] 📊 ARCHITECT token budget: ${stats.total} chars, dropped=[${stats.dropped.join(',')}], truncated=[${stats.truncated.join(',')}]`);

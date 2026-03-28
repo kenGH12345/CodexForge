@@ -1,0 +1,888 @@
+{
+  "id": "benchmark-1774432891357",
+  "name": "Benchmark-2026-03-25T10:01:31.356Z",
+  "description": "Comparing IDE vs WorkflowAgent on 3 tasks",
+  "createdAt": "2026-03-25T10:01:31.357Z",
+  "taskCount": 3,
+  "resultsByLevel": {
+    "simple": [
+      {
+        "taskId": "simple-001",
+        "taskName": "REST API Endpoint",
+        "taskLevel": "simple",
+        "ideResult": {
+          "taskId": "simple-001",
+          "executor": "ide",
+          "startTime": "2026-03-25T10:01:31.358Z",
+          "endTime": null,
+          "durationMs": 0,
+          "iterationCount": 0,
+          "userInterventionCount": 0,
+          "tokensConsumed": 0,
+          "apiCalls": 0,
+          "artifacts": {},
+          "codeMetrics": {
+            "filesChanged": 0,
+            "linesAdded": 0,
+            "linesRemoved": 0,
+            "testFilesAdded": 0
+          },
+          "status": "pending",
+          "errorMessage": null,
+          "executionLog": ""
+        },
+        "workflowAgentResult": {
+          "taskId": "simple-001",
+          "executor": "workflow-agent",
+          "startTime": "2026-03-25T10:01:31.358Z",
+          "endTime": null,
+          "durationMs": 0,
+          "iterationCount": 0,
+          "userInterventionCount": 0,
+          "tokensConsumed": 0,
+          "apiCalls": 0,
+          "artifacts": {},
+          "codeMetrics": {
+            "filesChanged": 0,
+            "linesAdded": 0,
+            "linesRemoved": 0,
+            "testFilesAdded": 0
+          },
+          "status": "pending",
+          "errorMessage": null,
+          "executionLog": ""
+        },
+        "ideScores": {
+          "taskCompletion": {
+            "requirementUnderstanding": 0,
+            "artifactCompleteness": 0,
+            "bugFixSuccessRate": 100,
+            "testPassRate": 50,
+            "score": 32.5
+          },
+          "codeQuality": {
+            "lintScore": 100,
+            "architectureScore": 0,
+            "maintainabilityScore": 0,
+            "testCoverage": 0,
+            "complexityScore": 100,
+            "score": 50
+          },
+          "devEfficiency": {
+            "iterationEfficiency": 100,
+            "timeEfficiency": 100,
+            "resourceEfficiency": 100,
+            "automationLevel": 100,
+            "score": 100
+          },
+          "userExperience": {
+            "interactionSmoothness": 85,
+            "explainability": 60,
+            "controllability": 80,
+            "score": 0
+          },
+          "overallScore": 48
+        },
+        "workflowAgentScores": {
+          "taskCompletion": {
+            "requirementUnderstanding": 0,
+            "artifactCompleteness": 0,
+            "bugFixSuccessRate": 100,
+            "testPassRate": 50,
+            "score": 32.5
+          },
+          "codeQuality": {
+            "lintScore": 100,
+            "architectureScore": 0,
+            "maintainabilityScore": 0,
+            "testCoverage": 0,
+            "complexityScore": 100,
+            "score": 50
+          },
+          "devEfficiency": {
+            "iterationEfficiency": 100,
+            "timeEfficiency": 100,
+            "resourceEfficiency": 100,
+            "automationLevel": 100,
+            "score": 100
+          },
+          "userExperience": {
+            "interactionSmoothness": 85,
+            "explainability": 60,
+            "controllability": 80,
+            "score": 0
+          },
+          "overallScore": 48
+        },
+        "deltas": {
+          "taskCompletion": {
+            "ide": 32.5,
+            "workflowAgent": 32.5,
+            "absolute": 0,
+            "relative": 0
+          },
+          "codeQuality": {
+            "ide": 50,
+            "workflowAgent": 50,
+            "absolute": 0,
+            "relative": 0
+          },
+          "devEfficiency": {
+            "ide": 100,
+            "workflowAgent": 100,
+            "absolute": 0,
+            "relative": 0
+          },
+          "userExperience": {
+            "ide": 0,
+            "workflowAgent": 0,
+            "absolute": 0,
+            "relative": 0
+          }
+        },
+        "winner": "tie",
+        "winnerMargin": 0,
+        "keyInsights": [],
+        "rawDataPath": null
+      },
+      {
+        "taskId": "simple-002",
+        "taskName": "Data Validation Utility",
+        "taskLevel": "simple",
+        "ideResult": {
+          "taskId": "simple-002",
+          "executor": "ide",
+          "startTime": "2026-03-25T10:01:31.360Z",
+          "endTime": null,
+          "durationMs": 0,
+          "iterationCount": 0,
+          "userInterventionCount": 0,
+          "tokensConsumed": 0,
+          "apiCalls": 0,
+          "artifacts": {},
+          "codeMetrics": {
+            "filesChanged": 0,
+            "linesAdded": 0,
+            "linesRemoved": 0,
+            "testFilesAdded": 0
+          },
+          "status": "pending",
+          "errorMessage": null,
+          "executionLog": ""
+        },
+        "workflowAgentResult": {
+          "taskId": "simple-002",
+          "executor": "workflow-agent",
+          "startTime": "2026-03-25T10:01:31.360Z",
+          "endTime": null,
+          "durationMs": 0,
+          "iterationCount": 0,
+          "userInterventionCount": 0,
+          "tokensConsumed": 0,
+          "apiCalls": 0,
+          "artifacts": {},
+          "codeMetrics": {
+            "filesChanged": 0,
+            "linesAdded": 0,
+            "linesRemoved": 0,
+            "testFilesAdded": 0
+          },
+          "status": "pending",
+          "errorMessage": null,
+          "executionLog": ""
+        },
+        "ideScores": {
+          "taskCompletion": {
+            "requirementUnderstanding": 0,
+            "artifactCompleteness": 0,
+            "bugFixSuccessRate": 100,
+            "testPassRate": 50,
+            "score": 32.5
+          },
+          "codeQuality": {
+            "lintScore": 100,
+            "architectureScore": 0,
+            "maintainabilityScore": 0,
+            "testCoverage": 0,
+            "complexityScore": 100,
+            "score": 50
+          },
+          "devEfficiency": {
+            "iterationEfficiency": 100,
+            "timeEfficiency": 100,
+            "resourceEfficiency": 100,
+            "automationLevel": 100,
+            "score": 100
+          },
+          "userExperience": {
+            "interactionSmoothness": 85,
+            "explainability": 60,
+            "controllability": 80,
+            "score": 0
+          },
+          "overallScore": 48
+        },
+        "workflowAgentScores": {
+          "taskCompletion": {
+            "requirementUnderstanding": 0,
+            "artifactCompleteness": 0,
+            "bugFixSuccessRate": 100,
+            "testPassRate": 50,
+            "score": 32.5
+          },
+          "codeQuality": {
+            "lintScore": 100,
+            "architectureScore": 0,
+            "maintainabilityScore": 0,
+            "testCoverage": 0,
+            "complexityScore": 100,
+            "score": 50
+          },
+          "devEfficiency": {
+            "iterationEfficiency": 100,
+            "timeEfficiency": 100,
+            "resourceEfficiency": 100,
+            "automationLevel": 100,
+            "score": 100
+          },
+          "userExperience": {
+            "interactionSmoothness": 85,
+            "explainability": 60,
+            "controllability": 80,
+            "score": 0
+          },
+          "overallScore": 48
+        },
+        "deltas": {
+          "taskCompletion": {
+            "ide": 32.5,
+            "workflowAgent": 32.5,
+            "absolute": 0,
+            "relative": 0
+          },
+          "codeQuality": {
+            "ide": 50,
+            "workflowAgent": 50,
+            "absolute": 0,
+            "relative": 0
+          },
+          "devEfficiency": {
+            "ide": 100,
+            "workflowAgent": 100,
+            "absolute": 0,
+            "relative": 0
+          },
+          "userExperience": {
+            "ide": 0,
+            "workflowAgent": 0,
+            "absolute": 0,
+            "relative": 0
+          }
+        },
+        "winner": "tie",
+        "winnerMargin": 0,
+        "keyInsights": [],
+        "rawDataPath": null
+      },
+      {
+        "taskId": "simple-003",
+        "taskName": "CSV Parser",
+        "taskLevel": "simple",
+        "ideResult": {
+          "taskId": "simple-003",
+          "executor": "ide",
+          "startTime": "2026-03-25T10:01:31.360Z",
+          "endTime": null,
+          "durationMs": 0,
+          "iterationCount": 0,
+          "userInterventionCount": 0,
+          "tokensConsumed": 0,
+          "apiCalls": 0,
+          "artifacts": {},
+          "codeMetrics": {
+            "filesChanged": 0,
+            "linesAdded": 0,
+            "linesRemoved": 0,
+            "testFilesAdded": 0
+          },
+          "status": "pending",
+          "errorMessage": null,
+          "executionLog": ""
+        },
+        "workflowAgentResult": {
+          "taskId": "simple-003",
+          "executor": "workflow-agent",
+          "startTime": "2026-03-25T10:01:31.360Z",
+          "endTime": null,
+          "durationMs": 0,
+          "iterationCount": 0,
+          "userInterventionCount": 0,
+          "tokensConsumed": 0,
+          "apiCalls": 0,
+          "artifacts": {},
+          "codeMetrics": {
+            "filesChanged": 0,
+            "linesAdded": 0,
+            "linesRemoved": 0,
+            "testFilesAdded": 0
+          },
+          "status": "pending",
+          "errorMessage": null,
+          "executionLog": ""
+        },
+        "ideScores": {
+          "taskCompletion": {
+            "requirementUnderstanding": 0,
+            "artifactCompleteness": 0,
+            "bugFixSuccessRate": 100,
+            "testPassRate": 50,
+            "score": 32.5
+          },
+          "codeQuality": {
+            "lintScore": 100,
+            "architectureScore": 0,
+            "maintainabilityScore": 0,
+            "testCoverage": 0,
+            "complexityScore": 100,
+            "score": 50
+          },
+          "devEfficiency": {
+            "iterationEfficiency": 100,
+            "timeEfficiency": 100,
+            "resourceEfficiency": 100,
+            "automationLevel": 100,
+            "score": 100
+          },
+          "userExperience": {
+            "interactionSmoothness": 85,
+            "explainability": 60,
+            "controllability": 80,
+            "score": 0
+          },
+          "overallScore": 48
+        },
+        "workflowAgentScores": {
+          "taskCompletion": {
+            "requirementUnderstanding": 0,
+            "artifactCompleteness": 0,
+            "bugFixSuccessRate": 100,
+            "testPassRate": 50,
+            "score": 32.5
+          },
+          "codeQuality": {
+            "lintScore": 100,
+            "architectureScore": 0,
+            "maintainabilityScore": 0,
+            "testCoverage": 0,
+            "complexityScore": 100,
+            "score": 50
+          },
+          "devEfficiency": {
+            "iterationEfficiency": 100,
+            "timeEfficiency": 100,
+            "resourceEfficiency": 100,
+            "automationLevel": 100,
+            "score": 100
+          },
+          "userExperience": {
+            "interactionSmoothness": 85,
+            "explainability": 60,
+            "controllability": 80,
+            "score": 0
+          },
+          "overallScore": 48
+        },
+        "deltas": {
+          "taskCompletion": {
+            "ide": 32.5,
+            "workflowAgent": 32.5,
+            "absolute": 0,
+            "relative": 0
+          },
+          "codeQuality": {
+            "ide": 50,
+            "workflowAgent": 50,
+            "absolute": 0,
+            "relative": 0
+          },
+          "devEfficiency": {
+            "ide": 100,
+            "workflowAgent": 100,
+            "absolute": 0,
+            "relative": 0
+          },
+          "userExperience": {
+            "ide": 0,
+            "workflowAgent": 0,
+            "absolute": 0,
+            "relative": 0
+          }
+        },
+        "winner": "tie",
+        "winnerMargin": 0,
+        "keyInsights": [],
+        "rawDataPath": null
+      }
+    ],
+    "medium": [],
+    "complex": [],
+    "production": []
+  },
+  "comparisons": [
+    {
+      "taskId": "simple-001",
+      "taskName": "REST API Endpoint",
+      "taskLevel": "simple",
+      "ideResult": {
+        "taskId": "simple-001",
+        "executor": "ide",
+        "startTime": "2026-03-25T10:01:31.358Z",
+        "endTime": null,
+        "durationMs": 0,
+        "iterationCount": 0,
+        "userInterventionCount": 0,
+        "tokensConsumed": 0,
+        "apiCalls": 0,
+        "artifacts": {},
+        "codeMetrics": {
+          "filesChanged": 0,
+          "linesAdded": 0,
+          "linesRemoved": 0,
+          "testFilesAdded": 0
+        },
+        "status": "pending",
+        "errorMessage": null,
+        "executionLog": ""
+      },
+      "workflowAgentResult": {
+        "taskId": "simple-001",
+        "executor": "workflow-agent",
+        "startTime": "2026-03-25T10:01:31.358Z",
+        "endTime": null,
+        "durationMs": 0,
+        "iterationCount": 0,
+        "userInterventionCount": 0,
+        "tokensConsumed": 0,
+        "apiCalls": 0,
+        "artifacts": {},
+        "codeMetrics": {
+          "filesChanged": 0,
+          "linesAdded": 0,
+          "linesRemoved": 0,
+          "testFilesAdded": 0
+        },
+        "status": "pending",
+        "errorMessage": null,
+        "executionLog": ""
+      },
+      "ideScores": {
+        "taskCompletion": {
+          "requirementUnderstanding": 0,
+          "artifactCompleteness": 0,
+          "bugFixSuccessRate": 100,
+          "testPassRate": 50,
+          "score": 32.5
+        },
+        "codeQuality": {
+          "lintScore": 100,
+          "architectureScore": 0,
+          "maintainabilityScore": 0,
+          "testCoverage": 0,
+          "complexityScore": 100,
+          "score": 50
+        },
+        "devEfficiency": {
+          "iterationEfficiency": 100,
+          "timeEfficiency": 100,
+          "resourceEfficiency": 100,
+          "automationLevel": 100,
+          "score": 100
+        },
+        "userExperience": {
+          "interactionSmoothness": 85,
+          "explainability": 60,
+          "controllability": 80,
+          "score": 0
+        },
+        "overallScore": 48
+      },
+      "workflowAgentScores": {
+        "taskCompletion": {
+          "requirementUnderstanding": 0,
+          "artifactCompleteness": 0,
+          "bugFixSuccessRate": 100,
+          "testPassRate": 50,
+          "score": 32.5
+        },
+        "codeQuality": {
+          "lintScore": 100,
+          "architectureScore": 0,
+          "maintainabilityScore": 0,
+          "testCoverage": 0,
+          "complexityScore": 100,
+          "score": 50
+        },
+        "devEfficiency": {
+          "iterationEfficiency": 100,
+          "timeEfficiency": 100,
+          "resourceEfficiency": 100,
+          "automationLevel": 100,
+          "score": 100
+        },
+        "userExperience": {
+          "interactionSmoothness": 85,
+          "explainability": 60,
+          "controllability": 80,
+          "score": 0
+        },
+        "overallScore": 48
+      },
+      "deltas": {
+        "taskCompletion": {
+          "ide": 32.5,
+          "workflowAgent": 32.5,
+          "absolute": 0,
+          "relative": 0
+        },
+        "codeQuality": {
+          "ide": 50,
+          "workflowAgent": 50,
+          "absolute": 0,
+          "relative": 0
+        },
+        "devEfficiency": {
+          "ide": 100,
+          "workflowAgent": 100,
+          "absolute": 0,
+          "relative": 0
+        },
+        "userExperience": {
+          "ide": 0,
+          "workflowAgent": 0,
+          "absolute": 0,
+          "relative": 0
+        }
+      },
+      "winner": "tie",
+      "winnerMargin": 0,
+      "keyInsights": [],
+      "rawDataPath": null
+    },
+    {
+      "taskId": "simple-002",
+      "taskName": "Data Validation Utility",
+      "taskLevel": "simple",
+      "ideResult": {
+        "taskId": "simple-002",
+        "executor": "ide",
+        "startTime": "2026-03-25T10:01:31.360Z",
+        "endTime": null,
+        "durationMs": 0,
+        "iterationCount": 0,
+        "userInterventionCount": 0,
+        "tokensConsumed": 0,
+        "apiCalls": 0,
+        "artifacts": {},
+        "codeMetrics": {
+          "filesChanged": 0,
+          "linesAdded": 0,
+          "linesRemoved": 0,
+          "testFilesAdded": 0
+        },
+        "status": "pending",
+        "errorMessage": null,
+        "executionLog": ""
+      },
+      "workflowAgentResult": {
+        "taskId": "simple-002",
+        "executor": "workflow-agent",
+        "startTime": "2026-03-25T10:01:31.360Z",
+        "endTime": null,
+        "durationMs": 0,
+        "iterationCount": 0,
+        "userInterventionCount": 0,
+        "tokensConsumed": 0,
+        "apiCalls": 0,
+        "artifacts": {},
+        "codeMetrics": {
+          "filesChanged": 0,
+          "linesAdded": 0,
+          "linesRemoved": 0,
+          "testFilesAdded": 0
+        },
+        "status": "pending",
+        "errorMessage": null,
+        "executionLog": ""
+      },
+      "ideScores": {
+        "taskCompletion": {
+          "requirementUnderstanding": 0,
+          "artifactCompleteness": 0,
+          "bugFixSuccessRate": 100,
+          "testPassRate": 50,
+          "score": 32.5
+        },
+        "codeQuality": {
+          "lintScore": 100,
+          "architectureScore": 0,
+          "maintainabilityScore": 0,
+          "testCoverage": 0,
+          "complexityScore": 100,
+          "score": 50
+        },
+        "devEfficiency": {
+          "iterationEfficiency": 100,
+          "timeEfficiency": 100,
+          "resourceEfficiency": 100,
+          "automationLevel": 100,
+          "score": 100
+        },
+        "userExperience": {
+          "interactionSmoothness": 85,
+          "explainability": 60,
+          "controllability": 80,
+          "score": 0
+        },
+        "overallScore": 48
+      },
+      "workflowAgentScores": {
+        "taskCompletion": {
+          "requirementUnderstanding": 0,
+          "artifactCompleteness": 0,
+          "bugFixSuccessRate": 100,
+          "testPassRate": 50,
+          "score": 32.5
+        },
+        "codeQuality": {
+          "lintScore": 100,
+          "architectureScore": 0,
+          "maintainabilityScore": 0,
+          "testCoverage": 0,
+          "complexityScore": 100,
+          "score": 50
+        },
+        "devEfficiency": {
+          "iterationEfficiency": 100,
+          "timeEfficiency": 100,
+          "resourceEfficiency": 100,
+          "automationLevel": 100,
+          "score": 100
+        },
+        "userExperience": {
+          "interactionSmoothness": 85,
+          "explainability": 60,
+          "controllability": 80,
+          "score": 0
+        },
+        "overallScore": 48
+      },
+      "deltas": {
+        "taskCompletion": {
+          "ide": 32.5,
+          "workflowAgent": 32.5,
+          "absolute": 0,
+          "relative": 0
+        },
+        "codeQuality": {
+          "ide": 50,
+          "workflowAgent": 50,
+          "absolute": 0,
+          "relative": 0
+        },
+        "devEfficiency": {
+          "ide": 100,
+          "workflowAgent": 100,
+          "absolute": 0,
+          "relative": 0
+        },
+        "userExperience": {
+          "ide": 0,
+          "workflowAgent": 0,
+          "absolute": 0,
+          "relative": 0
+        }
+      },
+      "winner": "tie",
+      "winnerMargin": 0,
+      "keyInsights": [],
+      "rawDataPath": null
+    },
+    {
+      "taskId": "simple-003",
+      "taskName": "CSV Parser",
+      "taskLevel": "simple",
+      "ideResult": {
+        "taskId": "simple-003",
+        "executor": "ide",
+        "startTime": "2026-03-25T10:01:31.360Z",
+        "endTime": null,
+        "durationMs": 0,
+        "iterationCount": 0,
+        "userInterventionCount": 0,
+        "tokensConsumed": 0,
+        "apiCalls": 0,
+        "artifacts": {},
+        "codeMetrics": {
+          "filesChanged": 0,
+          "linesAdded": 0,
+          "linesRemoved": 0,
+          "testFilesAdded": 0
+        },
+        "status": "pending",
+        "errorMessage": null,
+        "executionLog": ""
+      },
+      "workflowAgentResult": {
+        "taskId": "simple-003",
+        "executor": "workflow-agent",
+        "startTime": "2026-03-25T10:01:31.360Z",
+        "endTime": null,
+        "durationMs": 0,
+        "iterationCount": 0,
+        "userInterventionCount": 0,
+        "tokensConsumed": 0,
+        "apiCalls": 0,
+        "artifacts": {},
+        "codeMetrics": {
+          "filesChanged": 0,
+          "linesAdded": 0,
+          "linesRemoved": 0,
+          "testFilesAdded": 0
+        },
+        "status": "pending",
+        "errorMessage": null,
+        "executionLog": ""
+      },
+      "ideScores": {
+        "taskCompletion": {
+          "requirementUnderstanding": 0,
+          "artifactCompleteness": 0,
+          "bugFixSuccessRate": 100,
+          "testPassRate": 50,
+          "score": 32.5
+        },
+        "codeQuality": {
+          "lintScore": 100,
+          "architectureScore": 0,
+          "maintainabilityScore": 0,
+          "testCoverage": 0,
+          "complexityScore": 100,
+          "score": 50
+        },
+        "devEfficiency": {
+          "iterationEfficiency": 100,
+          "timeEfficiency": 100,
+          "resourceEfficiency": 100,
+          "automationLevel": 100,
+          "score": 100
+        },
+        "userExperience": {
+          "interactionSmoothness": 85,
+          "explainability": 60,
+          "controllability": 80,
+          "score": 0
+        },
+        "overallScore": 48
+      },
+      "workflowAgentScores": {
+        "taskCompletion": {
+          "requirementUnderstanding": 0,
+          "artifactCompleteness": 0,
+          "bugFixSuccessRate": 100,
+          "testPassRate": 50,
+          "score": 32.5
+        },
+        "codeQuality": {
+          "lintScore": 100,
+          "architectureScore": 0,
+          "maintainabilityScore": 0,
+          "testCoverage": 0,
+          "complexityScore": 100,
+          "score": 50
+        },
+        "devEfficiency": {
+          "iterationEfficiency": 100,
+          "timeEfficiency": 100,
+          "resourceEfficiency": 100,
+          "automationLevel": 100,
+          "score": 100
+        },
+        "userExperience": {
+          "interactionSmoothness": 85,
+          "explainability": 60,
+          "controllability": 80,
+          "score": 0
+        },
+        "overallScore": 48
+      },
+      "deltas": {
+        "taskCompletion": {
+          "ide": 32.5,
+          "workflowAgent": 32.5,
+          "absolute": 0,
+          "relative": 0
+        },
+        "codeQuality": {
+          "ide": 50,
+          "workflowAgent": 50,
+          "absolute": 0,
+          "relative": 0
+        },
+        "devEfficiency": {
+          "ide": 100,
+          "workflowAgent": 100,
+          "absolute": 0,
+          "relative": 0
+        },
+        "userExperience": {
+          "ide": 0,
+          "workflowAgent": 0,
+          "absolute": 0,
+          "relative": 0
+        }
+      },
+      "winner": "tie",
+      "winnerMargin": 0,
+      "keyInsights": [],
+      "rawDataPath": null
+    }
+  ],
+  "summary": {
+    "totalTasks": 3,
+    "workflowAgentWins": 0,
+    "ideWins": 0,
+    "ties": 3,
+    "avgIdeScore": 48,
+    "avgWorkflowAgentScore": 48,
+    "avgScoreDelta": 0,
+    "confidenceLevel": 0.95,
+    "isStatisticallySignificant": false
+  },
+  "dimensionSummary": {
+    "task_completion": {
+      "ide": 0,
+      "workflowAgent": 0,
+      "delta": 0
+    },
+    "code_quality": {
+      "ide": 0,
+      "workflowAgent": 0,
+      "delta": 0
+    },
+    "dev_efficiency": {
+      "ide": 0,
+      "workflowAgent": 0,
+      "delta": 0
+    },
+    "user_experience": {
+      "ide": 0,
+      "workflowAgent": 0,
+      "delta": 0
+    }
+  },
+  "strengths": [],
+  "weaknesses": [],
+  "recommendations": [
+    "Increase sample size for statistical significance"
+  ]
+}

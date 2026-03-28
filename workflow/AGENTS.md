@@ -2,7 +2,7 @@
 
 > This file is the **entry point** for AI agents. It is a directory index, not a rule dump.
 > Read this file first, then follow the links to the relevant documents.
-> Last updated: 2026-03-15
+> Last updated: 2026-03-27
 
 ---
 
@@ -88,6 +88,7 @@ workflow/
 | Symbol navigation | `view_code_item` | CodeGraph.querySymbol() |
 | Go to definition | IDE built-in LSP | LSPAdapter (self-spawned) |
 | Find references | IDE built-in LSP | LSPAdapter (self-spawned) |
+| **Call hierarchy** | **IDE built-in LSP** ⭐ | **CodeGraph.getCallGraph()** ⭐ |
 | Type inference / hover | IDE built-in LSP (hover) | LSPAdapter.getHover() |
 | Read file content | `read_file` | ContextLoader cache |
 | **Hotspot analysis** | ❌ *no IDE equivalent* | **CodeGraph (unique)** |
@@ -98,10 +99,23 @@ workflow/
 
 **How it works (automatically):**
 - `core/ide-detection.js` detects the IDE environment at startup
-- `prompt-builder.js` injects an **IDE Tool Guidance** block into every Agent prompt when inside an IDE
+- `core/lsp-router.js` **(IMPLEMENTED)** centralizes all LSP routing decisions per ADR-37:
+  - Routes `gotoDefinition`, `findReferences`, `getCallHierarchy`, `getHover`
+  - Priority: IDE LSP → LSPAdapter (self-spawned) → CodeGraph regex fallback
+  - Eliminates duplicated "IDE vs self-built" logic across modules
+  - **Stats**: ~860 lines, singleton pattern, supports timeout/retry/fallback
+- `business-logic-extractor.js` uses LSPRouter for accurate call analysis on hotspot symbols
 - `lsp-adapter.js` skips spawning a language server when IDE already has one
 - Agents see the guidance table and automatically prefer IDE tools
 - Self-built context (hotspot, skills, experience, ADRs) is always injected — these have no IDE equivalent
+
+**P1 (Call Hierarchy IDE Routing) – ✅ IMPLEMENTED:**
+- `core/lsp-router.js` provides unified `getCallHierarchy()` with IDE-first routing
+- `code-graph-query.js` uses LSPRouter for async `getCallGraph()` with LSP routing
+- `business-logic-extractor.js` uses LSPRouter for accurate call analysis on hotspot symbols
+- In IDE mode with LSP (Cursor, VS Code, Windsurf): compiler-accurate Call Hierarchy
+- In standalone mode: uses LSPAdapter if server supports `callHierarchyProvider`, else regex fallback
+- **Impact**: Call Hierarchy accuracy improved from regex-based (~70%) to compiler-accurate (~95%)
 
 > ⚠️ When adding new capabilities, always check: **does the IDE already provide this?**
 > If yes → add IDE-first guidance. If no → implement as self-built module.
@@ -118,6 +132,7 @@ workflow/
 6. **New modules must be integrated into both `run()` and `runTaskBased()` paths** (see `docs/decision-log.md` N-series fixes)
 7. **IDE-First principle**: prefer IDE-native tools over self-built modules (see ADR-37)
 8. **Long Task Protocol**: for multi-step tasks, always show progress (see ADR-41 and `docs/agent-collaboration.md`)
+9. **Anti-Stuck Rule**: after each Write/Edit operation, verify inline using `read_file` (NOT Bash). Never batch-verify multiple files via a single Bash command at the end — verify each file immediately after writing it
 
 ---
 
@@ -192,6 +207,27 @@ the **full multi-agent workflow pipeline**: ANALYSE → ARCHITECT → PLAN → C
 
 > ⚠️ The `/wf` command is a **workflow trigger**, not a code analysis request.
 > If the environment is not initialized, run `/wf init` first, then execute the workflow.
+
+> **IMPORTANT**: When executing `/wf <requirement>`, do NOT run the Session Start Checklist.
+> Go directly into the workflow pipeline stages. Use IDE-native tools (read_file, codebase_search,
+> grep_search) for all code understanding — do NOT use Bash/Terminal for file reading or code exploration.
+> The ONLY acceptable Bash usage during `/wf <requirement>` is: running `node workflow/init-project.js`
+> (if not yet initialized) and running test commands in the TEST stage.
+
+---
+
+## ⚡ Bash/Terminal Safety Rules (CRITICAL)
+
+When using Bash/Terminal, follow these rules to prevent hanging:
+
+1. **Never start foreground servers** — commands like `npm run dev`, `python manage.py runserver` block forever. Use `&` suffix or skip.
+2. **Always add timeout** — for network commands (curl, wget), add `--max-time 10` or equivalent.
+3. **Prefer IDE tools over Bash** — use `read_file` instead of `cat`, `list_dir` instead of `ls`/`find`, `grep_search` instead of `grep`.
+4. **Never run interactive commands** — avoid anything that prompts for input (ssh, sudo, npm login).
+5. **Keep commands short** — if a command might take >30 seconds, warn the user first or find an alternative.
+6. **Verification MUST use IDE tools, NOT Bash** — when verifying file content (JSON validity, config correctness, file existence), ALWAYS use `read_file` to read the file and validate in-context. NEVER spawn a Bash command for verification. Bash verification commands can hang silently with no visible feedback to the user.
+7. **Announce before Bash** — before ANY Bash tool call, output a brief message explaining what the command does and how long it should take (e.g. "Running tests, ~10s..."). If the command hangs, the user can see what went wrong.
+8. **One command per call** — never chain multiple commands with `&&` or `;` in a single Bash call. If one hangs, the user cannot tell which one.
 
 ---
 

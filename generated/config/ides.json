@@ -1,0 +1,63 @@
+{
+  "vscode": {
+    "name": "VS Code",
+    "envVars": [
+      "VSCODE_PID",
+      "VSCODE_CWD"
+    ],
+    "identifiers": [
+      {
+        "type": "env",
+        "key": "VSCODE_PID"
+      }
+    ]
+  },
+  "cursor": {
+    "name": "Cursor",
+    "envVars": [
+      "CURSOR_TRACE_ID"
+    ],
+    "identifiers": [
+      {
+        "type": "env",
+        "key": "CURSOR_TRACE_ID"
+      }
+    ]
+  },
+  "windsurf": {
+    "name": "Windsurf",
+    "envVars": [
+      "WINDSURF_SESSION"
+    ],
+    "identifiers": [
+      {
+        "type": "env",
+        "key": "WINDSURF_SESSION"
+      }
+    ]
+  },
+  "trae": {
+    "name": "Trae",
+    "envVars": [
+      "TRAE_SESSION"
+    ],
+    "identifiers": [
+      {
+        "type": "env",
+        "key": "TRAE_SESSION"
+      }
+    ]
+  },
+  "zed": {
+    "name": "Zed",
+    "envVars": [
+      "ZED_TERM"
+    ],
+    "identifiers": [
+      {
+        "type": "env",
+        "key": "ZED_TERM"
+      }
+    ]
+  }
+}

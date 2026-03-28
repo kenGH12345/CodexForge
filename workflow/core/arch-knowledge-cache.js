@@ -1,13 +1,14 @@
 /**
  * arch-knowledge-cache.js – Distilled Architecture Knowledge Cache
  *
- * Single source of truth that fuses four data sources into one compact
- * cache file (~1000 tokens) for session cold-start injection:
+ * Single source of truth that fuses five data sources into one compact
+ * cache file (~1500 tokens) for session cold-start injection:
  *
- *   1. AGENTS.md     → project structure fingerprint
- *   2. project-profile → tech stack + architecture pattern
- *   3. code-graph.json → module summary + hotspots
- *   4. task-history.json → recent task context
+ *   1. AGENTS.md              → project structure fingerprint
+ *   2. project-profile         → tech stack + architecture pattern
+ *   3. code-graph.json         → module summary + hotspots
+ *   4. task-history.json       → recent task context
+ *   5. capability-index.json   → hand-maintained capability inventory
  *
  * The cache is incrementally maintained via dirty flags.
  * Consumers (memory-manager, agent-generator) read from this cache
@@ -38,9 +39,10 @@ const MAX_MODULE_ENTRIES = 8;
  * @property {object} dirtyFlags       - Which sources changed since last rebuild
  * @property {object} structure        - From AGENTS.md: package list, top-level dirs
  * @property {object} techStack        - From project-profile: frameworks, arch, data
- * @property {object} codeGraph        - From code-graph.json: modules + hotspots
- * @property {object[]} recentTasks    - From task-history.json: last N task summaries
- * @property {string} distilledSummary - Pre-rendered ~1000 token Markdown block
+ * @property {object} codeGraph           - From code-graph.json: modules + hotspots
+ * @property {object[]} recentTasks       - From task-history.json: last N task summaries
+ * @property {object} capabilityIndex     - From capability-index.json: hand-maintained capability inventory
+ * @property {string} distilledSummary    - Pre-rendered ~1500 token Markdown block
  */
 
 /**
@@ -97,17 +99,18 @@ function rebuildCache(projectRoot, options = {}) {
 
   const existing = loadCache(projectRoot);
   const dirty = forceAll
-    ? { structure: true, techStack: true, codeGraph: true, taskHistory: true }
+    ? { structure: true, techStack: true, codeGraph: true, taskHistory: true, capabilityIndex: true }
     : _detectDirtyFlags(projectRoot, existing);
 
   const cache = {
-    version: '1.0.0',
+    version: '1.1.0',
     updatedAt: new Date().toISOString(),
-    dirtyFlags: { structure: false, techStack: false, codeGraph: false, taskHistory: false },
-    structure:    dirty.structure   ? _collectStructure(projectRoot)         : (existing && existing.structure    || {}),
-    techStack:    dirty.techStack   ? _collectTechStack(projectRoot, projectProfile) : (existing && existing.techStack    || {}),
-    codeGraph:    dirty.codeGraph   ? _collectCodeGraph(projectRoot)         : (existing && existing.codeGraph    || {}),
-    recentTasks:  dirty.taskHistory ? _collectTaskHistory(projectRoot)       : (existing && existing.recentTasks  || []),
+    dirtyFlags: { structure: false, techStack: false, codeGraph: false, taskHistory: false, capabilityIndex: false },
+    structure:       dirty.structure        ? _collectStructure(projectRoot)                    : (existing && existing.structure       || {}),
+    techStack:       dirty.techStack        ? _collectTechStack(projectRoot, projectProfile)    : (existing && existing.techStack       || {}),
+    codeGraph:       dirty.codeGraph        ? _collectCodeGraph(projectRoot)                    : (existing && existing.codeGraph       || {}),
+    recentTasks:     dirty.taskHistory      ? _collectTaskHistory(projectRoot)                  : (existing && existing.recentTasks     || []),
+    capabilityIndex: dirty.capabilityIndex  ? _collectCapabilityIndex(projectRoot)              : (existing && existing.capabilityIndex || null),
     distilledSummary: '', // will be rendered below
   };
 
@@ -128,13 +131,38 @@ function rebuildCache(projectRoot, options = {}) {
 }
 
 /**
+ * Returns the rendered capability index section only (~500 tokens).
+ * Used for evaluation and gap analysis without loading the full cache.
+ *
+ * @param {string} projectRoot
+ * @returns {string} Markdown block
+ */
+function getCapabilityIndex(projectRoot) {
+  let cache = loadCache(projectRoot);
+  if (!cache || !cache.capabilityIndex) {
+    cache = rebuildCache(projectRoot, { forceAll: true });
+  }
+  if (!cache.capabilityIndex || !cache.capabilityIndex.categories) return '';
+
+  const lines = ['### 🧩 Capability Index', ''];
+  for (const cat of cache.capabilityIndex.categories) {
+    lines.push(`**${cat.name}**`);
+    for (const item of cat.items) {
+      lines.push(`- ${item}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+/**
  * Returns the pre-rendered distilled summary from cache.
  * If cache doesn't exist, triggers a full rebuild.
  *
  * @param {string} projectRoot
  * @param {object} [options]
  * @param {object} [options.projectProfile] - Pre-loaded profile
- * @returns {string} Markdown block (~1000 tokens)
+ * @returns {string} Markdown block (~1500 tokens)
  */
 function getDistilledSummary(projectRoot, options = {}) {
   let cache = loadCache(projectRoot);
@@ -167,7 +195,7 @@ function getTaskHistorySummary(projectRoot) {
  */
 function _detectDirtyFlags(projectRoot, existing) {
   if (!existing || !existing.updatedAt) {
-    return { structure: true, techStack: true, codeGraph: true, taskHistory: true };
+    return { structure: true, techStack: true, codeGraph: true, taskHistory: true, capabilityIndex: true };
   }
 
   const cacheTime = new Date(existing.updatedAt).getTime();
@@ -181,10 +209,11 @@ function _detectDirtyFlags(projectRoot, existing) {
   };
 
   return {
-    structure:   check('AGENTS.md'),
-    techStack:   check('output/project-profile.md') || check('workflow.config.js'),
-    codeGraph:   check('output/code-graph.json'),
-    taskHistory: check('output/task-history.json') || check('workflow/output/task-history.json'),
+    structure:       check('AGENTS.md'),
+    techStack:       check('output/project-profile.md') || check('workflow.config.js'),
+    codeGraph:       check('output/code-graph.json'),
+    taskHistory:     check('output/task-history.json') || check('workflow/output/task-history.json'),
+    capabilityIndex: check('docs/capability-index.json') || check('workflow/docs/capability-index.json'),
   };
 }
 
@@ -343,6 +372,42 @@ function _collectTaskHistory(projectRoot) {
   }
 }
 
+/**
+ * Collects capability index from docs/capability-index.json.
+ * This is a hand-maintained file that describes what the system can do
+ * (as opposed to code-graph which describes what files exist).
+ *
+ * Searches in two locations:
+ *   1. <projectRoot>/docs/capability-index.json  (project-level)
+ *   2. <projectRoot>/workflow/docs/capability-index.json  (workflow-level)
+ */
+function _collectCapabilityIndex(projectRoot) {
+  const candidates = [
+    path.join(projectRoot, 'docs', 'capability-index.json'),
+    path.join(projectRoot, 'workflow', 'docs', 'capability-index.json'),
+  ];
+
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      if (!raw || !Array.isArray(raw.capabilities)) continue;
+
+      return {
+        version: (raw._meta && raw._meta.version) || '1.0.0',
+        lastUpdated: (raw._meta && raw._meta.lastUpdated) || null,
+        categories: raw.capabilities.map(cat => ({
+          id:    cat.id,
+          name:  cat.name,
+          items: (cat.items || []).slice(0, 10), // cap per category
+        })),
+      };
+    } catch { /* non-fatal, try next candidate */ }
+  }
+
+  return null;
+}
+
 // ─── Rendering ────────────────────────────────────────────────────────────────
 
 /**
@@ -407,6 +472,23 @@ function _renderDistilledSummary(cache) {
     }
   }
 
+  // ── Capability Index ──
+  if (cache.capabilityIndex && cache.capabilityIndex.categories) {
+    lines.push('### 🧩 Capability Index');
+    lines.push('');
+    if (cache.capabilityIndex.lastUpdated) {
+      lines.push(`> Hand-maintained. Source updated: ${cache.capabilityIndex.lastUpdated}`);
+      lines.push('');
+    }
+    for (const cat of cache.capabilityIndex.categories) {
+      lines.push(`**${cat.name}**`);
+      for (const item of cat.items) {
+        lines.push(`- ${item}`);
+      }
+      lines.push('');
+    }
+  }
+
   // ── Recent Tasks ──
   lines.push(_renderTaskHistorySection(cache.recentTasks));
 
@@ -466,6 +548,7 @@ module.exports = {
   rebuildCache,
   getDistilledSummary,
   getTaskHistorySummary,
+  getCapabilityIndex,
   MAX_TASK_ENTRIES,
   MAX_HOTSPOT_ENTRIES,
   MAX_MODULE_ENTRIES,
@@ -475,6 +558,7 @@ module.exports = {
   _collectTechStack,
   _collectCodeGraph,
   _collectTaskHistory,
+  _collectCapabilityIndex,
   _renderDistilledSummary,
   _renderTaskHistorySection,
 };

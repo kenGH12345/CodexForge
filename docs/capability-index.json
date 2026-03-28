@@ -1,0 +1,109 @@
+{
+  "_meta": {
+    "description": "WorkFlowAgent Capability Index – hand-maintained, consumed by arch-knowledge-cache.js",
+    "version": "1.0.0",
+    "lastUpdated": "2026-03-28",
+    "tokenBudget": "~800 tokens when rendered to Markdown"
+  },
+  "capabilities": [
+    {
+      "id": "pipeline",
+      "name": "Workflow Pipeline",
+      "items": [
+        "7-stage pipeline: ANALYSE → ARCHITECT → PLAN → CODE → TEST → REVIEW → DEPLOY",
+        "State machine with rollback, skip, jump between stages",
+        "Dual-path execution: sequential (run) + task-based (runTaskBased)",
+        "Stage-level context store with LRU cache (max 20 entries, 50K chars)"
+      ]
+    },
+    {
+      "id": "agents",
+      "name": "Agent Roles",
+      "items": [
+        "AnalystAgent: requirement analysis, module map extraction, anchor file detection",
+        "ArchitectAgent: architecture design, module-aware split, interface contracts",
+        "PlannerAgent: vertical-slice task decomposition, dependency ordering",
+        "DeveloperAgent: code generation, file replacement, diff-based editing",
+        "TesterAgent: test generation, test execution, coverage checking"
+      ]
+    },
+    {
+      "id": "quality",
+      "name": "Quality Assurance",
+      "items": [
+        "QualityGate: multi-stage gates (P0/P1/P2), auto-rollback on P0 failure",
+        "CoverageChecker: requirement-to-architecture coverage validation",
+        "ArchitectureReviewAgent: adversarial review + fix loop",
+        "CodeReviewAgent: adversarial code review + fix loop",
+        "RegressionGuard: cross-task regression detection",
+        "SelfReflectionEngine: post-run validation + health audit"
+      ]
+    },
+    {
+      "id": "experience",
+      "name": "Experience & Learning",
+      "items": [
+        "ExperienceStore: persistent experience storage with quality scoring",
+        "ExperienceRouter: cross-project experience migration",
+        "ExperienceDistillation: dedup, conflict detection, similarity scoring",
+        "ExperienceEvolution: auto-evolve experiences based on outcomes",
+        "ExperienceEventBus: decoupled event-driven experience lifecycle"
+      ]
+    },
+    {
+      "id": "context",
+      "name": "Context Management",
+      "items": [
+        "ContextLoader: skill-aware context injection (MAX_INJECT_TOKENS=2800)",
+        "StageContextStore: LRU-cached inter-stage context (max 20 entries, 50K chars)",
+        "SmartContextSelector: relevance-based context block selection",
+        "TokenBudget: 3-layer budget management (L1/L2/L3)",
+        "ArchKnowledgeCache: distilled architecture knowledge for cold-start"
+      ]
+    },
+    {
+      "id": "skills",
+      "name": "Skill System",
+      "items": [
+        "25+ built-in skills (architecture, coding, review, testing, etc.)",
+        "SkillEvolutionEngine: auto-enrich thin skills, retire low-value ones",
+        "SkillEnrichment: LLM-powered skill content enhancement",
+        "SkillMarketplace: export/import skills across projects",
+        "SkillWatcher: file-system watcher for hot-reload"
+      ]
+    },
+    {
+      "id": "observability",
+      "name": "Observability & Self-Improvement",
+      "items": [
+        "MAPE-K loop: Monitor → Analyze → Plan → Execute (autonomous optimization)",
+        "ObservabilityStrategy: trend analysis, complexity estimation",
+        "EventJournal: structured event logging per workflow run",
+        "PromptTracing: per-LLM-call trace recording",
+        "MetricsHistory: time-series metrics (JSONL)"
+      ]
+    },
+    {
+      "id": "collaboration",
+      "name": "Collaboration & Communication",
+      "items": [
+        "FileRefBus: file-path-only inter-agent communication (no raw content passing)",
+        "NegotiationEngine: structured inter-agent negotiation (max 2 rounds)",
+        "SocraticEngine: Socratic questioning at phase gates",
+        "HookSystem: extensible lifecycle hooks (15+ hook points)",
+        "DecisionTrail: audit trail for all architectural decisions"
+      ]
+    },
+    {
+      "id": "infra",
+      "name": "Infrastructure",
+      "items": [
+        "MCPServer: Model Context Protocol server mode",
+        "WorkflowServer: HTTP service mode (healthz, readyz, POST /workflow)",
+        "CIIntegration: CI pipeline integration",
+        "GitIntegration: worktree, branch, PR management",
+        "IDE detection + ADR-37 IDE-First routing (ide-detection.js)"
+      ]
+    }
+  ]
+}

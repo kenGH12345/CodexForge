@@ -177,7 +177,9 @@ class AutoDeployer {
     const backupPath = configPath + '.bak.' + Date.now();
     try {
       fs.copyFileSync(configPath, backupPath);
-    } catch (_) { /* non-fatal, continue without backup */ }
+    } catch (err) {
+      console.warn(`[AutoDeployer] Failed to create backup: ${err.message}`);
+    }
 
     // Apply changes to config file
     try {
@@ -213,7 +215,15 @@ class AutoDeployer {
     } catch (writeErr) {
       console.error(`[AutoDeployer] ❌ YELLOW: Failed to write config: ${writeErr.message}`);
       // Restore backup
-      try { fs.copyFileSync(backupPath, configPath); } catch (_) {}
+try {
+        fs.copyFileSync(backupPath, configPath);
+      } catch (e) {
+        this._logger?.warn('AutoDeployer', 'Failed to restore backup file', {
+          backupPath,
+          configPath,
+          error: e.message,
+        });
+      }
       record.applied = false;
       record.error = writeErr.message;
       this._appendHistory(record);
@@ -279,7 +289,9 @@ class AutoDeployer {
       }
       fs.writeFileSync(prFilePath, prBody, 'utf-8');
       record.prFile = prFilePath;
-    } catch (_) { /* non-fatal */ }
+    } catch (err) {
+      console.warn(`[AutoDeployer] Failed to write PR file: ${err.message}`);
+    }
 
     this._appendHistory(record);
 
@@ -496,7 +508,9 @@ class AutoDeployer {
         fs.mkdirSync(this.outputDir, { recursive: true });
       }
       fs.appendFileSync(this._historyPath, JSON.stringify(record) + '\n', 'utf-8');
-    } catch (_) { /* non-fatal */ }
+    } catch (err) {
+      console.warn(`[AutoDeployer] Failed to append history: ${err.message}`);
+    }
   }
 
   /**
@@ -511,7 +525,8 @@ class AutoDeployer {
         .filter(Boolean)
         .map(l => JSON.parse(l))
         .reverse(); // newest first
-    } catch (_) {
+    } catch (err) {
+      console.warn(`[AutoDeployer] Failed to load history: ${err.message}`);
       return [];
     }
   }

@@ -146,7 +146,9 @@ class RegressionGuard {
           baseline.metrics[METRIC_KEY.SKILL_EFFECTIVE] = latest.skillEffectiveCount;
         }
       }
-    } catch (_) { /* non-fatal */ }
+    } catch (err) {
+      if (this._verbose) console.warn(`[RegressionGuard] Failed to compute hit rates: ${err.message}`);
+    }
 
     // Capture skill file versions (for rollback detection)
     try {
@@ -167,7 +169,9 @@ class RegressionGuard {
           };
         }
       }
-    } catch (_) { /* non-fatal */ }
+    } catch (err) {
+      if (this._verbose) console.warn(`[RegressionGuard] Failed to capture skill versions: ${err.message}`);
+    }
 
     // Save baseline to disk
     try {
@@ -175,7 +179,9 @@ class RegressionGuard {
         fs.mkdirSync(this._outputDir, { recursive: true });
       }
       fs.writeFileSync(this._baselinePath, JSON.stringify(baseline, null, 2), 'utf-8');
-    } catch (_) { /* non-fatal */ }
+    } catch (err) {
+      if (this._verbose) console.warn(`[RegressionGuard] Failed to save baseline: ${err.message}`);
+    }
 
     if (this._verbose) {
       console.log(`[RegressionGuard] 📸 Baseline captured: ${Object.keys(baseline.metrics).length} metrics, ${Object.keys(baseline.skillVersions).length} skills`);
@@ -388,7 +394,9 @@ class RegressionGuard {
           });
         }
       }
-    } catch (_) { /* non-fatal */ }
+    } catch (err) {
+      if (this._verbose) console.warn(`[RegressionGuard] Failed to detect skill changes: ${err.message}`);
+    }
 
     return regressions;
   }
@@ -428,7 +436,9 @@ class RegressionGuard {
         fs.mkdirSync(this._outputDir, { recursive: true });
       }
       fs.appendFileSync(this._historyPath, JSON.stringify(record) + '\n', 'utf-8');
-    } catch (_) { /* non-fatal */ }
+    } catch (err) {
+      if (this._verbose) console.warn(`[RegressionGuard] Failed to record outcome: ${err.message}`);
+    }
 
     if (this._verbose) {
       console.log(`[RegressionGuard] 📝 Outcome recorded: ROI=${record.evolutionROI}, improved=${comparison.improved.length}, degraded=${comparison.degraded.length}`);
@@ -453,7 +463,8 @@ class RegressionGuard {
         .map(l => JSON.parse(l))
         .reverse()
         .slice(0, limit);
-    } catch (_) {
+    } catch (err) {
+      console.warn(`[RegressionGuard] Failed to load history: ${err.message}`);
       return [];
     }
   }
@@ -520,7 +531,8 @@ class RegressionGuard {
       }
 
       return metrics;
-    } catch (_) {
+    } catch (err) {
+      if (this._verbose) console.warn(`[RegressionGuard] Failed to load current metrics: ${err.message}`);
       return null;
     }
   }

@@ -458,7 +458,7 @@ class KnowledgePipeline {
   }
 
   _injectIntoComplaint(structured, context) {
-    if (!this._orch || !this._orch._complaintWall) {
+    if (!this._orch || !this._orch.complaintWall) {
       return { success: false, injected: 0, error: 'ComplaintWall not available' };
     }
 
@@ -470,7 +470,7 @@ class KnowledgePipeline {
     let injected = 0;
     for (const c of complaints.slice(0, 5)) {
       try {
-        this._orch._complaintWall.file({
+        this._orch.complaintWall.file({
           title: c.title || 'Unknown complaint',
           description: c.content || c.description || '',
           severity: c.severity || 'medium',

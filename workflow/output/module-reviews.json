@@ -1,0 +1,2148 @@
+{
+  "version": "1.0.0",
+  "updatedAt": "2026-03-25T01:31:08.732Z",
+  "reviews": [
+    {
+      "modulePath": "core/business-logic-extractor.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in business-logic-extractor.js",
+      "issues": [
+        "DA-1774350850547-ob8u"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.579Z",
+      "updatedAt": "2026-03-24T11:14:10.579Z",
+      "reviewCount": 4
+    },
+    {
+      "modulePath": "core/clarification-engine.js",
+      "status": "needs-action",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in clarification-engine.js",
+      "issues": [
+        "DA-1774350850507-1g0u"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.552Z",
+      "updatedAt": "2026-03-24T11:14:10.552Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/code-graph-parsers.js",
+      "status": "needs-action",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in code-graph-parsers.js",
+      "issues": [
+        "DA-1774350850508-05pj"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.552Z",
+      "updatedAt": "2026-03-24T11:14:10.552Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/code-review-agent.js",
+      "status": "needs-action",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in code-review-agent.js",
+      "issues": [
+        "DA-1774350850508-v0uy"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.553Z",
+      "updatedAt": "2026-03-24T11:14:10.553Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/context-loader.js",
+      "status": "needs-action",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in context-loader.js",
+      "issues": [
+        "DA-1774350850509-ekk5"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.553Z",
+      "updatedAt": "2026-03-24T11:14:10.553Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/deep-audit-orchestrator.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 2 issue(s) in deep-audit-orchestrator.js",
+      "issues": [
+        "DA-1774350850488-5xk4",
+        "DA-1774350850547-acja"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.578Z",
+      "updatedAt": "2026-03-24T11:14:10.578Z",
+      "reviewCount": 4
+    },
+    {
+      "modulePath": "core/observability.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in observability.js",
+      "issues": [
+        "DA-1774350850547-dv7d"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.580Z",
+      "updatedAt": "2026-03-24T11:14:10.580Z",
+      "reviewCount": 4
+    },
+    {
+      "modulePath": "core/orchestrator-task.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in orchestrator-task.js",
+      "issues": [
+        "DA-1774350850547-ict9"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.580Z",
+      "updatedAt": "2026-03-24T11:14:10.580Z",
+      "reviewCount": 4
+    },
+    {
+      "modulePath": "core/orchestrator-teardown-impl.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in orchestrator-teardown-impl.js",
+      "issues": [
+        "DA-1774402268656-6fsw"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.732Z",
+      "updatedAt": "2026-03-25T01:31:08.732Z",
+      "reviewCount": 3
+    },
+    {
+      "modulePath": "core/project-profiler.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in project-profiler.js",
+      "issues": [
+        "DA-1774350850547-2v7y"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.581Z",
+      "updatedAt": "2026-03-24T11:14:10.581Z",
+      "reviewCount": 4
+    },
+    {
+      "modulePath": "core/prompt-builder.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in prompt-builder.js",
+      "issues": [
+        "DA-1774402268656-6fsw"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.731Z",
+      "updatedAt": "2026-03-25T01:31:08.731Z",
+      "reviewCount": 5
+    },
+    {
+      "modulePath": "core/skill-enrichment.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 2 issue(s) in skill-enrichment.js",
+      "issues": [
+        "DA-1774402268670-mto3",
+        "DA-1774402268670-gj39"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.728Z",
+      "updatedAt": "2026-03-25T01:31:08.728Z",
+      "reviewCount": 3
+    },
+    {
+      "modulePath": "core/skill-evolution.js",
+      "status": "needs-action",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in skill-evolution.js",
+      "issues": [
+        "DA-1774350850524-igw5"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.557Z",
+      "updatedAt": "2026-03-24T11:14:10.557Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/stage-tester.js",
+      "status": "needs-action",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in stage-tester.js",
+      "issues": [
+        "DA-1774350850526-qxsh"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.558Z",
+      "updatedAt": "2026-03-24T11:14:10.558Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/tech-profiles.js",
+      "status": "needs-action",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in tech-profiles.js",
+      "issues": [
+        "DA-1774350850527-7bfb"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.558Z",
+      "updatedAt": "2026-03-24T11:14:10.558Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/test-case-executor.js",
+      "status": "needs-action",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in test-case-executor.js",
+      "issues": [
+        "DA-1774350850527-pluj"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.559Z",
+      "updatedAt": "2026-03-24T11:14:10.559Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "index.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in index.js",
+      "issues": [
+        "DA-1774402268672-vzfd"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.729Z",
+      "updatedAt": "2026-03-25T01:31:08.729Z",
+      "reviewCount": 3
+    },
+    {
+      "modulePath": "core/adapter-plugin-registry.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in adapter-plugin-registry.js",
+      "issues": [
+        "DA-1774350850504-i0xg"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.560Z",
+      "updatedAt": "2026-03-24T11:14:10.560Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/api-endpoint-extractor.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in api-endpoint-extractor.js",
+      "issues": [
+        "DA-1774350850505-yhup"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.560Z",
+      "updatedAt": "2026-03-24T11:14:10.560Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/architecture-review-agent.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in architecture-review-agent.js",
+      "issues": [
+        "DA-1774350850506-het7"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.561Z",
+      "updatedAt": "2026-03-24T11:14:10.561Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/auto-deployer.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in auto-deployer.js",
+      "issues": [
+        "DA-1774350850506-g7rb"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.561Z",
+      "updatedAt": "2026-03-24T11:14:10.561Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/code-graph-builder.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in code-graph-builder.js",
+      "issues": [
+        "DA-1774350850507-gzo3"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.562Z",
+      "updatedAt": "2026-03-24T11:14:10.562Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/code-graph-cache.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in code-graph-cache.js",
+      "issues": [
+        "DA-1774350850507-ibyk"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.563Z",
+      "updatedAt": "2026-03-24T11:14:10.563Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/code-graph-enrichment.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in code-graph-enrichment.js",
+      "issues": [
+        "DA-1774350850507-ttw2"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.563Z",
+      "updatedAt": "2026-03-24T11:14:10.563Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/duplicate-pattern-detector.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in duplicate-pattern-detector.js",
+      "issues": [
+        "DA-1774350850511-6nf7"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.564Z",
+      "updatedAt": "2026-03-24T11:14:10.564Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/entropy-gc.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in entropy-gc.js",
+      "issues": [
+        "DA-1774350850511-81w6"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.564Z",
+      "updatedAt": "2026-03-24T11:14:10.564Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/event-journal.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in event-journal.js",
+      "issues": [
+        "DA-1774350850511-0r2o"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.565Z",
+      "updatedAt": "2026-03-24T11:14:10.565Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/experience-query.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in experience-query.js",
+      "issues": [
+        "DA-1774350850512-qskj"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.566Z",
+      "updatedAt": "2026-03-24T11:14:10.566Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/experience-store.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 2 issue(s) in experience-store.js",
+      "issues": [
+        "DA-1774402268670-xjyy",
+        "DA-1774402268670-xjyy"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.724Z",
+      "updatedAt": "2026-03-25T01:31:08.724Z",
+      "reviewCount": 3
+    },
+    {
+      "modulePath": "core/git-integration.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in git-integration.js",
+      "issues": [
+        "DA-1774350850513-ii0g"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.567Z",
+      "updatedAt": "2026-03-24T11:14:10.567Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/knowledge-pipeline.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in knowledge-pipeline.js",
+      "issues": [
+        "DA-1774350850514-t7h6"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.568Z",
+      "updatedAt": "2026-03-24T11:14:10.568Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/lsp-profile-enhancer.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in lsp-profile-enhancer.js",
+      "issues": [
+        "DA-1774350850515-rsuv"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.568Z",
+      "updatedAt": "2026-03-24T11:14:10.568Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/mape-engine.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in mape-engine.js",
+      "issues": [
+        "DA-1774350850488-5xk4"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.577Z",
+      "updatedAt": "2026-03-24T11:14:10.577Z",
+      "reviewCount": 4
+    },
+    {
+      "modulePath": "core/mape-executors.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in mape-executors.js",
+      "issues": [
+        "DA-1774402268656-6fsw"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.730Z",
+      "updatedAt": "2026-03-25T01:31:08.730Z",
+      "reviewCount": 5
+    },
+    {
+      "modulePath": "core/mcp-adapter-helpers.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in mcp-adapter-helpers.js",
+      "issues": [
+        "DA-1774350850516-aeft"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.570Z",
+      "updatedAt": "2026-03-24T11:14:10.570Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/observability-strategy.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in observability-strategy.js",
+      "issues": [
+        "DA-1774350850518-2kq8"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.570Z",
+      "updatedAt": "2026-03-24T11:14:10.570Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/regression-guard.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in regression-guard.js",
+      "issues": [
+        "DA-1774350850488-5xk4"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.579Z",
+      "updatedAt": "2026-03-24T11:14:10.579Z",
+      "reviewCount": 4
+    },
+    {
+      "modulePath": "core/requirement-clarifier.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in requirement-clarifier.js",
+      "issues": [
+        "DA-1774350850522-z7au"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.571Z",
+      "updatedAt": "2026-03-24T11:14:10.571Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/rollback-coordinator.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in rollback-coordinator.js",
+      "issues": [
+        "DA-1774350850522-jdie"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.572Z",
+      "updatedAt": "2026-03-24T11:14:10.572Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/sandbox.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in sandbox.js",
+      "issues": [
+        "DA-1774350850522-blaq"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.572Z",
+      "updatedAt": "2026-03-24T11:14:10.572Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/self-audit-socratic.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in self-audit-socratic.js",
+      "issues": [
+        "DA-1774350850523-u2ji"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.573Z",
+      "updatedAt": "2026-03-24T11:14:10.573Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/smart-context-selector.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in smart-context-selector.js",
+      "issues": [
+        "DA-1774350850524-nydg"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.574Z",
+      "updatedAt": "2026-03-24T11:14:10.574Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/stage-architect.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in stage-architect.js",
+      "issues": [
+        "DA-1774350850525-3wgk"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.574Z",
+      "updatedAt": "2026-03-24T11:14:10.574Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/stage-context-store.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in stage-context-store.js",
+      "issues": [
+        "DA-1774350850525-sqq5"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.574Z",
+      "updatedAt": "2026-03-24T11:14:10.574Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/state-machine.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in state-machine.js",
+      "issues": [
+        "DA-1774350850526-z1a7"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.575Z",
+      "updatedAt": "2026-03-24T11:14:10.575Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/token-budget.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in token-budget.js",
+      "issues": [
+        "DA-1774350850528-zsrq"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.576Z",
+      "updatedAt": "2026-03-24T11:14:10.576Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/write-around-review.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in write-around-review.js",
+      "issues": [
+        "DA-1774350850529-gq7g"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-24T11:14:10.576Z",
+      "updatedAt": "2026-03-24T11:14:10.576Z",
+      "reviewCount": 2
+    },
+    {
+      "modulePath": "core/context-budget-manager.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 2 issue(s) in context-budget-manager.js",
+      "issues": [
+        "DA-1774402268670-kr0d",
+        "DA-1774402268670-kr0d"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.723Z",
+      "updatedAt": "2026-03-25T01:31:08.723Z",
+      "reviewCount": 1
+    },
+    {
+      "modulePath": "core/file-scanner.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 2 issue(s) in file-scanner.js",
+      "issues": [
+        "DA-1774402268670-0jbf",
+        "DA-1774402268670-0jbf"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.725Z",
+      "updatedAt": "2026-03-25T01:31:08.725Z",
+      "reviewCount": 1
+    },
+    {
+      "modulePath": "core/ide-experience-hook.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 2 issue(s) in ide-experience-hook.js",
+      "issues": [
+        "DA-1774402268670-o083",
+        "DA-1774402268670-o083"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.726Z",
+      "updatedAt": "2026-03-25T01:31:08.726Z",
+      "reviewCount": 1
+    },
+    {
+      "modulePath": "core/logger.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 2 issue(s) in logger.js",
+      "issues": [
+        "DA-1774402268670-5r3g",
+        "DA-1774402268670-5r3g"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.726Z",
+      "updatedAt": "2026-03-25T01:31:08.726Z",
+      "reviewCount": 1
+    },
+    {
+      "modulePath": "core/orchestrator-stages.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 2 issue(s) in orchestrator-stages.js",
+      "issues": [
+        "DA-1774402268670-bomt",
+        "DA-1774402268670-bomt"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.727Z",
+      "updatedAt": "2026-03-25T01:31:08.727Z",
+      "reviewCount": 1
+    },
+    {
+      "modulePath": "core/web-search-helpers.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 2 issue(s) in web-search-helpers.js",
+      "issues": [
+        "DA-1774402268670-mto3",
+        "DA-1774402268670-gj39"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.728Z",
+      "updatedAt": "2026-03-25T01:31:08.728Z",
+      "reviewCount": 1
+    },
+    {
+      "modulePath": "core/mape-monitor.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in mape-monitor.js",
+      "issues": [
+        "DA-1774402268656-6fsw"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.730Z",
+      "updatedAt": "2026-03-25T01:31:08.730Z",
+      "reviewCount": 1
+    },
+    {
+      "modulePath": "core/orchestrator-git.js",
+      "status": "reviewed",
+      "reviewer": "deep-audit",
+      "summary": "Found 1 issue(s) in orchestrator-git.js",
+      "issues": [
+        "DA-1774402268656-6fsw"
+      ],
+      "metrics": {},
+      "reviewedAt": "2026-03-25T01:31:08.732Z",
+      "updatedAt": "2026-03-25T01:31:08.732Z",
+      "reviewCount": 1
+    }
+  ],
+  "issues": [
+    {
+      "id": "DA-1774350850360-1vu3",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: business-logic-extractor.js",
+      "description": "business-logic-extractor.js has 936 effective lines (total: 1431, comments: 301, ratio: 21.03%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 21.03% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.418Z",
+      "updatedAt": "2026-03-24T11:14:10.418Z",
+      "modulePath": "core/business-logic-extractor.js"
+    },
+    {
+      "id": "DA-1774350850360-ouq1",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: clarification-engine.js",
+      "description": "clarification-engine.js has 677 effective lines (total: 998, comments: 245, ratio: 24.55%). Tier: core-critical (max: 400 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 24.55% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.419Z",
+      "updatedAt": "2026-03-24T11:14:10.419Z",
+      "modulePath": "core/clarification-engine.js"
+    },
+    {
+      "id": "DA-1774350850361-w6q0",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: code-graph-parsers.js",
+      "description": "code-graph-parsers.js has 695 effective lines (total: 946, comments: 178, ratio: 18.82%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 18.82% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.419Z",
+      "updatedAt": "2026-03-24T11:14:10.419Z",
+      "modulePath": "core/code-graph-parsers.js"
+    },
+    {
+      "id": "DA-1774350850362-s8rq",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: code-review-agent.js",
+      "description": "code-review-agent.js has 638 effective lines (total: 871, comments: 160, ratio: 18.37%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 18.37% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.420Z",
+      "updatedAt": "2026-03-24T11:14:10.420Z",
+      "modulePath": "core/code-review-agent.js"
+    },
+    {
+      "id": "DA-1774350850363-svux",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: context-loader.js",
+      "description": "context-loader.js has 569 effective lines (total: 958, comments: 284, ratio: 29.65%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 29.65% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.420Z",
+      "updatedAt": "2026-03-24T11:14:10.420Z",
+      "modulePath": "core/context-loader.js"
+    },
+    {
+      "id": "DA-1774350850364-a93f",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: deep-audit-orchestrator.js",
+      "description": "deep-audit-orchestrator.js has 765 effective lines (total: 1311, comments: 394, ratio: 30.05%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 30.05% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.421Z",
+      "updatedAt": "2026-03-24T11:14:10.421Z",
+      "modulePath": "core/deep-audit-orchestrator.js"
+    },
+    {
+      "id": "DA-1774350850372-p3nl",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: observability.js",
+      "description": "observability.js has 783 effective lines (total: 1364, comments: 451, ratio: 33.06%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 33.06% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.421Z",
+      "updatedAt": "2026-03-24T11:14:10.421Z",
+      "modulePath": "core/observability.js"
+    },
+    {
+      "id": "DA-1774350850373-ceb4",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: orchestrator-task.js",
+      "description": "orchestrator-task.js has 984 effective lines (total: 1325, comments: 202, ratio: 15.25%). Tier: core-critical (max: 400 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 15.25% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.422Z",
+      "updatedAt": "2026-03-24T11:14:10.422Z",
+      "modulePath": "core/orchestrator-task.js"
+    },
+    {
+      "id": "DA-1774350850373-uwlr",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: orchestrator-teardown-impl.js",
+      "description": "orchestrator-teardown-impl.js has 616 effective lines (total: 797, comments: 105, ratio: 13.17%). Tier: core-critical (max: 400 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 13.17% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.422Z",
+      "updatedAt": "2026-03-24T11:14:10.422Z",
+      "modulePath": "core/orchestrator-teardown-impl.js"
+    },
+    {
+      "id": "DA-1774350850374-e32l",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: project-profiler.js",
+      "description": "project-profiler.js has 1077 effective lines (total: 1553, comments: 273, ratio: 17.58%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 17.58% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.423Z",
+      "updatedAt": "2026-03-24T11:14:10.423Z",
+      "modulePath": "core/project-profiler.js"
+    },
+    {
+      "id": "DA-1774350850374-6n6v",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: prompt-builder.js",
+      "description": "prompt-builder.js has 728 effective lines (total: 1163, comments: 303, ratio: 26.05%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 26.05% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.423Z",
+      "updatedAt": "2026-03-24T11:14:10.423Z",
+      "modulePath": "core/prompt-builder.js"
+    },
+    {
+      "id": "DA-1774350850377-0x52",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: skill-enrichment.js",
+      "description": "skill-enrichment.js has 620 effective lines (total: 864, comments: 168, ratio: 19.44%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 19.44% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.424Z",
+      "updatedAt": "2026-03-24T11:14:10.424Z",
+      "modulePath": "core/skill-enrichment.js"
+    },
+    {
+      "id": "DA-1774350850377-l62w",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: skill-evolution.js",
+      "description": "skill-evolution.js has 544 effective lines (total: 839, comments: 228, ratio: 27.18%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 27.18% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.424Z",
+      "updatedAt": "2026-03-24T11:14:10.424Z",
+      "modulePath": "core/skill-evolution.js"
+    },
+    {
+      "id": "DA-1774350850380-1rnw",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: stage-tester.js",
+      "description": "stage-tester.js has 688 effective lines (total: 808, comments: 48, ratio: 5.94%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 5.94% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.425Z",
+      "updatedAt": "2026-03-24T11:14:10.425Z",
+      "modulePath": "core/stage-tester.js"
+    },
+    {
+      "id": "DA-1774350850380-a5qm",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: tech-profiles.js",
+      "description": "tech-profiles.js has 553 effective lines (total: 597, comments: 19, ratio: 3.18%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 3.18% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.425Z",
+      "updatedAt": "2026-03-24T11:14:10.425Z",
+      "modulePath": "core/tech-profiles.js"
+    },
+    {
+      "id": "DA-1774350850381-x0eq",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: test-case-executor.js",
+      "description": "test-case-executor.js has 652 effective lines (total: 864, comments: 125, ratio: 14.47%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 14.47% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.426Z",
+      "updatedAt": "2026-03-24T11:14:10.426Z",
+      "modulePath": "core/test-case-executor.js"
+    },
+    {
+      "id": "DA-1774350850356-w9i8",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: index.js",
+      "description": "index.js has 659 effective lines (total: 1162, comments: 405, ratio: 34.85%). Tier: entry-point (max: 500 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 34.85% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.426Z",
+      "updatedAt": "2026-03-24T11:14:10.426Z",
+      "modulePath": "index.js"
+    },
+    {
+      "id": "DA-1774350850357-b7zf",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: adapter-plugin-registry.js",
+      "description": "adapter-plugin-registry.js has 384 effective lines (total: 570, comments: 143, ratio: 25.09%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 25.09% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.426Z",
+      "updatedAt": "2026-03-24T11:14:10.426Z",
+      "modulePath": "core/adapter-plugin-registry.js"
+    },
+    {
+      "id": "DA-1774350850358-pcbg",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: api-endpoint-extractor.js",
+      "description": "api-endpoint-extractor.js has 483 effective lines (total: 776, comments: 186, ratio: 23.97%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 23.97% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.427Z",
+      "updatedAt": "2026-03-24T11:14:10.427Z",
+      "modulePath": "core/api-endpoint-extractor.js"
+    },
+    {
+      "id": "DA-1774350850359-a86e",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: architecture-review-agent.js",
+      "description": "architecture-review-agent.js has 436 effective lines (total: 561, comments: 72, ratio: 12.83%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 12.83% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.427Z",
+      "updatedAt": "2026-03-24T11:14:10.427Z",
+      "modulePath": "core/architecture-review-agent.js"
+    },
+    {
+      "id": "DA-1774350850359-johz",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: auto-deployer.js",
+      "description": "auto-deployer.js has 352 effective lines (total: 548, comments: 131, ratio: 23.91%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 23.91% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.428Z",
+      "updatedAt": "2026-03-24T11:14:10.428Z",
+      "modulePath": "core/auto-deployer.js"
+    },
+    {
+      "id": "DA-1774350850361-mpz4",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: code-graph-builder.js",
+      "description": "code-graph-builder.js has 426 effective lines (total: 620, comments: 129, ratio: 20.81%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 20.81% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.428Z",
+      "updatedAt": "2026-03-24T11:14:10.428Z",
+      "modulePath": "core/code-graph-builder.js"
+    },
+    {
+      "id": "DA-1774350850361-ju2e",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: code-graph-cache.js",
+      "description": "code-graph-cache.js has 371 effective lines (total: 463, comments: 39, ratio: 8.42%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 8.42% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.429Z",
+      "updatedAt": "2026-03-24T11:14:10.429Z",
+      "modulePath": "core/code-graph-cache.js"
+    },
+    {
+      "id": "DA-1774350850361-t655",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: code-graph-enrichment.js",
+      "description": "code-graph-enrichment.js has 364 effective lines (total: 551, comments: 135, ratio: 24.5%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 24.5% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.429Z",
+      "updatedAt": "2026-03-24T11:14:10.429Z",
+      "modulePath": "core/code-graph-enrichment.js"
+    },
+    {
+      "id": "DA-1774350850364-de1h",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: duplicate-pattern-detector.js",
+      "description": "duplicate-pattern-detector.js has 471 effective lines (total: 742, comments: 162, ratio: 21.83%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 21.83% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.430Z",
+      "updatedAt": "2026-03-24T11:14:10.430Z",
+      "modulePath": "core/duplicate-pattern-detector.js"
+    },
+    {
+      "id": "DA-1774350850365-ze3r",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: entropy-gc.js",
+      "description": "entropy-gc.js has 379 effective lines (total: 510, comments: 77, ratio: 15.1%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 15.1% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.430Z",
+      "updatedAt": "2026-03-24T11:14:10.430Z",
+      "modulePath": "core/entropy-gc.js"
+    },
+    {
+      "id": "DA-1774350850365-c77u",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: event-journal.js",
+      "description": "event-journal.js has 343 effective lines (total: 581, comments: 167, ratio: 28.74%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 28.74% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.430Z",
+      "updatedAt": "2026-03-24T11:14:10.430Z",
+      "modulePath": "core/event-journal.js"
+    },
+    {
+      "id": "DA-1774350850366-gorg",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: experience-query.js",
+      "description": "experience-query.js has 387 effective lines (total: 513, comments: 72, ratio: 14.04%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 14.04% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.431Z",
+      "updatedAt": "2026-03-24T11:14:10.431Z",
+      "modulePath": "core/experience-query.js"
+    },
+    {
+      "id": "DA-1774350850366-jvfd",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: experience-store.js",
+      "description": "experience-store.js has 482 effective lines (total: 829, comments: 241, ratio: 29.07%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 29.07% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.431Z",
+      "updatedAt": "2026-03-24T11:14:10.431Z",
+      "modulePath": "core/experience-store.js"
+    },
+    {
+      "id": "DA-1774350850368-b8mh",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: git-integration.js",
+      "description": "git-integration.js has 443 effective lines (total: 748, comments: 214, ratio: 28.61%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 28.61% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.432Z",
+      "updatedAt": "2026-03-24T11:14:10.432Z",
+      "modulePath": "core/git-integration.js"
+    },
+    {
+      "id": "DA-1774350850369-2378",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: knowledge-pipeline.js",
+      "description": "knowledge-pipeline.js has 524 effective lines (total: 718, comments: 99, ratio: 13.79%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 13.79% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.432Z",
+      "updatedAt": "2026-03-24T11:14:10.432Z",
+      "modulePath": "core/knowledge-pipeline.js"
+    },
+    {
+      "id": "DA-1774350850369-ee81",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: lsp-profile-enhancer.js",
+      "description": "lsp-profile-enhancer.js has 339 effective lines (total: 536, comments: 125, ratio: 23.32%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 23.32% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.433Z",
+      "updatedAt": "2026-03-24T11:14:10.433Z",
+      "modulePath": "core/lsp-profile-enhancer.js"
+    },
+    {
+      "id": "DA-1774350850370-4ylj",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: mape-engine.js",
+      "description": "mape-engine.js has 580 effective lines (total: 849, comments: 165, ratio: 19.43%). Tier: core-critical (max: 400 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 19.43% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.433Z",
+      "updatedAt": "2026-03-24T11:14:10.433Z",
+      "modulePath": "core/mape-engine.js"
+    },
+    {
+      "id": "DA-1774350850370-x9m1",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: mape-executors.js",
+      "description": "mape-executors.js has 521 effective lines (total: 764, comments: 146, ratio: 19.11%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 19.11% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.434Z",
+      "updatedAt": "2026-03-24T11:14:10.434Z",
+      "modulePath": "core/mape-executors.js"
+    },
+    {
+      "id": "DA-1774350850370-pfx6",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: mcp-adapter-helpers.js",
+      "description": "mcp-adapter-helpers.js has 413 effective lines (total: 520, comments: 32, ratio: 6.15%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 6.15% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.434Z",
+      "updatedAt": "2026-03-24T11:14:10.434Z",
+      "modulePath": "core/mcp-adapter-helpers.js"
+    },
+    {
+      "id": "DA-1774350850371-ctkt",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: observability-strategy.js",
+      "description": "observability-strategy.js has 434 effective lines (total: 597, comments: 103, ratio: 17.25%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 17.25% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.435Z",
+      "updatedAt": "2026-03-24T11:14:10.435Z",
+      "modulePath": "core/observability-strategy.js"
+    },
+    {
+      "id": "DA-1774350850375-abrf",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: regression-guard.js",
+      "description": "regression-guard.js has 326 effective lines (total: 545, comments: 136, ratio: 24.95%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 24.95% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.435Z",
+      "updatedAt": "2026-03-24T11:14:10.435Z",
+      "modulePath": "core/regression-guard.js"
+    },
+    {
+      "id": "DA-1774350850375-sfzp",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: requirement-clarifier.js",
+      "description": "requirement-clarifier.js has 314 effective lines (total: 581, comments: 213, ratio: 36.66%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 36.66% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.435Z",
+      "updatedAt": "2026-03-24T11:14:10.435Z",
+      "modulePath": "core/requirement-clarifier.js"
+    },
+    {
+      "id": "DA-1774350850375-72go",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: rollback-coordinator.js",
+      "description": "rollback-coordinator.js has 303 effective lines (total: 630, comments: 255, ratio: 40.48%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 40.48% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.436Z",
+      "updatedAt": "2026-03-24T11:14:10.436Z",
+      "modulePath": "core/rollback-coordinator.js"
+    },
+    {
+      "id": "DA-1774350850376-z7ka",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: sandbox.js",
+      "description": "sandbox.js has 360 effective lines (total: 582, comments: 155, ratio: 26.63%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 26.63% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.436Z",
+      "updatedAt": "2026-03-24T11:14:10.436Z",
+      "modulePath": "core/sandbox.js"
+    },
+    {
+      "id": "DA-1774350850376-7c4d",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: self-audit-socratic.js",
+      "description": "self-audit-socratic.js has 397 effective lines (total: 525, comments: 55, ratio: 10.48%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 10.48% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.437Z",
+      "updatedAt": "2026-03-24T11:14:10.437Z",
+      "modulePath": "core/self-audit-socratic.js"
+    },
+    {
+      "id": "DA-1774350850378-urx5",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: smart-context-selector.js",
+      "description": "smart-context-selector.js has 373 effective lines (total: 653, comments: 208, ratio: 31.85%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 31.85% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.437Z",
+      "updatedAt": "2026-03-24T11:14:10.437Z",
+      "modulePath": "core/smart-context-selector.js"
+    },
+    {
+      "id": "DA-1774350850378-umm5",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: stage-architect.js",
+      "description": "stage-architect.js has 369 effective lines (total: 455, comments: 39, ratio: 8.57%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 8.57% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.438Z",
+      "updatedAt": "2026-03-24T11:14:10.438Z",
+      "modulePath": "core/stage-architect.js"
+    },
+    {
+      "id": "DA-1774350850378-u1qi",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: stage-context-store.js",
+      "description": "stage-context-store.js has 385 effective lines (total: 724, comments: 255, ratio: 35.22%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 35.22% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.438Z",
+      "updatedAt": "2026-03-24T11:14:10.438Z",
+      "modulePath": "core/stage-context-store.js"
+    },
+    {
+      "id": "DA-1774350850380-90a8",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: state-machine.js",
+      "description": "state-machine.js has 359 effective lines (total: 784, comments: 334, ratio: 42.6%). Tier: core-critical (max: 400 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 42.6% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.439Z",
+      "updatedAt": "2026-03-24T11:14:10.439Z",
+      "modulePath": "core/state-machine.js"
+    },
+    {
+      "id": "DA-1774350850381-abvq",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: token-budget.js",
+      "description": "token-budget.js has 308 effective lines (total: 553, comments: 182, ratio: 32.91%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 32.91% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.439Z",
+      "updatedAt": "2026-03-24T11:14:10.439Z",
+      "modulePath": "core/token-budget.js"
+    },
+    {
+      "id": "DA-1774350850382-3a4q",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: write-around-review.js",
+      "description": "write-around-review.js has 392 effective lines (total: 592, comments: 126, ratio: 21.28%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 21.28% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.439Z",
+      "updatedAt": "2026-03-24T11:14:10.439Z",
+      "modulePath": "core/write-around-review.js"
+    },
+    {
+      "id": "DA-1774350850336-04cx",
+      "severity": "low",
+      "category": "logic-consistency",
+      "title": "112 completely silent catch blocks",
+      "description": "Silent catch blocks (empty or comment-only) may hide important errors. While fire-and-forget patterns are intentional, excessive use can mask bugs.",
+      "suggestion": "Audit silent catch blocks. Ensure at minimum a console.warn for non-trivial operations.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.442Z",
+      "updatedAt": "2026-03-24T11:14:10.442Z",
+      "modulePath": "core/regression-guard.js"
+    },
+    {
+      "id": "DA-1774350850413-03z9",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: deep-audit-orchestrator.js (56KB)",
+      "description": "deep-audit-orchestrator.js is 56KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.441Z",
+      "updatedAt": "2026-03-24T11:14:10.441Z",
+      "modulePath": "core/deep-audit-orchestrator.js"
+    },
+    {
+      "id": "DA-1774350850413-bxgq",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: prompt-builder.js (58KB)",
+      "description": "prompt-builder.js is 58KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.442Z",
+      "updatedAt": "2026-03-24T11:14:10.442Z",
+      "modulePath": "core/prompt-builder.js"
+    },
+    {
+      "id": "DA-1774350850412-yz39",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: business-logic-extractor.js (51KB)",
+      "description": "business-logic-extractor.js is 51KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.443Z",
+      "updatedAt": "2026-03-24T11:14:10.443Z",
+      "modulePath": "core/business-logic-extractor.js"
+    },
+    {
+      "id": "DA-1774350850413-nrkl",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: observability.js (59KB)",
+      "description": "observability.js is 59KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.443Z",
+      "updatedAt": "2026-03-24T11:14:10.443Z",
+      "modulePath": "core/observability.js"
+    },
+    {
+      "id": "DA-1774350850413-lfxt",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: orchestrator-task.js (61KB)",
+      "description": "orchestrator-task.js is 61KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.444Z",
+      "updatedAt": "2026-03-24T11:14:10.444Z",
+      "modulePath": "core/orchestrator-task.js"
+    },
+    {
+      "id": "DA-1774350850413-tn3e",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: project-profiler.js (73KB)",
+      "description": "project-profiler.js is 73KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.444Z",
+      "updatedAt": "2026-03-24T11:14:10.444Z",
+      "modulePath": "core/project-profiler.js"
+    },
+    {
+      "id": "DA-1774350850506-udhs",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: business-logic-extractor.js",
+      "description": "business-logic-extractor.js has 936 effective lines (total: 1431, comments: 301, ratio: 21.03%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 21.03% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.551Z",
+      "updatedAt": "2026-03-24T11:14:10.551Z",
+      "modulePath": "core/business-logic-extractor.js"
+    },
+    {
+      "id": "DA-1774350850507-1g0u",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: clarification-engine.js",
+      "description": "clarification-engine.js has 677 effective lines (total: 998, comments: 245, ratio: 24.55%). Tier: core-critical (max: 400 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 24.55% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.552Z",
+      "updatedAt": "2026-03-24T11:14:10.552Z",
+      "modulePath": "core/clarification-engine.js"
+    },
+    {
+      "id": "DA-1774350850508-05pj",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: code-graph-parsers.js",
+      "description": "code-graph-parsers.js has 695 effective lines (total: 946, comments: 178, ratio: 18.82%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 18.82% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.552Z",
+      "updatedAt": "2026-03-24T11:14:10.552Z",
+      "modulePath": "core/code-graph-parsers.js"
+    },
+    {
+      "id": "DA-1774350850508-v0uy",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: code-review-agent.js",
+      "description": "code-review-agent.js has 638 effective lines (total: 871, comments: 160, ratio: 18.37%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 18.37% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.553Z",
+      "updatedAt": "2026-03-24T11:14:10.553Z",
+      "modulePath": "core/code-review-agent.js"
+    },
+    {
+      "id": "DA-1774350850509-ekk5",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: context-loader.js",
+      "description": "context-loader.js has 569 effective lines (total: 958, comments: 284, ratio: 29.65%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 29.65% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.553Z",
+      "updatedAt": "2026-03-24T11:14:10.553Z",
+      "modulePath": "core/context-loader.js"
+    },
+    {
+      "id": "DA-1774350850510-omnw",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: deep-audit-orchestrator.js",
+      "description": "deep-audit-orchestrator.js has 765 effective lines (total: 1311, comments: 394, ratio: 30.05%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 30.05% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.554Z",
+      "updatedAt": "2026-03-24T11:14:10.554Z",
+      "modulePath": "core/deep-audit-orchestrator.js"
+    },
+    {
+      "id": "DA-1774350850518-3yh3",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: observability.js",
+      "description": "observability.js has 783 effective lines (total: 1364, comments: 451, ratio: 33.06%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 33.06% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.554Z",
+      "updatedAt": "2026-03-24T11:14:10.554Z",
+      "modulePath": "core/observability.js"
+    },
+    {
+      "id": "DA-1774350850520-mnbn",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: orchestrator-task.js",
+      "description": "orchestrator-task.js has 984 effective lines (total: 1325, comments: 202, ratio: 15.25%). Tier: core-critical (max: 400 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 15.25% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.555Z",
+      "updatedAt": "2026-03-24T11:14:10.555Z",
+      "modulePath": "core/orchestrator-task.js"
+    },
+    {
+      "id": "DA-1774350850520-r116",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: orchestrator-teardown-impl.js",
+      "description": "orchestrator-teardown-impl.js has 616 effective lines (total: 797, comments: 105, ratio: 13.17%). Tier: core-critical (max: 400 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 13.17% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.555Z",
+      "updatedAt": "2026-03-24T11:14:10.555Z",
+      "modulePath": "core/orchestrator-teardown-impl.js"
+    },
+    {
+      "id": "DA-1774350850520-1lvf",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: project-profiler.js",
+      "description": "project-profiler.js has 1077 effective lines (total: 1553, comments: 273, ratio: 17.58%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 17.58% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.556Z",
+      "updatedAt": "2026-03-24T11:14:10.556Z",
+      "modulePath": "core/project-profiler.js"
+    },
+    {
+      "id": "DA-1774350850521-5ky2",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: prompt-builder.js",
+      "description": "prompt-builder.js has 728 effective lines (total: 1163, comments: 303, ratio: 26.05%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 26.05% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.556Z",
+      "updatedAt": "2026-03-24T11:14:10.556Z",
+      "modulePath": "core/prompt-builder.js"
+    },
+    {
+      "id": "DA-1774350850524-zacq",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: skill-enrichment.js",
+      "description": "skill-enrichment.js has 620 effective lines (total: 864, comments: 168, ratio: 19.44%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 19.44% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.557Z",
+      "updatedAt": "2026-03-24T11:14:10.557Z",
+      "modulePath": "core/skill-enrichment.js"
+    },
+    {
+      "id": "DA-1774350850524-igw5",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: skill-evolution.js",
+      "description": "skill-evolution.js has 544 effective lines (total: 839, comments: 228, ratio: 27.18%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 27.18% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.557Z",
+      "updatedAt": "2026-03-24T11:14:10.557Z",
+      "modulePath": "core/skill-evolution.js"
+    },
+    {
+      "id": "DA-1774350850526-qxsh",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: stage-tester.js",
+      "description": "stage-tester.js has 688 effective lines (total: 808, comments: 48, ratio: 5.94%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 5.94% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.558Z",
+      "updatedAt": "2026-03-24T11:14:10.558Z",
+      "modulePath": "core/stage-tester.js"
+    },
+    {
+      "id": "DA-1774350850527-7bfb",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: tech-profiles.js",
+      "description": "tech-profiles.js has 553 effective lines (total: 597, comments: 19, ratio: 3.18%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 3.18% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.558Z",
+      "updatedAt": "2026-03-24T11:14:10.558Z",
+      "modulePath": "core/tech-profiles.js"
+    },
+    {
+      "id": "DA-1774350850527-pluj",
+      "severity": "high",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: test-case-executor.js",
+      "description": "test-case-executor.js has 652 effective lines (total: 864, comments: 125, ratio: 14.47%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 14.47% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.559Z",
+      "updatedAt": "2026-03-24T11:14:10.559Z",
+      "modulePath": "core/test-case-executor.js"
+    },
+    {
+      "id": "DA-1774350850503-pc1j",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: index.js",
+      "description": "index.js has 659 effective lines (total: 1162, comments: 405, ratio: 34.85%). Tier: entry-point (max: 500 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 34.85% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.559Z",
+      "updatedAt": "2026-03-24T11:14:10.559Z",
+      "modulePath": "index.js"
+    },
+    {
+      "id": "DA-1774350850504-i0xg",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: adapter-plugin-registry.js",
+      "description": "adapter-plugin-registry.js has 384 effective lines (total: 570, comments: 143, ratio: 25.09%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 25.09% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.560Z",
+      "updatedAt": "2026-03-24T11:14:10.560Z",
+      "modulePath": "core/adapter-plugin-registry.js"
+    },
+    {
+      "id": "DA-1774350850505-yhup",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: api-endpoint-extractor.js",
+      "description": "api-endpoint-extractor.js has 483 effective lines (total: 776, comments: 186, ratio: 23.97%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 23.97% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.560Z",
+      "updatedAt": "2026-03-24T11:14:10.560Z",
+      "modulePath": "core/api-endpoint-extractor.js"
+    },
+    {
+      "id": "DA-1774350850506-het7",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: architecture-review-agent.js",
+      "description": "architecture-review-agent.js has 436 effective lines (total: 561, comments: 72, ratio: 12.83%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 12.83% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.561Z",
+      "updatedAt": "2026-03-24T11:14:10.561Z",
+      "modulePath": "core/architecture-review-agent.js"
+    },
+    {
+      "id": "DA-1774350850506-g7rb",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: auto-deployer.js",
+      "description": "auto-deployer.js has 352 effective lines (total: 548, comments: 131, ratio: 23.91%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 23.91% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.561Z",
+      "updatedAt": "2026-03-24T11:14:10.561Z",
+      "modulePath": "core/auto-deployer.js"
+    },
+    {
+      "id": "DA-1774350850507-gzo3",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: code-graph-builder.js",
+      "description": "code-graph-builder.js has 426 effective lines (total: 620, comments: 129, ratio: 20.81%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 20.81% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.562Z",
+      "updatedAt": "2026-03-24T11:14:10.562Z",
+      "modulePath": "core/code-graph-builder.js"
+    },
+    {
+      "id": "DA-1774350850507-ibyk",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: code-graph-cache.js",
+      "description": "code-graph-cache.js has 371 effective lines (total: 463, comments: 39, ratio: 8.42%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 8.42% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.563Z",
+      "updatedAt": "2026-03-24T11:14:10.563Z",
+      "modulePath": "core/code-graph-cache.js"
+    },
+    {
+      "id": "DA-1774350850507-ttw2",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: code-graph-enrichment.js",
+      "description": "code-graph-enrichment.js has 364 effective lines (total: 551, comments: 135, ratio: 24.5%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 24.5% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.563Z",
+      "updatedAt": "2026-03-24T11:14:10.563Z",
+      "modulePath": "core/code-graph-enrichment.js"
+    },
+    {
+      "id": "DA-1774350850511-6nf7",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: duplicate-pattern-detector.js",
+      "description": "duplicate-pattern-detector.js has 471 effective lines (total: 742, comments: 162, ratio: 21.83%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 21.83% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.564Z",
+      "updatedAt": "2026-03-24T11:14:10.564Z",
+      "modulePath": "core/duplicate-pattern-detector.js"
+    },
+    {
+      "id": "DA-1774350850511-81w6",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: entropy-gc.js",
+      "description": "entropy-gc.js has 379 effective lines (total: 510, comments: 77, ratio: 15.1%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 15.1% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.564Z",
+      "updatedAt": "2026-03-24T11:14:10.564Z",
+      "modulePath": "core/entropy-gc.js"
+    },
+    {
+      "id": "DA-1774350850511-0r2o",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: event-journal.js",
+      "description": "event-journal.js has 343 effective lines (total: 581, comments: 167, ratio: 28.74%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 28.74% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.565Z",
+      "updatedAt": "2026-03-24T11:14:10.565Z",
+      "modulePath": "core/event-journal.js"
+    },
+    {
+      "id": "DA-1774350850512-qskj",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: experience-query.js",
+      "description": "experience-query.js has 387 effective lines (total: 513, comments: 72, ratio: 14.04%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 14.04% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.566Z",
+      "updatedAt": "2026-03-24T11:14:10.566Z",
+      "modulePath": "core/experience-query.js"
+    },
+    {
+      "id": "DA-1774350850512-an17",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: experience-store.js",
+      "description": "experience-store.js has 482 effective lines (total: 829, comments: 241, ratio: 29.07%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 29.07% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.566Z",
+      "updatedAt": "2026-03-24T11:14:10.566Z",
+      "modulePath": "core/experience-store.js"
+    },
+    {
+      "id": "DA-1774350850513-ii0g",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: git-integration.js",
+      "description": "git-integration.js has 443 effective lines (total: 748, comments: 214, ratio: 28.61%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 28.61% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.567Z",
+      "updatedAt": "2026-03-24T11:14:10.567Z",
+      "modulePath": "core/git-integration.js"
+    },
+    {
+      "id": "DA-1774350850514-t7h6",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: knowledge-pipeline.js",
+      "description": "knowledge-pipeline.js has 524 effective lines (total: 718, comments: 99, ratio: 13.79%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 13.79% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.568Z",
+      "updatedAt": "2026-03-24T11:14:10.568Z",
+      "modulePath": "core/knowledge-pipeline.js"
+    },
+    {
+      "id": "DA-1774350850515-rsuv",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: lsp-profile-enhancer.js",
+      "description": "lsp-profile-enhancer.js has 339 effective lines (total: 536, comments: 125, ratio: 23.32%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 23.32% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.568Z",
+      "updatedAt": "2026-03-24T11:14:10.568Z",
+      "modulePath": "core/lsp-profile-enhancer.js"
+    },
+    {
+      "id": "DA-1774350850515-x5wo",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: mape-engine.js",
+      "description": "mape-engine.js has 580 effective lines (total: 849, comments: 165, ratio: 19.43%). Tier: core-critical (max: 400 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 19.43% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.569Z",
+      "updatedAt": "2026-03-24T11:14:10.569Z",
+      "modulePath": "core/mape-engine.js"
+    },
+    {
+      "id": "DA-1774350850516-f7t8",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: mape-executors.js",
+      "description": "mape-executors.js has 521 effective lines (total: 764, comments: 146, ratio: 19.11%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 19.11% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.569Z",
+      "updatedAt": "2026-03-24T11:14:10.569Z",
+      "modulePath": "core/mape-executors.js"
+    },
+    {
+      "id": "DA-1774350850516-aeft",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: mcp-adapter-helpers.js",
+      "description": "mcp-adapter-helpers.js has 413 effective lines (total: 520, comments: 32, ratio: 6.15%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 6.15% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.570Z",
+      "updatedAt": "2026-03-24T11:14:10.570Z",
+      "modulePath": "core/mcp-adapter-helpers.js"
+    },
+    {
+      "id": "DA-1774350850518-2kq8",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: observability-strategy.js",
+      "description": "observability-strategy.js has 434 effective lines (total: 597, comments: 103, ratio: 17.25%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 17.25% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.570Z",
+      "updatedAt": "2026-03-24T11:14:10.570Z",
+      "modulePath": "core/observability-strategy.js"
+    },
+    {
+      "id": "DA-1774350850521-jmdx",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: regression-guard.js",
+      "description": "regression-guard.js has 326 effective lines (total: 545, comments: 136, ratio: 24.95%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 24.95% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.571Z",
+      "updatedAt": "2026-03-24T11:14:10.571Z",
+      "modulePath": "core/regression-guard.js"
+    },
+    {
+      "id": "DA-1774350850522-z7au",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: requirement-clarifier.js",
+      "description": "requirement-clarifier.js has 314 effective lines (total: 581, comments: 213, ratio: 36.66%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 36.66% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.571Z",
+      "updatedAt": "2026-03-24T11:14:10.571Z",
+      "modulePath": "core/requirement-clarifier.js"
+    },
+    {
+      "id": "DA-1774350850522-jdie",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: rollback-coordinator.js",
+      "description": "rollback-coordinator.js has 303 effective lines (total: 630, comments: 255, ratio: 40.48%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 40.48% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.572Z",
+      "updatedAt": "2026-03-24T11:14:10.572Z",
+      "modulePath": "core/rollback-coordinator.js"
+    },
+    {
+      "id": "DA-1774350850522-blaq",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: sandbox.js",
+      "description": "sandbox.js has 360 effective lines (total: 582, comments: 155, ratio: 26.63%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 26.63% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.572Z",
+      "updatedAt": "2026-03-24T11:14:10.572Z",
+      "modulePath": "core/sandbox.js"
+    },
+    {
+      "id": "DA-1774350850523-u2ji",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: self-audit-socratic.js",
+      "description": "self-audit-socratic.js has 397 effective lines (total: 525, comments: 55, ratio: 10.48%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 10.48% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.573Z",
+      "updatedAt": "2026-03-24T11:14:10.573Z",
+      "modulePath": "core/self-audit-socratic.js"
+    },
+    {
+      "id": "DA-1774350850524-nydg",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: smart-context-selector.js",
+      "description": "smart-context-selector.js has 373 effective lines (total: 653, comments: 208, ratio: 31.85%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 31.85% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.574Z",
+      "updatedAt": "2026-03-24T11:14:10.574Z",
+      "modulePath": "core/smart-context-selector.js"
+    },
+    {
+      "id": "DA-1774350850525-3wgk",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: stage-architect.js",
+      "description": "stage-architect.js has 369 effective lines (total: 455, comments: 39, ratio: 8.57%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 8.57% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.574Z",
+      "updatedAt": "2026-03-24T11:14:10.574Z",
+      "modulePath": "core/stage-architect.js"
+    },
+    {
+      "id": "DA-1774350850525-sqq5",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: stage-context-store.js",
+      "description": "stage-context-store.js has 385 effective lines (total: 724, comments: 255, ratio: 35.22%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 35.22% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.574Z",
+      "updatedAt": "2026-03-24T11:14:10.574Z",
+      "modulePath": "core/stage-context-store.js"
+    },
+    {
+      "id": "DA-1774350850526-z1a7",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: state-machine.js",
+      "description": "state-machine.js has 359 effective lines (total: 784, comments: 334, ratio: 42.6%). Tier: core-critical (max: 400 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 42.6% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.575Z",
+      "updatedAt": "2026-03-24T11:14:10.575Z",
+      "modulePath": "core/state-machine.js"
+    },
+    {
+      "id": "DA-1774350850528-zsrq",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: token-budget.js",
+      "description": "token-budget.js has 308 effective lines (total: 553, comments: 182, ratio: 32.91%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 32.91% of this file is comments/documentation, which is healthy.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.576Z",
+      "updatedAt": "2026-03-24T11:14:10.576Z",
+      "modulePath": "core/token-budget.js"
+    },
+    {
+      "id": "DA-1774350850529-gq7g",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: write-around-review.js",
+      "description": "write-around-review.js has 392 effective lines (total: 592, comments: 126, ratio: 21.28%). Tier: core-standard (max: 350 effective lines).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components. Note: 21.28% of this file is comments/documentation, which is acceptable.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.576Z",
+      "updatedAt": "2026-03-24T11:14:10.576Z",
+      "modulePath": "core/write-around-review.js"
+    },
+    {
+      "id": "DA-1774350850488-5xk4",
+      "severity": "low",
+      "category": "logic-consistency",
+      "title": "112 completely silent catch blocks",
+      "description": "Silent catch blocks (empty or comment-only) may hide important errors. While fire-and-forget patterns are intentional, excessive use can mask bugs.",
+      "suggestion": "Audit silent catch blocks. Ensure at minimum a console.warn for non-trivial operations.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.579Z",
+      "updatedAt": "2026-03-24T11:14:10.579Z",
+      "modulePath": "core/regression-guard.js"
+    },
+    {
+      "id": "DA-1774350850547-acja",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: deep-audit-orchestrator.js (56KB)",
+      "description": "deep-audit-orchestrator.js is 56KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.578Z",
+      "updatedAt": "2026-03-24T11:14:10.578Z",
+      "modulePath": "core/deep-audit-orchestrator.js"
+    },
+    {
+      "id": "DA-1774350850547-i7af",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: prompt-builder.js (58KB)",
+      "description": "prompt-builder.js is 58KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.578Z",
+      "updatedAt": "2026-03-24T11:14:10.578Z",
+      "modulePath": "core/prompt-builder.js"
+    },
+    {
+      "id": "DA-1774350850547-ob8u",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: business-logic-extractor.js (51KB)",
+      "description": "business-logic-extractor.js is 51KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.579Z",
+      "updatedAt": "2026-03-24T11:14:10.579Z",
+      "modulePath": "core/business-logic-extractor.js"
+    },
+    {
+      "id": "DA-1774350850547-dv7d",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: observability.js (59KB)",
+      "description": "observability.js is 59KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.580Z",
+      "updatedAt": "2026-03-24T11:14:10.580Z",
+      "modulePath": "core/observability.js"
+    },
+    {
+      "id": "DA-1774350850547-ict9",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: orchestrator-task.js (61KB)",
+      "description": "orchestrator-task.js is 61KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.580Z",
+      "updatedAt": "2026-03-24T11:14:10.580Z",
+      "modulePath": "core/orchestrator-task.js"
+    },
+    {
+      "id": "DA-1774350850547-2v7y",
+      "severity": "low",
+      "category": "performance-efficiency",
+      "title": "Large core module: project-profiler.js (73KB)",
+      "description": "project-profiler.js is 73KB. Large modules increase memory footprint and make maintenance harder.",
+      "suggestion": "Consider extracting helper functions into separate modules.",
+      "status": "open",
+      "createdAt": "2026-03-24T11:14:10.581Z",
+      "updatedAt": "2026-03-24T11:14:10.581Z",
+      "modulePath": "core/project-profiler.js"
+    },
+    {
+      "id": "DA-1774402268670-kr0d",
+      "severity": "medium",
+      "category": "logic-consistency",
+      "title": "Circular require detected: context-budget-manager.js ↔ context-budget-manager.js",
+      "description": "Circular dependencies can cause initialization order issues.",
+      "suggestion": "Refactor to break the cycle. Consider using dependency injection or lazy loading.",
+      "status": "open",
+      "createdAt": "2026-03-25T01:31:08.723Z",
+      "updatedAt": "2026-03-25T01:31:08.723Z",
+      "modulePath": "core/context-budget-manager.js"
+    },
+    {
+      "id": "DA-1774402268670-xjyy",
+      "severity": "medium",
+      "category": "logic-consistency",
+      "title": "Circular require detected: experience-store.js ↔ experience-store.js",
+      "description": "Circular dependencies can cause initialization order issues.",
+      "suggestion": "Refactor to break the cycle. Consider using dependency injection or lazy loading.",
+      "status": "open",
+      "createdAt": "2026-03-25T01:31:08.724Z",
+      "updatedAt": "2026-03-25T01:31:08.724Z",
+      "modulePath": "core/experience-store.js"
+    },
+    {
+      "id": "DA-1774402268670-0jbf",
+      "severity": "medium",
+      "category": "logic-consistency",
+      "title": "Circular require detected: file-scanner.js ↔ file-scanner.js",
+      "description": "Circular dependencies can cause initialization order issues.",
+      "suggestion": "Refactor to break the cycle. Consider using dependency injection or lazy loading.",
+      "status": "open",
+      "createdAt": "2026-03-25T01:31:08.725Z",
+      "updatedAt": "2026-03-25T01:31:08.725Z",
+      "modulePath": "core/file-scanner.js"
+    },
+    {
+      "id": "DA-1774402268670-o083",
+      "severity": "medium",
+      "category": "logic-consistency",
+      "title": "Circular require detected: ide-experience-hook.js ↔ ide-experience-hook.js",
+      "description": "Circular dependencies can cause initialization order issues.",
+      "suggestion": "Refactor to break the cycle. Consider using dependency injection or lazy loading.",
+      "status": "open",
+      "createdAt": "2026-03-25T01:31:08.726Z",
+      "updatedAt": "2026-03-25T01:31:08.726Z",
+      "modulePath": "core/ide-experience-hook.js"
+    },
+    {
+      "id": "DA-1774402268670-5r3g",
+      "severity": "medium",
+      "category": "logic-consistency",
+      "title": "Circular require detected: logger.js ↔ logger.js",
+      "description": "Circular dependencies can cause initialization order issues.",
+      "suggestion": "Refactor to break the cycle. Consider using dependency injection or lazy loading.",
+      "status": "open",
+      "createdAt": "2026-03-25T01:31:08.726Z",
+      "updatedAt": "2026-03-25T01:31:08.726Z",
+      "modulePath": "core/logger.js"
+    },
+    {
+      "id": "DA-1774402268670-bomt",
+      "severity": "medium",
+      "category": "logic-consistency",
+      "title": "Circular require detected: orchestrator-stages.js ↔ orchestrator-stages.js",
+      "description": "Circular dependencies can cause initialization order issues.",
+      "suggestion": "Refactor to break the cycle. Consider using dependency injection or lazy loading.",
+      "status": "open",
+      "createdAt": "2026-03-25T01:31:08.727Z",
+      "updatedAt": "2026-03-25T01:31:08.727Z",
+      "modulePath": "core/orchestrator-stages.js"
+    },
+    {
+      "id": "DA-1774402268670-mto3",
+      "severity": "medium",
+      "category": "logic-consistency",
+      "title": "Circular require detected: skill-enrichment.js ↔ web-search-helpers.js",
+      "description": "Circular dependencies can cause initialization order issues.",
+      "suggestion": "Refactor to break the cycle. Consider using dependency injection or lazy loading.",
+      "status": "open",
+      "createdAt": "2026-03-25T01:31:08.728Z",
+      "updatedAt": "2026-03-25T01:31:08.728Z",
+      "modulePath": "core/web-search-helpers.js"
+    },
+    {
+      "id": "DA-1774402268670-gj39",
+      "severity": "medium",
+      "category": "logic-consistency",
+      "title": "Circular require detected: web-search-helpers.js ↔ skill-enrichment.js",
+      "description": "Circular dependencies can cause initialization order issues.",
+      "suggestion": "Refactor to break the cycle. Consider using dependency injection or lazy loading.",
+      "status": "open",
+      "createdAt": "2026-03-25T01:31:08.728Z",
+      "updatedAt": "2026-03-25T01:31:08.728Z",
+      "modulePath": "core/web-search-helpers.js"
+    },
+    {
+      "id": "DA-1774402268672-vzfd",
+      "severity": "medium",
+      "category": "config-consistency",
+      "title": "File exceeds effective line limit: index.js",
+      "description": "index.js has 659 effective lines (total: 1162, comments: 405, ratio: 34.85%).",
+      "suggestion": "Split into smaller modules. Extract helpers or sub-components.",
+      "status": "open",
+      "createdAt": "2026-03-25T01:31:08.729Z",
+      "updatedAt": "2026-03-25T01:31:08.729Z",
+      "modulePath": "index.js"
+    },
+    {
+      "id": "DA-1774402268656-6fsw",
+      "severity": "low",
+      "category": "logic-consistency",
+      "title": "86 completely silent catch blocks",
+      "description": "Silent catch blocks (empty or comment-only) may hide important errors.",
+      "suggestion": "Audit silent catch blocks. Ensure at minimum a console.warn for non-trivial operations.",
+      "status": "open",
+      "createdAt": "2026-03-25T01:31:08.732Z",
+      "updatedAt": "2026-03-25T01:31:08.732Z",
+      "modulePath": "core/orchestrator-teardown-impl.js"
+    }
+  ]
+}

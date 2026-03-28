@@ -133,7 +133,11 @@ async function buildTesterContextBlock(orch, upstreamCtx, tcExecutionReport) {
               );
               return relevant.join('\n');
             }).join('\n\n');
-            testExecutionPlanBlock = `\n\n## 📋 Execution Plan Tasks (from Planner — Kent Beck)\n> Use these tasks and their acceptance criteria to verify test coverage.\n> Each task's acceptance criteria should be treated as a testable assertion.\n\n${compactTasks.slice(0, 4000)}${compactTasks.length > 4000 ? '\n... (truncated)' : ''}`;
+            testExecutionPlanBlock = `\n\n## 📋 Execution Plan Tasks (from Planner — Frederick Brooks)
+> Use these tasks and their acceptance criteria to verify test coverage.
+> Each task's acceptance criteria should be treated as a testable assertion.
+
+${compactTasks.slice(0, 4000)}${compactTasks.length > 4000 ? '\n... (truncated)' : ''}`;
             console.log(`[Orchestrator] 📋 Execution plan tasks injected into TesterAgent context (${tasks.length} task(s), ${testExecutionPlanBlock.length} chars).`);
           }
         }
@@ -190,6 +194,7 @@ async function buildTesterContextBlock(orch, upstreamCtx, tcExecutionReport) {
   const { assembled: testAssembled, stats: testStats } = _applyTokenBudget(testAdjustedBlocks, undefined, {
     telemetry: testTelemetry,
     stage: 'TESTER',
+    profile: _testProfile || null,
   });
   if (testStats.dropped.length > 0 || testStats.truncated.length > 0) {
     console.log(`[Orchestrator] 📊 TESTER token budget: ${testStats.total} chars, dropped=[${testStats.dropped.join(',')}], truncated=[${testStats.truncated.join(',')}]`);

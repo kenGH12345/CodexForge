@@ -1,11 +1,12 @@
 {
-  "version": "1.0.0",
-  "updatedAt": "2026-03-23T11:22:13.631Z",
+  "version": "1.1.0",
+  "updatedAt": "2026-03-28T11:11:48.103Z",
   "dirtyFlags": {
     "structure": false,
     "techStack": false,
     "codeGraph": false,
-    "taskHistory": false
+    "taskHistory": false,
+    "capabilityIndex": false
   },
   "structure": {
     "packages": [
@@ -168,5 +169,110 @@
     ]
   },
   "recentTasks": [],
-  "distilledSummary": "## Architecture Knowledge Cache\n\n> Auto-distilled. Last updated: 2026-03-23T11:22:13.631Z\n\n### Module Map\n\n| Module | Files | Classes | Functions |\n|--------|-------|---------|-----------|\n| `workflow/core` | 89 | 56 | 1234 |\n| `workflow/hooks/adapters` | 15 | 17 | 232 |\n| `workflow/tests` | 4 | 1 | 65 |\n| `workflow/commands` | 8 | 0 | 43 |\n| `workflow` | 5 | 1 | 41 |\n| `workflow/agents` | 6 | 6 | 30 |\n| `workflow/tools` | 2 | 0 | 18 |\n| `workflow/core/stages` | 5 | 5 | 10 |\n> 1774 symbols total\n\n### 🔥 Hotspots\n\n- **block** ← 860 refs, 43 calls [utility]\n- **high** ← 826 refs, 96 calls [utility]\n- **existing** ← 810 refs, 34 calls [utility]\n- **entry** ← 765 refs, 96 calls [utility]\n- **Orchestrator** ← 718 refs, 184 calls [hub]\n- **issues** ← 628 refs, 62 calls [utility]\n- **search** ← 600 refs, 178 calls [hub]\n- **missing** ← 546 refs, 24 calls [utility]\n- **blocks** ← 520 refs, 60 calls [utility]\n- **ExperienceStore** ← 476 refs, 36 calls [utility]\n\n### Tech Stack\n\n- Languages: .js(178), .ts(1)\n\n"
+  "capabilityIndex": {
+    "version": "1.0.0",
+    "lastUpdated": "2026-03-28",
+    "categories": [
+      {
+        "id": "pipeline",
+        "name": "Workflow Pipeline",
+        "items": [
+          "7-stage pipeline: ANALYSE → ARCHITECT → PLAN → CODE → TEST → REVIEW → DEPLOY",
+          "State machine with rollback, skip, jump between stages",
+          "Dual-path execution: sequential (run) + task-based (runTaskBased)",
+          "Stage-level context store with LRU cache (max 20 entries, 50K chars)"
+        ]
+      },
+      {
+        "id": "agents",
+        "name": "Agent Roles",
+        "items": [
+          "AnalystAgent: requirement analysis, module map extraction, anchor file detection",
+          "ArchitectAgent: architecture design, module-aware split, interface contracts",
+          "PlannerAgent: vertical-slice task decomposition, dependency ordering",
+          "DeveloperAgent: code generation, file replacement, diff-based editing",
+          "TesterAgent: test generation, test execution, coverage checking"
+        ]
+      },
+      {
+        "id": "quality",
+        "name": "Quality Assurance",
+        "items": [
+          "QualityGate: multi-stage gates (P0/P1/P2), auto-rollback on P0 failure",
+          "CoverageChecker: requirement-to-architecture coverage validation",
+          "ArchitectureReviewAgent: adversarial review + fix loop",
+          "CodeReviewAgent: adversarial code review + fix loop",
+          "RegressionGuard: cross-task regression detection",
+          "SelfReflectionEngine: post-run validation + health audit"
+        ]
+      },
+      {
+        "id": "experience",
+        "name": "Experience & Learning",
+        "items": [
+          "ExperienceStore: persistent experience storage with quality scoring",
+          "ExperienceRouter: cross-project experience migration",
+          "ExperienceDistillation: dedup, conflict detection, similarity scoring",
+          "ExperienceEvolution: auto-evolve experiences based on outcomes",
+          "ExperienceEventBus: decoupled event-driven experience lifecycle"
+        ]
+      },
+      {
+        "id": "context",
+        "name": "Context Management",
+        "items": [
+          "ContextLoader: skill-aware context injection (MAX_INJECT_TOKENS=2800)",
+          "StageContextStore: LRU-cached inter-stage context (max 20 entries, 50K chars)",
+          "SmartContextSelector: relevance-based context block selection",
+          "TokenBudget: 3-layer budget management (L1/L2/L3)",
+          "ArchKnowledgeCache: distilled architecture knowledge for cold-start"
+        ]
+      },
+      {
+        "id": "skills",
+        "name": "Skill System",
+        "items": [
+          "25+ built-in skills (architecture, coding, review, testing, etc.)",
+          "SkillEvolutionEngine: auto-enrich thin skills, retire low-value ones",
+          "SkillEnrichment: LLM-powered skill content enhancement",
+          "SkillMarketplace: export/import skills across projects",
+          "SkillWatcher: file-system watcher for hot-reload"
+        ]
+      },
+      {
+        "id": "observability",
+        "name": "Observability & Self-Improvement",
+        "items": [
+          "MAPE-K loop: Monitor → Analyze → Plan → Execute (autonomous optimization)",
+          "ObservabilityStrategy: trend analysis, complexity estimation",
+          "EventJournal: structured event logging per workflow run",
+          "PromptTracing: per-LLM-call trace recording",
+          "MetricsHistory: time-series metrics (JSONL)"
+        ]
+      },
+      {
+        "id": "collaboration",
+        "name": "Collaboration & Communication",
+        "items": [
+          "FileRefBus: file-path-only inter-agent communication (no raw content passing)",
+          "NegotiationEngine: structured inter-agent negotiation (max 2 rounds)",
+          "SocraticEngine: Socratic questioning at phase gates",
+          "HookSystem: extensible lifecycle hooks (15+ hook points)",
+          "DecisionTrail: audit trail for all architectural decisions"
+        ]
+      },
+      {
+        "id": "infra",
+        "name": "Infrastructure",
+        "items": [
+          "MCPServer: Model Context Protocol server mode",
+          "WorkflowServer: HTTP service mode (healthz, readyz, POST /workflow)",
+          "CIIntegration: CI pipeline integration",
+          "GitIntegration: worktree, branch, PR management",
+          "IDE detection + ADR-37 IDE-First routing (ide-detection.js)"
+        ]
+      }
+    ]
+  },
+  "distilledSummary": "## Architecture Knowledge Cache\n\n> Auto-distilled. Last updated: 2026-03-28T11:11:48.103Z\n\n### Module Map\n\n| Module | Files | Classes | Functions |\n|--------|-------|---------|-----------|\n| `workflow/core` | 89 | 56 | 1234 |\n| `workflow/hooks/adapters` | 15 | 17 | 232 |\n| `workflow/tests` | 4 | 1 | 65 |\n| `workflow/commands` | 8 | 0 | 43 |\n| `workflow` | 5 | 1 | 41 |\n| `workflow/agents` | 6 | 6 | 30 |\n| `workflow/tools` | 2 | 0 | 18 |\n| `workflow/core/stages` | 5 | 5 | 10 |\n> 1774 symbols total\n\n### 🔥 Hotspots\n\n- **block** ← 860 refs, 43 calls [utility]\n- **high** ← 826 refs, 96 calls [utility]\n- **existing** ← 810 refs, 34 calls [utility]\n- **entry** ← 765 refs, 96 calls [utility]\n- **Orchestrator** ← 718 refs, 184 calls [hub]\n- **issues** ← 628 refs, 62 calls [utility]\n- **search** ← 600 refs, 178 calls [hub]\n- **missing** ← 546 refs, 24 calls [utility]\n- **blocks** ← 520 refs, 60 calls [utility]\n- **ExperienceStore** ← 476 refs, 36 calls [utility]\n\n### Tech Stack\n\n- Languages: .js(178), .ts(1)\n\n### 🧩 Capability Index\n\n> Hand-maintained. Source updated: 2026-03-28\n\n**Workflow Pipeline**\n- 7-stage pipeline: ANALYSE → ARCHITECT → PLAN → CODE → TEST → REVIEW → DEPLOY\n- State machine with rollback, skip, jump between stages\n- Dual-path execution: sequential (run) + task-based (runTaskBased)\n- Stage-level context store with LRU cache (max 20 entries, 50K chars)\n\n**Agent Roles**\n- AnalystAgent: requirement analysis, module map extraction, anchor file detection\n- ArchitectAgent: architecture design, module-aware split, interface contracts\n- PlannerAgent: vertical-slice task decomposition, dependency ordering\n- DeveloperAgent: code generation, file replacement, diff-based editing\n- TesterAgent: test generation, test execution, coverage checking\n\n**Quality Assurance**\n- QualityGate: multi-stage gates (P0/P1/P2), auto-rollback on P0 failure\n- CoverageChecker: requirement-to-architecture coverage validation\n- ArchitectureReviewAgent: adversarial review + fix loop\n- CodeReviewAgent: adversarial code review + fix loop\n- RegressionGuard: cross-task regression detection\n- SelfReflectionEngine: post-run validation + health audit\n\n**Experience & Learning**\n- ExperienceStore: persistent experience storage with quality scoring\n- ExperienceRouter: cross-project experience migration\n- ExperienceDistillation: dedup, conflict detection, similarity scoring\n- ExperienceEvolution: auto-evolve experiences based on outcomes\n- ExperienceEventBus: decoupled event-driven experience lifecycle\n\n**Context Management**\n- ContextLoader: skill-aware context injection (MAX_INJECT_TOKENS=2800)\n- StageContextStore: LRU-cached inter-stage context (max 20 entries, 50K chars)\n- SmartContextSelector: relevance-based context block selection\n- TokenBudget: 3-layer budget management (L1/L2/L3)\n- ArchKnowledgeCache: distilled architecture knowledge for cold-start\n\n**Skill System**\n- 25+ built-in skills (architecture, coding, review, testing, etc.)\n- SkillEvolutionEngine: auto-enrich thin skills, retire low-value ones\n- SkillEnrichment: LLM-powered skill content enhancement\n- SkillMarketplace: export/import skills across projects\n- SkillWatcher: file-system watcher for hot-reload\n\n**Observability & Self-Improvement**\n- MAPE-K loop: Monitor → Analyze → Plan → Execute (autonomous optimization)\n- ObservabilityStrategy: trend analysis, complexity estimation\n- EventJournal: structured event logging per workflow run\n- PromptTracing: per-LLM-call trace recording\n- MetricsHistory: time-series metrics (JSONL)\n\n**Collaboration & Communication**\n- FileRefBus: file-path-only inter-agent communication (no raw content passing)\n- NegotiationEngine: structured inter-agent negotiation (max 2 rounds)\n- SocraticEngine: Socratic questioning at phase gates\n- HookSystem: extensible lifecycle hooks (15+ hook points)\n- DecisionTrail: audit trail for all architectural decisions\n\n**Infrastructure**\n- MCPServer: Model Context Protocol server mode\n- WorkflowServer: HTTP service mode (healthz, readyz, POST /workflow)\n- CIIntegration: CI pipeline integration\n- GitIntegration: worktree, branch, PR management\n- IDE detection + ADR-37 IDE-First routing (ide-detection.js)\n\n"
 }

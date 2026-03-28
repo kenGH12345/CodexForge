@@ -201,7 +201,9 @@ async function buildDeveloperContextBlock(orch, upstreamCtx) {
       moduleScopeCtx = parts.join('\n');
       console.log(`[Orchestrator] 🗺️  Module scope context injected into DeveloperAgent (${moduleScopeCtx.length} chars, ${moduleMap.modules.length} module(s)).`);
     }
-  } catch (_) { /* non-fatal */ }
+  } catch (err) {
+    if (process.env.DEBUG) console.warn(`[DeveloperContext] Module scope loading failed: ${err.message}`);
+  }
 
   // ── Recall Memory: cross-session task history ───────────────────────────
   let recallMemoryCtx = '';
@@ -213,7 +215,9 @@ async function buildDeveloperContextBlock(orch, upstreamCtx) {
         console.log(`[Orchestrator] 📖 Recall Memory injected for DeveloperAgent (${recallMemoryCtx.length} chars)`);
       }
     }
-  } catch (_) { /* non-fatal */ }
+  } catch (err) {
+    if (process.env.DEBUG) console.warn(`[DeveloperContext] Recall memory loading failed: ${err.message}`);
+  }
 
   // ── Token Budget Guard (DEVELOPER) ─────────────────────────────────────
   const devLabelledBlocks = [
@@ -240,6 +244,7 @@ async function buildDeveloperContextBlock(orch, upstreamCtx) {
   const { assembled: devAssembled, stats: devStats } = _applyTokenBudget(devAdjustedBlocks, undefined, {
     telemetry: devTelemetry,
     stage: 'DEVELOPER',
+    profile: _devProfile || null,
   });
   if (devStats.dropped.length > 0 || devStats.truncated.length > 0) {
     console.log(`[Orchestrator] 📊 DEVELOPER token budget: ${devStats.total} chars, dropped=[${devStats.dropped.join(',')}], truncated=[${devStats.truncated.join(',')}]`);

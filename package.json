@@ -1,0 +1,31 @@
+{
+  "name": "workflow-agent",
+  "version": "1.0.0",
+  "description": "AI-driven workflow orchestration framework with 7-stage pipeline",
+  "main": "index.js",
+  "scripts": {
+    "test": "node workflow/tests/run-all-tests.js",
+    "test:unit": "node workflow/tests/run-all-tests.js --filter=unit",
+    "test:integration": "node workflow/tests/run-all-tests.js --filter=integration",
+    "test:verbose": "node workflow/tests/run-all-tests.js --verbose",
+    "test:file": "node workflow/tests/run-all-tests.js --file=",
+    "test:effective-lines": "node workflow/tests/run-all-tests.js --file=integration-effective-lines",
+    "test:pipeline": "node workflow/tests/run-all-tests.js --file=integration-pipeline-flow",
+    "test:agent": "node workflow/tests/run-all-tests.js --file=integration-agent-fusion",
+    "test:framework": "node workflow/tests/run-all-tests.js --file=integration-framework-fusion"
+  },
+  "keywords": [
+    "workflow",
+    "agent",
+    "ai",
+    "orchestration",
+    "pipeline"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {},
+  "dependencies": {}
+}
