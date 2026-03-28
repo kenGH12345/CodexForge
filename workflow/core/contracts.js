@@ -92,13 +92,39 @@ const IExperienceStore = {
   name: 'IExperienceStore',
   description: 'Persistent experience storage with search, record, and transfer capabilities.',
   methods: [
-    { name: 'record',           minArity: 1 },
-    { name: 'search',           minArity: 0, maxArity: 1 },
-    { name: 'getStats',         minArity: 0 },
-    { name: 'exportPortable',   minArity: 0, maxArity: 1 },
-    { name: 'importFrom',       minArity: 1, maxArity: 2 },
-    { name: 'findByTitle',      minArity: 1 },
-    { name: 'getSynonymStats',  minArity: 0, optional: true },
+    // ── Core CRUD ──
+    { name: 'record',                  minArity: 1 },
+    { name: 'recordIfAbsent',          minArity: 1 },
+    { name: 'recordWithContentCheck',  minArity: 1 },
+    { name: 'search',                  minArity: 0, maxArity: 1 },
+    { name: 'findByTitle',             minArity: 1 },
+    { name: 'getAll',                  minArity: 0 },
+    { name: 'getStats',               minArity: 0 },
+    // ── Context injection (used by all 5 stage context builders) ──
+    { name: 'getContextBlockWithIds',  minArity: 0, maxArity: 4 },
+    { name: 'getContextBlock',         minArity: 0, maxArity: 2 },
+    // ── EvoMap feedback loop (used by stage-runner-utils) ──
+    { name: 'computeMatchedIds',       minArity: 1, maxArity: 2 },
+    { name: 'markUsedBatch',           minArity: 1, optional: true },
+    { name: 'triggerEvolutions',       minArity: 1, optional: true },
+    // ── Lifecycle ──
+    { name: 'checkLayerHealth',        minArity: 0, maxArity: 1 },
+    { name: 'purgeExpired',            minArity: 0 },
+    { name: 'flushDirty',             minArity: 0, optional: true },
+    // ── Transfer ──
+    { name: 'exportPortable',          minArity: 0, maxArity: 1 },
+    { name: 'importFrom',             minArity: 1, maxArity: 2 },
+    // ── LLM integration ──
+    { name: 'setLlmCall',             minArity: 1 },
+    { name: 'setComplaintWall',        minArity: 1, optional: true },
+    { name: 'getSynonymTable',         minArity: 0, optional: true },
+    { name: 'getSynonymStats',         minArity: 0, optional: true },
+    // ── Public API aliases (replacing direct private method access) ──
+    { name: 'save',                    minArity: 0 },
+    { name: 'expandKeywords',          minArity: 1, maxArity: 2, optional: true },
+    // ── Fix 3: Public API for safe array mutation ──
+    { name: 'removeByFilter',          minArity: 1 },
+    { name: 'getCount',                minArity: 0 },
   ],
   properties: [
     { name: 'experiences', type: 'object' },
@@ -191,6 +217,29 @@ const IExperienceRouter = {
   ],
 };
 
+// ─── ICodeGraph ─────────────────────────────────────────────────────────────
+
+const ICodeGraph = {
+  name: 'ICodeGraph',
+  description: 'Structured code index with symbol lookup, search, and analysis capabilities.',
+  methods: [
+    // ── Build ──
+    { name: 'build',              minArity: 0, maxArity: 1 },
+    { name: 'ensureLoaded',       minArity: 0 },
+    // ── Query ──
+    { name: 'search',             minArity: 1, maxArity: 2 },
+    { name: 'querySymbol',        minArity: 1, maxArity: 2 },
+    { name: 'findByName',         minArity: 1 },
+    { name: 'getSymbolById',      minArity: 1 },
+    { name: 'getSymbolCount',     minArity: 0 },
+    { name: 'getAllSymbolValues',  minArity: 0 },
+    { name: 'getCallGraph',       minArity: 1, maxArity: 2 },
+    // ── Analysis ──
+    { name: 'hotspot',            minArity: 0, maxArity: 1, optional: true },
+    { name: 'moduleSummary',      minArity: 0, maxArity: 1, optional: true },
+  ],
+};
+
 // ─── All Contracts ──────────────────────────────────────────────────────────
 
 const ALL_CONTRACTS = {
@@ -203,6 +252,7 @@ const ALL_CONTRACTS = {
   IStageContextStore,
   INegotiationEngine,
   IExperienceRouter,
+  ICodeGraph,
 };
 
 // ─── Runtime Validator ──────────────────────────────────────────────────────
@@ -305,6 +355,7 @@ module.exports = {
   IStageContextStore,
   INegotiationEngine,
   IExperienceRouter,
+  ICodeGraph,
   // Registry
   ALL_CONTRACTS,
   // Validation

@@ -151,13 +151,21 @@ async function externalExperienceFallback(orch, skill, requirement, opts = {}) {
       // the existing behaviour of injecting it into the prompt).
       if (searchResult.results && searchResult.results.length >= 3) {
         // Fire-and-forget: don't block the prompt pipeline for enrichment
-        require('./skill-enrichment').enrichSkillFromExternalKnowledge(orch, skill, { maxSearchResults: 3, maxFetchPages: 2 })
-          .then(r => {
-            if (r.success) {
-              console.log(`[Orchestrator] 🌐→📝 External experience persisted to skill "${skill}": ${r.sectionsAdded} entries`);
-            }
-          })
-          .catch(() => { /* non-fatal */ });
+        // FIX: Use lazy require to break circular dependency
+        setImmediate(() => {
+          try {
+            const { enrichSkillFromExternalKnowledge } = require('./skill-enrichment');
+            enrichSkillFromExternalKnowledge(orch, skill, { maxSearchResults: 3, maxFetchPages: 2 })
+              .then(r => {
+                if (r.success) {
+                  console.log(`[Orchestrator] 🌐→📝 External experience persisted to skill "${skill}": ${r.sectionsAdded} entries`);
+                }
+              })
+              .catch(() => { /* non-fatal */ });
+          } catch (err) {
+            /* non-fatal: skill-enrichment may not be available */
+          }
+        });
       }
 
       return formatWebSearchBlock(searchResult, {

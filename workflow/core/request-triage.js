@@ -136,6 +136,20 @@ class RequestTriage {
       ? this.checkStaleness(context.projectRoot)
       : null;
 
+    // ── ADR-43 Extension: Lightweight Experience Hook for IDE-First mode ────
+    // When routing to ide_direct, we still want to capture valuable signals
+    // from the session. This hook provides a minimal experience capture path
+    // that doesn't require the full workflow pipeline.
+    const experienceHook = suggestion === 'ide_direct' ? {
+      enabled: true,
+      reason: 'Simple task routed to IDE, but session signals may still be valuable',
+      sessionContext: {
+        requirement: trimmed,
+        score,
+        matchedTags: matchedRules.map(r => r.tag),
+      },
+    } : null;
+
     return {
       score,
       suggestion,
@@ -146,6 +160,8 @@ class RequestTriage {
       staleness,
       shouldProceed: suggestion !== 'ide_direct',
       requiresInit: initState ? !initState.isInitialized : false,
+      // ADR-43 Extension: lightweight hook for experience capture
+      experienceHook,
     };
   }
 

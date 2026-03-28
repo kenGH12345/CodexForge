@@ -33,6 +33,7 @@ const SignalType = {
   RETRY_PATTERN: 'retry_pattern',
   TOOL_DENSITY: 'tool_density',
   COMPLAINT_FILED: 'complaint_filed',
+  CONTRACT_MISMATCH: 'contract_mismatch',
 };
 
 const SignalSeverity = {
@@ -84,6 +85,25 @@ const SIGNAL_PATTERNS = [
       /\b(root cause|根本原因|原因)\b/i,
     ],
     weight: 0.6,
+  },
+
+  // ── Contract Mismatch Indicators (HIGH) ─────────────────────────────────
+  // Optimization Trigger: Detects interface contract inconsistencies between
+  // modules. When this signal recurs 3+ times across sessions, it indicates
+  // the need for structured InterfaceContract storage (Optimization #2).
+  // See: workflow/docs/pending-optimizations.md#2-interface-contract-structured-storage
+  {
+    type: SignalType.CONTRACT_MISMATCH,
+    severity: SignalSeverity.HIGH,
+    patterns: [
+      /\b(contract\s*mismatch|interface\s*mismatch|契约不一致|接口不匹配)\b/i,
+      /\b(signature\s*(?:doesn't|does not|didn't)\s*match)\b/i,
+      /\b(expected\s+(?:interface|contract|signature).*?(?:but|got|received))\b/i,
+      /\b(upstream\s+(?:contract|interface).*?(?:incompatible|missing|changed))\b/i,
+      /\b(module\s+\w+\s+(?:exports?|declares?).*?(?:but|however)\s+module\s+\w+)\b/i,
+      /\b(contract\s*drift|接口漂移|签名不一致)\b/i,
+    ],
+    weight: 1.2, // Higher than normal errors — this is the optimization trigger
   },
 ];
 

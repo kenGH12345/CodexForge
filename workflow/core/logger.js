@@ -59,7 +59,11 @@ class Logger {
     this._outputDir = outputDir;
     // Close existing stream if any
     if (this._logStream) {
-      try { this._logStream.end(); } catch (_) {}
+      try {
+        this._logStream.end();
+      } catch (e) {
+        this._emit(LogLevel.WARN, 'Logger', 'Failed to close existing log stream', { error: e.message });
+      }
       this._logStream = null;
     }
   }
@@ -140,8 +144,9 @@ class Logger {
         this._logStream = fs.createWriteStream(logPath, { flags: 'a' });
       }
       this._logStream.write(JSON.stringify(entry) + '\n');
-    } catch (_) {
+    } catch (e) {
       // File logging must never break the workflow
+      this._emit(LogLevel.WARN, 'Logger', 'Failed to write to log file', { error: e.message });
     }
   }
 
@@ -153,7 +158,11 @@ class Logger {
    */
   flush() {
     if (this._logStream) {
-      try { this._logStream.end(); } catch (_) {}
+      try {
+        this._logStream.end();
+      } catch (e) {
+        this._emit(LogLevel.WARN, 'Logger', 'Failed to flush log stream', { error: e.message });
+      }
       this._logStream = null;
     }
     return this._entryCount;

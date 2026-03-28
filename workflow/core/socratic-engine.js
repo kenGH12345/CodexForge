@@ -237,10 +237,14 @@ class SocraticEngine {
     const isNonInteractive = !process.stdin.isTTY || isCI || process.env.TERM === 'dumb';
 
     if (isNonInteractive) {
-      // Non-interactive: auto-confirm the default immediately, no readline needed.
+// Non-interactive: auto-confirm the default immediately, no readline needed.
       console.log(`[Socratic] ℹ️  Non-interactive environment detected (CI=${isCI}, isTTY=${!!process.stdin.isTTY}). Auto-confirming default: "${defaultAnswer.optionText}"`);
       // Fire onOverride with the default so callers that rely on the callback still work.
-      try { onOverride(defaultAnswer); } catch (_) {}
+      try {
+        onOverride(defaultAnswer);
+      } catch (e) {
+        console.warn(`[Socratic] ⚠️ onOverride callback failed: ${e.message}`);
+      }
       return;
     }
 
@@ -251,13 +255,21 @@ class SocraticEngine {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      try { rl.close(); } catch (_) {}
+try {
+        rl.close();
+      } catch (e) {
+        // Readline close failure is not critical
+      }
       if (answer.optionIndex !== defaultAnswer.optionIndex) {
         // User chose a different option – persist override and notify caller
         this._decisions[question.id] = answer;
         this._saveDecisions();
         console.log(`[Socratic] 🔄 Override accepted: "${question.id}" → "${answer.optionText}"`);
-        try { onOverride(answer); } catch (_) {}
+try {
+        onOverride(answer);
+      } catch (e) {
+        console.warn(`[Socratic] ⚠️ onOverride callback failed: ${e.message}`);
+      }
       } else {
         console.log(`[Socratic] ✅ Override window closed. Auto-selection confirmed: "${defaultAnswer.optionText}"`);
       }
@@ -269,8 +281,12 @@ class SocraticEngine {
     try {
       rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     } catch (err) {
-      console.warn(`[Socratic] ⚠️  Could not create readline interface: ${err.message}. Auto-confirming default.`);
-      try { onOverride(defaultAnswer); } catch (_) {}
+console.warn(`[Socratic] ⚠️  Could not create readline interface: ${err.message}. Auto-confirming default.`);
+      try {
+        onOverride(defaultAnswer);
+      } catch (e) {
+        console.warn(`[Socratic] ⚠️ onOverride callback failed: ${e.message}`);
+      }
       return;
     }
 
@@ -359,7 +375,11 @@ class SocraticEngine {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        try { rl.close(); } catch (_) {}
+try {
+        rl.close();
+      } catch (e) {
+        // Readline close failure is not critical
+      }
         resolve({
           optionIndex,
           optionText: question.options[optionIndex],
@@ -397,7 +417,8 @@ class SocraticEngine {
     if (fs.existsSync(this.contextFilePath)) {
       try {
         return JSON.parse(fs.readFileSync(this.contextFilePath, 'utf-8'));
-      } catch (_) {
+      } catch (err) {
+        console.warn(`[SocraticEngine] Failed to load decisions: ${err.message}`);
         return {};
       }
     }

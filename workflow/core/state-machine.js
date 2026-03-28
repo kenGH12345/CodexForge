@@ -153,6 +153,12 @@ class StateMachine {
       throw new Error(`[StateMachine] Cannot transition: already in terminal state "${fromState}"`);
     }
 
+    // P1 fix: Precondition validation before state transition
+    const preconditionError = this._validatePrecondition(fromState, toState, artifactPath);
+    if (preconditionError) {
+      throw new Error(`[StateMachine] Precondition failed for ${fromState} → ${toState}: ${preconditionError}`);
+    }
+
     // Emit before-transition hook
     await this.hookEmitter(HOOK_EVENTS.BEFORE_STATE_TRANSITION, { fromState, toState, artifactPath });
 
@@ -615,6 +621,85 @@ class StateMachine {
   }
 
   // ─── Private Helpers ──────────────────────────────────────────────────────────
+
+  /**
+   * P1 fix: Validates preconditions before state transition.
+   * Ensures required artifacts exist before advancing to the next stage.
+   *
+   * @param {string} fromState - Current state
+   * @param {string} toState - Target state
+   * @param {string|null} artifactPath - Artifact being recorded
+   * @returns {string|null} Error message if precondition fails, null if OK
+   */
+  _validatePrecondition(fromState, toState, artifactPath) {
+    // Define precondition rules for each transition
+    const PRECONDITIONS = {
+      [WorkflowState.ANALYSE]: {
+        // INIT → ANALYSE: no precondition (first stage)
+      },
+      [WorkflowState.ARCHITECT]: {
+        // ANALYSE → ARCHITECT: requirement.md should exist
+        artifactKey: 'requirementMd',
+        description: 'requirement.md from ANALYSE stage',
+      },
+      [WorkflowState.CODE]: {
+        // ARCHITECT → CODE: architecture.md should exist
+        artifactKey: 'architectureMd',
+        description: 'architecture.md from ARCHITECT stage',
+      },
+      [WorkflowState.TEST]: {
+        // CODE → TEST: code.diff should exist
+        artifactKey: 'codeDiff',
+        description: 'code.diff from CODE stage',
+      },
+      [WorkflowState.FINISHED]: {
+        // TEST → FINISHED: test-report.md should exist
+        artifactKey: 'testReportMd',
+        description: 'test-report.md from TEST stage',
+      },
+    };
+
+    const precondition = PRECONDITIONS[toState];
+    if (!precondition || !precondition.artifactKey) {
+      // No precondition for this transition
+      return null;
+    }
+
+    // Check if the required artifact exists in manifest
+    const artifacts = this.getArtifacts();
+    const requiredArtifact = artifacts[precondition.artifactKey];
+
+    if (!requiredArtifact) {
+      // Artifact not recorded in manifest - check if current transition provides it
+      if (artifactPath && fromState === this._getArtifactSourceState(precondition.artifactKey)) {
+        // Current transition is providing the artifact, allow it
+        return null;
+      }
+      return `Missing ${precondition.description}. Run the ${fromState} stage first.`;
+    }
+
+    // Check if the artifact file actually exists on disk
+    if (!fs.existsSync(requiredArtifact)) {
+      return `${precondition.description} was recorded but file not found: ${requiredArtifact}`;
+    }
+
+    return null;
+  }
+
+  /**
+   * Maps artifact key to its source state.
+   * @param {string} artifactKey
+   * @returns {string|null}
+   */
+  _getArtifactSourceState(artifactKey) {
+    const mapping = {
+      requirementMd: WorkflowState.ANALYSE,
+      architectureMd: WorkflowState.ARCHITECT,
+      codeDiff: WorkflowState.CODE,
+      testReportMd: WorkflowState.TEST,
+    };
+    return mapping[artifactKey] || null;
+  }
 
   _readManifest() {
     const raw = fs.readFileSync(this._manifestPath, 'utf-8');

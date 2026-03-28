@@ -54,6 +54,20 @@ const DEFAULT_CONFIG = {
   ],
   classificationRules: [],   // No project-specific rules by default
   defaultSkills: {},         // Falls back to extension-based naming
+  
+  // ─── Effective Lines Counter (ADR-XX) ──────────────────────────────────────
+  effectiveLines: {
+    enabled: true,
+    tiers: {
+      'entry-point':    { maxEffectiveLines: 700, maxTotalLines: 1000 },
+      'core-critical':  { maxEffectiveLines: 1000, maxTotalLines: 1500 },
+      'core-standard':  { maxEffectiveLines: 800, maxTotalLines: 1200 },
+      'agent':          { maxEffectiveLines: 250, maxTotalLines: 400 },
+      'command':        { maxEffectiveLines: 400, maxTotalLines: 600 },
+      'default':        { maxEffectiveLines: 300, maxTotalLines: 500 },
+    },
+    commentRatioWarning: 50,
+  },
 };
 
 // ─── Loader ───────────────────────────────────────────────────────────────────

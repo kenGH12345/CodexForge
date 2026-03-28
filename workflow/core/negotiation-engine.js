@@ -49,6 +49,13 @@ class NegotiationEngine {
     this._maxRounds = maxRounds;
     this._log = []; // In-memory negotiation history for current session
     this._roundCounters = new Map(); // stageKey → round count
+
+    // Optimization Trigger: Track interface mismatch occurrences across sessions.
+    // When count reaches threshold, emit a warning recommending structured
+    // InterfaceContract storage (Optimization #2).
+    // See: workflow/docs/pending-optimizations.md#2-interface-contract-structured-storage
+    this._interfaceMismatchCount = 0;
+    this._INTERFACE_MISMATCH_THRESHOLD = 3;
   }
 
   /**
@@ -86,6 +93,19 @@ class NegotiationEngine {
 
     switch (concernType) {
       case ConcernType.INTERFACE_MISMATCH:
+        // Track interface mismatch occurrences for optimization trigger
+        this._interfaceMismatchCount++;
+        if (this._interfaceMismatchCount >= this._INTERFACE_MISMATCH_THRESHOLD) {
+          console.warn(
+            `\n${'⚠️'.repeat(3)} OPTIMIZATION TRIGGER: ${this._interfaceMismatchCount} interface mismatches detected.\n` +
+            `Consider implementing structured InterfaceContract storage (Optimization #2).\n` +
+            `This would enable programmatic dependency checking between modules,\n` +
+            `preventing contract drift (e.g., module A declares getUser(id: string)\n` +
+            `but module B implements getUser(userId: number)).\n` +
+            `See: workflow/docs/pending-optimizations.md#2-interface-contract-structured-storage\n`
+          );
+        }
+
         // Minor mismatches can be auto-resolved if a suggestion is provided
         if (suggestion) {
           result = {
@@ -155,6 +175,16 @@ class NegotiationEngine {
    */
   getLog() {
     return [...this._log];
+  }
+
+  /**
+   * Returns the current interface mismatch count.
+   * Useful for external monitoring and optimization trigger checks.
+   *
+   * @returns {number}
+   */
+  getInterfaceMismatchCount() {
+    return this._interfaceMismatchCount;
   }
 
   /**

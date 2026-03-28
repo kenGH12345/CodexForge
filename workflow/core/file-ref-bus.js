@@ -27,6 +27,39 @@ const { extractJsonBlock, validateJsonBlock } = require('../core/agent-output-sc
  */
 const MAX_PATH_LENGTH = 512;
 
+// ─── Custom Error Types ──────────────────────────────────────────────────────
+
+/**
+ * Thrown when a published file fails the downstream Agent's content contract.
+ *
+ * This is a recoverable error: the calling stage runner can catch it and
+ * retry the Agent (e.g. re-run with a "your output was malformed" hint).
+ * If the retry also fails, the error propagates up to the orchestrator
+ * main loop, which records it as a high-severity risk and halts.
+ *
+ * Properties:
+ *   - senderRole:   who produced the file
+ *   - receiverRole: who would consume it
+ *   - filePath:     the offending file
+ *   - contractReason: human-readable explanation of the violation
+ *   - tier:         'json-schema' | 'keyword' (which validation tier caught it)
+ */
+class ContractViolationError extends Error {
+  /**
+   * @param {string} message
+   * @param {{ senderRole: string, receiverRole: string, filePath: string, contractReason: string, tier: string }} details
+   */
+  constructor(message, { senderRole, receiverRole, filePath, contractReason, tier }) {
+    super(message);
+    this.name = 'ContractViolationError';
+    this.senderRole = senderRole;
+    this.receiverRole = receiverRole;
+    this.filePath = filePath;
+    this.contractReason = contractReason;
+    this.tier = tier;
+  }
+}
+
 // ─── Validation Utilities ─────────────────────────────────────────────────────
 
 /**
@@ -291,25 +324,54 @@ class FileRefBus {
       throw new Error(`[FileRefBus] File does not exist: "${filePath}" (from ${senderRole} to ${receiverRole})`);
     }
 
-    // P2-D fix: validate file content against the downstream Agent's input contract.
-    // This catches empty/malformed files before the downstream Agent runs silently
-    // with bad input. Contract violations are logged as warnings (not hard errors)
-    // to avoid blocking the workflow on edge cases (e.g. minimal valid files).
+    // P2-D fix (upgraded): validate file content against the downstream Agent's
+    // input contract. Severe violations (empty file, JSON schema mismatch) now
+    // throw a recoverable ContractViolationError so the calling stage runner can
+    // retry the Agent once. Minor violations (keyword heuristic miss) remain as
+    // soft warnings to avoid blocking on edge cases.
     const contractCheck = validateAgentContract(receiverRole, filePath);
     if (!contractCheck.valid) {
-      console.warn(
-        `\n⚠️  [FileRefBus] CONTRACT VIOLATION DETECTED\n` +
-        `   From: ${senderRole} → To: ${receiverRole}\n` +
-        `   File: ${path.basename(filePath)}\n` +
-        `   Reason: ${contractCheck.reason}\n` +
-        `   The downstream Agent may produce incorrect output due to malformed input.\n`
-      );
-      // Record as a soft warning – do not throw, as the Agent may still handle it.
-      // Callers can check bus.getContractViolations() to decide whether to abort.
+      // Always record the violation for audit trail
       this._contractViolations.push({
         from: senderRole, to: receiverRole, filePath,
         reason: contractCheck.reason, timestamp: new Date().toISOString(),
       });
+
+      // Determine severity: empty/too-short files and JSON schema failures are
+      // hard errors (the downstream Agent cannot possibly produce good output).
+      // Keyword-heuristic misses are soft warnings (the file may still be usable).
+      const isSevere = contractCheck.tier === 'json-schema'
+        || contractCheck.reason.includes('file is too short')
+        || contractCheck.reason.includes('Cannot read file');
+
+      if (isSevere) {
+        console.error(
+          `\n❌ [FileRefBus] SEVERE CONTRACT VIOLATION\n` +
+          `   From: ${senderRole} → To: ${receiverRole}\n` +
+          `   File: ${path.basename(filePath)}\n` +
+          `   Reason: ${contractCheck.reason}\n` +
+          `   This is a recoverable error – the stage runner should retry the Agent.\n`
+        );
+        throw new ContractViolationError(
+          `[FileRefBus] Severe contract violation: ${contractCheck.reason}`,
+          {
+            senderRole,
+            receiverRole,
+            filePath,
+            contractReason: contractCheck.reason,
+            tier: contractCheck.tier,
+          },
+        );
+      } else {
+        // Soft warning for keyword-heuristic misses – do not throw
+        console.warn(
+          `\n⚠️  [FileRefBus] CONTRACT VIOLATION (soft warning)\n` +
+          `   From: ${senderRole} → To: ${receiverRole}\n` +
+          `   File: ${path.basename(filePath)}\n` +
+          `   Reason: ${contractCheck.reason}\n` +
+          `   The downstream Agent may produce incorrect output due to malformed input.\n`
+        );
+      }
     }
 
     this._queue.set(receiverRole, { filePath, meta });
@@ -422,4 +484,4 @@ class FileRefBus {
   }
 }
 
-module.exports = { FileRefBus, validateFileRef, warnDirectTextPassing, validateAgentContract, AGENT_CONTRACTS };
+module.exports = { FileRefBus, validateFileRef, warnDirectTextPassing, validateAgentContract, AGENT_CONTRACTS, ContractViolationError };

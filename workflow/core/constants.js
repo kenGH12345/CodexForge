@@ -28,8 +28,10 @@ const PATHS = {
   AGENTS_MD: path.join(WORKFLOW_ROOT, '..', 'AGENTS.md'),
   /** AgentFlow: persistent task list */
   TASKS_JSON: path.join(WORKFLOW_ROOT, 'output', 'tasks.json'),
-  /** AgentFlow: persistent experience store */
+  /** AgentFlow: persistent experience store (WORKFLOW scope - global) */
   EXPERIENCES_JSON: path.join(WORKFLOW_ROOT, 'output', 'experiences.json'),
+  /** AgentFlow: project experience store (PROJECT scope - per-project) */
+  PROJECT_EXPERIENCES_JSON: '.workflow/experiences.json',
   /** AgentFlow: complaint wall */
   COMPLAINTS_JSON: path.join(WORKFLOW_ROOT, 'output', 'complaints.json'),
   /** AgentFlow: skill registry */
@@ -154,6 +156,7 @@ const HOOK_EVENTS = {
   EXPERIENCE_RECORDED:'experience_recorded', // A new experience was saved
   SKILL_EVOLVED:      'skill_evolved',       // A skill was evolved
   SKILL_AUTO_CREATED:  'skill_auto_created',  // A new skill was auto-created from orphan experience (P1)
+  SKILL_DISCOVERY_COMPLETE: 'skill_discovery_complete', // Project conventions auto-discovered and standards skill generated
   COMPLAINT_FILED:    'complaint_filed',     // A complaint was filed
   COMPLAINT_RESOLVED: 'complaint_resolved',  // A complaint was resolved
   // Observability events
@@ -191,6 +194,19 @@ const HOOK_EVENTS = {
   // P0-2/P0-3: Stage execution lifecycle events (Temporal heartbeat inspired)
   STAGE_HEARTBEAT:          'stage_heartbeat',           // Periodic progress heartbeat during long-running stage execution
   STAGE_TIMEOUT:            'stage_timeout',             // Stage exceeded MAX_STAGE_DURATION_MS budget ceiling
+  // Write-Around Review events (ADR-45)
+  WRITE_AROUND_REVIEW_COMPLETE: 'write_around_review_complete', // Quick review completed after direct file edit
+  WRITE_AROUND_REVIEW_BLOCKED:  'write_around_review_blocked',  // Critical issue detected, edit blocked
+  WRITE_AROUND_REVIEW_WARNING:  'write_around_review_warning',  // High-severity issue found but not blocked
+  // Tool execution lifecycle events (P1: Tool-level hooks)
+  TOOL_EXECUTION_STARTED:   'tool_execution_started',   // A tool execution started
+  TOOL_EXECUTION_COMPLETED: 'tool_execution_completed', // A tool execution completed successfully
+  TOOL_EXECUTION_FAILED:    'tool_execution_failed',    // A tool execution failed
+  TOOL_BEFORE_EXECUTION:    'tool_before_execution',    // Before tool execution (allows param modification)
+  TOOL_AFTER_EXECUTION:     'tool_after_execution',     // After tool execution (allows result filtering)
+  // ADR-42: Output truncation detection events
+  OUTPUT_TRUNCATED:         'output_truncated',         // LLM response was truncated (stop_reason=max_tokens)
+  OUTPUT_CONTINUATION:      'output_continuation',      // Auto-continuation attempt after truncation
 };
 
 module.exports = {
