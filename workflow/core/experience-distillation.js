@@ -19,6 +19,195 @@
 
 'use strict';
 
+// ─── LSH (Locality Sensitive Hashing) for Fast Similarity Search ───────────
+
+/**
+ * LSH Index for fast approximate similarity search.
+ * Uses MinHash signatures with banding technique to find candidate pairs.
+ * Reduces O(n²) pairwise comparison to O(n) signature computation + O(candidates) verification.
+ *
+ * @see https://en.wikipedia.org/wiki/Locality-sensitive_hashing
+ */
+class MinHashLSH {
+  /**
+   * @param {object} options
+   * @param {number} [options.numHashes=16] - Number of hash functions (signature length)
+   * @param {number} [options.numBands=4] - Number of bands for LSH bucketing
+   * @param {number} [options.numHashesPerBand] - Hashes per band (auto-computed if not specified)
+   */
+  constructor(options = {}) {
+    this.numHashes = options.numHashes || 16;
+    this.numBands = options.numBands || 4;
+    this.numHashesPerBand = options.numHashesPerBand || Math.floor(this.numHashes / this.numBands);
+
+    // Hash seeds for different hash functions
+    this._seeds = Array.from({ length: this.numHashes }, (_, i) => i + 1);
+
+    // Hash tables: bandIndex → hashValue → Set of item IDs
+    this._tables = new Array(this.numBands).fill(null).map(() => new Map());
+
+    // Store signatures for lookup
+    this._signatures = new Map();
+
+    // Stats
+    this._insertCount = 0;
+    this._queryCount = 0;
+  }
+
+  /**
+   * Inserts an item into the LSH index.
+   *
+   * @param {string} id - Item identifier
+   * @param {number[]} signature - MinHash signature array
+   */
+  insert(id, signature) {
+    if (signature.length !== this.numHashes) {
+      throw new Error(`Signature length ${signature.length} does not match expected ${this.numHashes}`);
+    }
+
+    this._signatures.set(id, signature);
+    this._insertCount++;
+
+    // Hash signature to bands and store in corresponding tables
+    for (let bandIdx = 0; bandIdx < this.numBands; bandIdx++) {
+      const start = bandIdx * this.numHashesPerBand;
+      const end = Math.min(start + this.numHashesPerBand, this.numHashes);
+      const bandSignature = signature.slice(start, end);
+      const bandHash = this._hashBand(bandSignature);
+
+      if (!this._tables[bandIdx].has(bandHash)) {
+        this._tables[bandIdx].set(bandHash, new Set());
+      }
+      this._tables[bandIdx].get(bandHash).add(id);
+    }
+  }
+
+  /**
+   * Queries for similar items given a signature.
+   * Returns candidate IDs that share at least one band hash.
+   *
+   * @param {number[]} signature - MinHash signature
+   * @param {Set<string>} [exclude] - IDs to exclude from results
+   * @returns {Set<string>} Candidate similar item IDs
+   */
+  query(signature, exclude = new Set()) {
+    if (signature.length !== this.numHashes) {
+      throw new Error(`Signature length ${signature.length} does not match expected ${this.numHashes}`);
+    }
+
+    this._queryCount++;
+    const candidates = new Set();
+
+    for (let bandIdx = 0; bandIdx < this.numBands; bandIdx++) {
+      const start = bandIdx * this.numHashesPerBand;
+      const end = Math.min(start + this.numHashesPerBand, this.numHashes);
+      const bandSignature = signature.slice(start, end);
+      const bandHash = this._hashBand(bandSignature);
+
+      const bucket = this._tables[bandIdx].get(bandHash);
+      if (bucket) {
+        for (const id of bucket) {
+          if (!exclude.has(id)) {
+            candidates.add(id);
+          }
+        }
+      }
+    }
+
+    return candidates;
+  }
+
+  /**
+   * Gets the stored signature for an ID.
+   *
+   * @param {string} id
+   * @returns {number[]|undefined}
+   */
+  getSignature(id) {
+    return this._signatures.get(id);
+  }
+
+  /**
+   * Gets statistics about the LSH index.
+   *
+   * @returns {{insertCount: number, queryCount: number, tableSizes: number[], collisionRate: number}}
+   */
+  getStats() {
+    const tableSizes = this._tables.map(t => t.size);
+    const totalBuckets = tableSizes.reduce((a, b) => a + b, 0);
+    const nonEmptyBuckets = this._tables.reduce((sum, table) => {
+      for (const bucket of table.values()) {
+        if (bucket.size > 1) sum++;
+      }
+      return sum;
+    }, 0);
+
+    return {
+      insertCount: this._insertCount,
+      queryCount: this._queryCount,
+      tableSizes,
+      totalBuckets,
+      collisionRate: totalBuckets > 0 ? nonEmptyBuckets / totalBuckets : 0,
+    };
+  }
+
+  /**
+   * Hashes a band signature to a bucket key.
+   *
+   * @param {number[]} bandSignature
+   * @returns {string}
+   * @private
+   */
+  _hashBand(bandSignature) {
+    // Simple hash: combine numbers with separator
+    return bandSignature.join(':');
+  }
+}
+
+/**
+ * Computes MinHash signature for text using LSH-compatible hashing.
+ *
+ * @param {string} text - Input text
+ * @param {number} [numHashes=16] - Number of hash functions
+ * @returns {number[]} MinHash signature
+ */
+function computeMinHashSignature(text, numHashes = 16) {
+  if (!text || !text.trim()) {
+    return new Array(numHashes).fill(0);
+  }
+
+  // Extract k-shingles (character-level 3-grams)
+  const normalized = text.toLowerCase().replace(/[^\w\s]/g, ' ').trim();
+  const shingles = new Set();
+  for (let i = 0; i <= normalized.length - 3; i++) {
+    shingles.add(normalized.slice(i, i + 3));
+  }
+
+  if (shingles.size === 0) {
+    return new Array(numHashes).fill(0);
+  }
+
+  // Compute MinHash signature
+  const signature = [];
+  for (let hashFuncIdx = 0; hashFuncIdx < numHashes; hashFuncIdx++) {
+    const seed = hashFuncIdx + 1;
+    let minHash = Infinity;
+
+    for (const shingle of shingles) {
+      // Simple hash: sum of char codes with seed
+      let hash = seed;
+      for (let i = 0; i < shingle.length; i++) {
+        hash = ((hash * 31) + shingle.charCodeAt(i)) & 0x7FFFFFFF;
+      }
+      minHash = Math.min(minHash, hash);
+    }
+
+    signature.push(minHash);
+  }
+
+  return signature;
+}
+
 // ─── Similarity Computation ─────────────────────────────────────────────────
 
 /**
@@ -40,6 +229,76 @@ function computeSimilarity(a, b) {
   const typeMatch = (a.type === b.type) ? 1.0 : 0.0;
 
   return 0.4 * titleSim + 0.3 * tagSim + 0.2 * catMatch + 0.1 * typeMatch;
+
+}
+
+/**
+ * Async version of computeSimilarity that adds an embedding semantic boost.
+ * When an EmbeddingService is available and the bigram-based similarity is
+ * below threshold but above a minimum floor, the embedding cosine similarity
+ * is used as a supplementary signal.
+ *
+ * This catches cases like:
+ *   "Use async/await for database calls" vs "Leverage async patterns for DB operations"
+ *   → bigram Jaccard ≈ 0.15 (miss!) → embedding cosine ≈ 0.87 (catch!)
+ *
+ * @param {object} a - Experience record
+ * @param {object} b - Experience record
+ * @param {import('./embedding-service').EmbeddingService|null} embeddingService
+ * @returns {Promise<number>} Similarity score in [0, 1]
+ */
+async function computeSimilarityAsync(a, b, embeddingService) {
+  const baseSim = computeSimilarity(a, b);
+
+  // Only attempt embedding boost when:
+  // 1. EmbeddingService is available and ready
+  // 2. Base similarity is in the "uncertain zone" (0.2 - 0.65)
+  //    Below 0.2 = clearly different, above 0.65 = already caught by bigram
+  if (!embeddingService || !embeddingService.isReady()) return baseSim;
+  if (baseSim >= 0.65 || baseSim < 0.2) return baseSim;
+
+  try {
+    const titleA = (a.title || '').trim().toLowerCase();
+    const titleB = (b.title || '').trim().toLowerCase();
+    if (!titleA || !titleB) return baseSim;
+
+    const [vecA, vecB] = await Promise.all([
+      embeddingService.embed(titleA),
+      embeddingService.embed(titleB),
+    ]);
+
+    if (!vecA || !vecB) return baseSim;
+
+    const embeddingSim = embeddingService.cosineSimilarity(vecA, vecB);
+
+    // If embedding says they're very similar (>0.75), boost the score
+    // Weighted blend: 60% base + 40% embedding
+    if (embeddingSim >= 0.75) {
+      const boosted = 0.6 * baseSim + 0.4 * embeddingSim;
+      return boosted;
+    }
+  } catch (_) {
+    // Non-fatal: fall back to base similarity
+  }
+
+  return baseSim;
+}
+
+/**
+ * Computes MinHash similarity between two signatures.
+ *
+ * @param {number[]} sig1
+ * @param {number[]} sig2
+ * @returns {number} Approximate Jaccard similarity
+ */
+function computeSignatureSimilarity(sig1, sig2) {
+  if (!sig1 || !sig2 || sig1.length !== sig2.length) return 0;
+
+  let matches = 0;
+  for (let i = 0; i < sig1.length; i++) {
+    if (sig1[i] === sig2[i]) matches++;
+  }
+  return matches / sig1.length;
 }
 
 /**
@@ -203,78 +462,81 @@ const ExperienceDistillationMixin = {
       byCategory.get(cat).push(exp);
     }
 
-    // Step 2+3: Find clusters within each category
-    // P1-1 fix: Use blocking (first 3 bigrams of title) to reduce O(N²) to O(N × B),
-    // where B is the block size. Only experiences in the same block are compared.
-    // P1-3 fix: Pre-compute bigram sets for all titles to avoid redundant recomputation.
+    // Step 2+3: Find clusters within each category using LSH for fast candidate generation
+    // P4b fix: Use LSH (Locality Sensitive Hashing) with MinHash to reduce O(N²) to O(N)
     const allClusters = [];
     for (const [, catExps] of byCategory) {
       if (catExps.length < minClusterSize) continue;
 
-      // Pre-compute bigram sets and blocking keys for this category
       const n = catExps.length;
-      const bigramCache = new Array(n);
+
+      // P4b: Use LSH for fast similarity candidate generation
+      const lsh = new MinHashLSH({ numHashes: 16, numBands: 4 });
+      const signatures = new Map();
       const tagSetCache = new Array(n);
-      const blocks = new Map(); // blockKey → [indices]
 
+      // Compute signatures and insert into LSH
       for (let i = 0; i < n; i++) {
-        bigramCache[i] = _bigrams((catExps[i].title || '').toLowerCase());
+        const text = `${catExps[i].title} ${catExps[i].content || ''}`.slice(0, 500);
+        const sig = computeMinHashSignature(text, 16);
+        signatures.set(i, sig);
+        lsh.insert(String(i), sig);
         tagSetCache[i] = new Set(catExps[i].tags || []);
-        // Blocking: use first 3 bigrams as block keys (each experience can be in multiple blocks)
-        const title = (catExps[i].title || '').toLowerCase();
-        const blockKeys = new Set();
-        for (let c = 0; c < Math.min(title.length - 1, 3); c++) {
-          blockKeys.add(title.slice(c, c + 2));
-        }
-        if (blockKeys.size === 0) blockKeys.add('__default__');
-        for (const key of blockKeys) {
-          if (!blocks.has(key)) blocks.set(key, []);
-          blocks.get(key).push(i);
-        }
       }
 
-      // Build adjacency based on similarity threshold (only within blocks)
+      // Build adjacency based on LSH candidates
       const visited = new Set();
-      const candidatePairs = new Set(); // "i:j" strings to avoid duplicate pair checks
+      const adjList = new Map();
 
-      for (const [, blockIndices] of blocks) {
-        if (blockIndices.length < 2) continue;
-        for (let bi = 0; bi < blockIndices.length; bi++) {
-          for (let bj = bi + 1; bj < blockIndices.length; bj++) {
-            const i = blockIndices[bi];
-            const j = blockIndices[bj];
-            const pairKey = i < j ? `${i}:${j}` : `${j}:${i}`;
-            candidatePairs.add(pairKey);
+      // For each experience, query LSH to find candidates
+      for (let i = 0; i < n; i++) {
+        const sigI = signatures.get(i);
+        const candidates = lsh.query(sigI);
+
+        for (const jStr of candidates) {
+          const j = Number(jStr);
+          if (j <= i) continue; // Avoid duplicate pairs
+
+          // Quick pre-filter: type and category must match
+          if (catExps[i].type !== catExps[j].type) continue;
+          if (catExps[i].category !== catExps[j].category) continue;
+
+          // Compute full similarity using cached bigrams and tag sets
+          const titleSim = _bigramJaccard(
+            catExps[i].title || '',
+            catExps[j].title || ''
+          );
+          const tagSim = _setJaccard(tagSetCache[i], tagSetCache[j]);
+          const catMatch = 1.0; // Same category (filtered above)
+          const typeMatch = 1.0; // Same type (filtered above);
+          const sim = 0.4 * titleSim + 0.3 * tagSim + 0.2 * catMatch + 0.1 * typeMatch;
+
+          if (sim >= similarityThreshold) {
+            if (!adjList.has(i)) adjList.set(i, new Set());
+            if (!adjList.has(j)) adjList.set(j, new Set());
+            adjList.get(i).add(j);
+            adjList.get(j).add(i);
+          } else if (sim >= 0.2 && this._embeddingService && this._embeddingService.isReady()) {
+            // Embedding boost: when bigram similarity is in the uncertain zone,
+            // check embedding cosine similarity for semantic duplicates.
+            // This catches synonym-heavy duplicates that bigram Jaccard misses.
+            try {
+              const titleI = (catExps[i].title || '').trim().toLowerCase();
+              const titleJ = (catExps[j].title || '').trim().toLowerCase();
+              const vecI = this._embeddingService._cache.get(titleI);
+              const vecJ = this._embeddingService._cache.get(titleJ);
+              if (vecI && vecJ) {
+                const embSim = this._embeddingService.cosineSimilarity(vecI, vecJ);
+                const boostedSim = 0.6 * sim + 0.4 * embSim;
+                if (boostedSim >= similarityThreshold) {
+                  if (!adjList.has(i)) adjList.set(i, new Set());
+                  if (!adjList.has(j)) adjList.set(j, new Set());
+                  adjList.get(i).add(j);
+                  adjList.get(j).add(i);
+                }
+              }
+            } catch (_) { /* non-fatal: embedding boost is supplementary */ }
           }
-        }
-      }
-
-      // Now compute similarity only for candidate pairs and build clusters
-      const adjList = new Map(); // index → Set of similar indices
-      for (const pairKey of candidatePairs) {
-        const [iStr, jStr] = pairKey.split(':');
-        const i = Number(iStr);
-        const j = Number(jStr);
-
-        // Compute similarity using pre-cached bigrams and tag sets
-        const bg1 = bigramCache[i];
-        const bg2 = bigramCache[j];
-        let bgIntersection = 0;
-        for (const bg of bg1) { if (bg2.has(bg)) bgIntersection++; }
-        const titleSim = (bg1.size === 0 && bg2.size === 0) ? 1.0
-          : (bg1.size === 0 || bg2.size === 0) ? 0.0
-          : bgIntersection / (bg1.size + bg2.size - bgIntersection);
-
-        const tagSim = _setJaccard(tagSetCache[i], tagSetCache[j]);
-        const catMatch = (catExps[i].category === catExps[j].category) ? 1.0 : 0.0;
-        const typeMatch = (catExps[i].type === catExps[j].type) ? 1.0 : 0.0;
-        const sim = 0.4 * titleSim + 0.3 * tagSim + 0.2 * catMatch + 0.1 * typeMatch;
-
-        if (sim >= similarityThreshold) {
-          if (!adjList.has(i)) adjList.set(i, new Set());
-          if (!adjList.has(j)) adjList.set(j, new Set());
-          adjList.get(i).add(j);
-          adjList.get(j).add(i);
         }
       }
 
@@ -299,6 +561,11 @@ const ExperienceDistillationMixin = {
       }
     }
 
+    // Log LSH stats for debugging
+    if (dryRun) {
+      console.log(`[ExperienceDistillation] LSH processed ${experiences.length} experiences into ${allClusters.length} clusters`);
+    }
+
     if (allClusters.length === 0) {
       return { merged: 0, removed: 0, clusters: [] };
     }
@@ -311,8 +578,10 @@ const ExperienceDistillationMixin = {
     for (const cluster of allClusters) {
       // ── Conflict Detection (within cluster) ─────────────────────────
       // Before merging, check if any pair within the cluster has contradictory
-      // content. When a conflict is detected, the NEWER experience wins
-      // (recency bias: latest knowledge is most likely correct).
+      // content. When a conflict is detected, the experience with higher
+      // SOURCE TYPE WEIGHT wins (ARTICLE > CONVERSATION > DISTILLED).
+      // If same weight, the NEWER experience wins (recency bias).
+      const { getSourceTypeWeight, DEFAULT_SOURCE_TYPE } = require('./experience-types');
       const sortedByDate = [...cluster].sort(
         (a, b) => new Date(a.updatedAt || a.createdAt).getTime() - new Date(b.updatedAt || b.createdAt).getTime()
       );
@@ -324,27 +593,54 @@ const ExperienceDistillationMixin = {
           const newer = sortedByDate[cj];
           const { isConflict, reason } = detectConflict(older, newer);
           if (isConflict) {
+            // Determine winner based on source type weight
+            const olderWeight = getSourceTypeWeight(older.sourceType || DEFAULT_SOURCE_TYPE);
+            const newerWeight = getSourceTypeWeight(newer.sourceType || DEFAULT_SOURCE_TYPE);
+            
+            let winner, loser, resolution;
+            if (newerWeight > olderWeight) {
+              // Newer has higher authority weight → newer wins
+              winner = newer;
+              loser = older;
+              resolution = 'keep-newer-higher-weight';
+            } else if (olderWeight > newerWeight) {
+              // Older has higher authority weight → older wins (override recency)
+              winner = older;
+              loser = newer;
+              resolution = 'keep-older-higher-weight';
+            } else {
+              // Same weight → recency bias (newer wins)
+              winner = newer;
+              loser = older;
+              resolution = 'keep-newer-same-weight';
+            }
+
             conflicts.push({
               olderId: older.id,
               olderTitle: older.title,
+              olderSourceType: older.sourceType || DEFAULT_SOURCE_TYPE,
               newerId: newer.id,
               newerTitle: newer.title,
+              newerSourceType: newer.sourceType || DEFAULT_SOURCE_TYPE,
               reason,
-              resolution: 'keep-newer',
+              resolution,
+              winnerId: winner.id,
             });
-            // Mark the older conflicting experience for removal (newer wins)
-            idsToRemove.add(older.id);
+            // Mark the loser for removal
+            idsToRemove.add(loser.id);
             if (!dryRun) {
-              // Annotate the newer experience with conflict resolution metadata
-              if (!newer.conflictResolutions) newer.conflictResolutions = [];
-              newer.conflictResolutions.push({
+              // Annotate the winner with conflict resolution metadata
+              if (!winner.conflictResolutions) winner.conflictResolutions = [];
+              winner.conflictResolutions.push({
                 timestamp: new Date().toISOString(),
-                supersededId: older.id,
-                supersededTitle: older.title,
+                supersededId: loser.id,
+                supersededTitle: loser.title,
+                supersededSourceType: loser.sourceType || DEFAULT_SOURCE_TYPE,
                 reason,
+                resolution,
               });
-              newer.updatedAt = new Date().toISOString();
-              console.log(`[ExperienceStore] ⚡ Conflict detected [${older.category}]: "${older.title}" → superseded by "${newer.title}" (${reason})`);
+              winner.updatedAt = new Date().toISOString();
+              console.log(`[ExperienceStore] ⚡ Conflict detected [${older.category}]: "${loser.title}" (${loser.sourceType || 'conversation'}) → superseded by "${winner.title}" (${winner.sourceType || 'conversation'}) (${reason})`);
             }
           }
         }
@@ -361,12 +657,16 @@ const ExperienceDistillationMixin = {
       if (!dryRun) {
         // Merge content from others into representative
         const mergedContent = others.map(o =>
-          `[Distilled from "${o.title}" (${o.id})] ${o.content}`
+          `[Distilled from "${o.title}" (${o.id}, ${o.sourceType || 'conversation'})] ${o.content}`
         ).join('\n\n');
 
         if (mergedContent) {
           representative.content = `${representative.content}\n\n--- Distilled Knowledge ---\n${mergedContent}`;
         }
+
+        // Mark as DISTILLED source type
+        const { SourceType } = require('./experience-types');
+        representative.sourceType = SourceType.DISTILLED;
 
         // Accumulate hitCount from all members
         representative.hitCount = (representative.hitCount || 0) +
@@ -385,6 +685,7 @@ const ExperienceDistillationMixin = {
           timestamp: new Date().toISOString(),
           mergedIds: others.map(o => o.id),
           mergedTitles: others.map(o => o.title),
+          mergedSourceTypes: others.map(o => o.sourceType || 'conversation'),
         });
 
         representative.updatedAt = new Date().toISOString();
@@ -448,4 +749,13 @@ const ExperienceDistillationMixin = {
   },
 };
 
-module.exports = { ExperienceDistillationMixin, computeSimilarity, detectConflict };
+module.exports = {
+  ExperienceDistillationMixin,
+  computeSimilarity,
+  computeSimilarityAsync,
+  detectConflict,
+  // P4b: LSH exports for fast similarity search
+  MinHashLSH,
+  computeMinHashSignature,
+  computeSignatureSimilarity,
+};

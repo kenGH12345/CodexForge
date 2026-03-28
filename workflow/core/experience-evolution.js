@@ -17,7 +17,7 @@ const { ExperienceType, GENERIC_CATEGORIES, FRAMEWORK_CATEGORIES } = require('./
 // ─── Adaptive Evolution Threshold ────────────────────────────────────────────
 
 /**
- * Computes the adaptive evolution threshold for a given experience entry.
+ * Computes the base evolution threshold for a given experience entry.
  *
  * Base thresholds by category specificity:
  *   GENERIC    → 3 (fast: broadly applicable, quick to confirm)
@@ -27,7 +27,7 @@ const { ExperienceType, GENERIC_CATEGORIES, FRAMEWORK_CATEGORIES } = require('./
  * Tag-count modulator: +1 per 3 tags, capped at +3.
  *
  * @param {object} exp - Experience entry with category and tags fields
- * @returns {number} The evolution threshold
+ * @returns {number} The base evolution threshold
  */
 function _computeEvolutionThreshold(exp) {
   let base;
@@ -40,6 +40,50 @@ function _computeEvolutionThreshold(exp) {
   }
   const tagBonus = Math.min(Math.floor((exp.tags?.length || 0) / 3), 3);
   return base + tagBonus;
+}
+
+/**
+ * P4b: Computes adaptive evolution threshold with quality signals.
+ *
+ * Quality signals adjustment:
+ *   - hasCodeExample: -1 (valuable practical knowledge)
+ *   - hasMultipleSources: -1 (cross-validated)
+ *   - highHitRate (hit/retrieval > 50%): -1 (proven useful)
+ *   - isNegative (NEGATIVE type): -1 (learn from mistakes quickly)
+ *   - recent (< 7 days): -1 (fresh experiences evolve faster)
+ *
+ * @param {object} exp - Experience entry
+ * @param {object} context - Optional context with domain heat map
+ * @returns {number} The adaptive evolution threshold (minimum 1)
+ */
+function _computeAdaptiveThreshold(exp, context = {}) {
+  // Base threshold
+  let threshold = _computeEvolutionThreshold(exp);
+
+  // Quality signals adjustment
+  const qualitySignals = {
+    hasCodeExample: exp.codeExample ? -1 : 0,
+    hasMultipleSources: exp.sources && exp.sources.length > 1 ? -1 : 0,
+    highHitRate: exp.retrievalCount > 0 && (exp.hitCount || 0) / exp.retrievalCount > 0.5 ? -1 : 0,
+    isNegative: exp.type === ExperienceType.NEGATIVE ? -1 : 0,
+  };
+
+  // Apply adjustments
+  const adjustment = Object.values(qualitySignals).reduce((a, b) => a + b, 0);
+  threshold += adjustment;
+
+  // Recency bonus: new experiences need less validation
+  const ageDays = (Date.now() - new Date(exp.createdAt)) / 86400000;
+  if (ageDays < 7) {
+    threshold -= 1;
+  }
+
+  // Domain heat adjustment (from context)
+  const domainHeat = context.domainHeatMap?.[exp.category] ?? 1.0;
+  threshold = Math.round(threshold * domainHeat);
+
+  // Ensure minimum threshold of 1
+  return Math.max(1, threshold);
 }
 
 // ─── P1 Auto-Create Helpers: Infer skill metadata from experience ────────────
@@ -155,6 +199,119 @@ function _inferKeywords(exp) {
   }
 
   return [...keywords].slice(0, 15); // Cap at 15 keywords
+}
+
+// ─── P4b: Skill Creation Validation ──────────────────────────────────────────
+
+/**
+ * Validates if a skill should be created from an experience.
+ * Performs: conflict detection, similarity check, evidence validation.
+ *
+ * @param {object} exp - Experience entry
+ * @param {object} skillRegistry - Skill registry object with existing skills
+ * @param {object} options - Validation options
+ * @param {number} [options.similarityThreshold=0.7] - Threshold for skill name similarity
+ * @param {number} [options.minEvidenceCount=2] - Minimum supporting experiences needed
+ * @returns {{ shouldCreate: boolean, reason?: string, mergeWith?: string }}
+ */
+function _validateSkillCreation(exp, skillRegistry = {}, options = {}) {
+  const {
+    similarityThreshold = 0.7,
+    minEvidenceCount = 2,
+  } = options;
+
+  const inferredName = _inferSkillName(exp);
+
+  // 1. Conflict detection: check for similar existing skills
+  const existingSkills = Object.values(skillRegistry.skills || skillRegistry || {});
+
+  for (const skill of existingSkills) {
+    // Simple name similarity check
+    const nameSim = _computeSimilarityScore(inferredName, skill.name);
+    if (nameSim >= similarityThreshold) {
+      return {
+        shouldCreate: false,
+        reason: 'similar-skill-exists',
+        mergeWith: skill.name,
+      };
+    }
+
+    // Keyword overlap check (skills covering same domain)
+    const skillKeywords = new Set(skill.triggerKeywords || []);
+    const expKeywords = new Set(_inferKeywords(exp));
+    const overlap = [...expKeywords].filter(k => skillKeywords.has(k)).length;
+    if (overlap >= 3 && nameSim >= 0.5) {
+      return {
+        shouldCreate: false,
+        reason: 'keyword-overlap-with-existing-skill',
+        mergeWith: skill.name,
+      };
+    }
+  }
+
+  // 2. Evidence validation: check if enough supporting experiences
+  // This would need access to experience store for full search
+  // For now, we delegate this check to the caller with findSimilarByContent
+
+  return { shouldCreate: true };
+}
+
+/**
+ * Generates a high-quality skill description using metadata.
+ * Combines experience content and category to create meaningful descriptions.
+ *
+ * @param {object} exp - Experience entry
+ * @returns {string} Generated skill description
+ */
+function _generateSkillDescription(exp) {
+  const category = exp.category || 'general';
+  const title = exp.title || 'unnamed';
+  const tags = (exp.tags || []).slice(0, 3).join(', ');
+
+  const templates = {
+    architecture: `Best practices for ${title.toLowerCase()}. Covers: ${tags}.`,
+    performance: `Performance optimization techniques for ${title.toLowerCase()}.`,
+    pitfall: `Common pitfalls and how to avoid them in ${title.toLowerCase()}.`,
+    stable_pattern: `Proven patterns and idioms for ${title.toLowerCase()}.`,
+    framework_limit: `Known limitations and workarounds for ${title.toLowerCase()}.`,
+    default: `Knowledge about ${title.toLowerCase()}. Covers: ${tags}.`,
+  };
+
+  return templates[category] || templates.default;
+}
+
+/**
+ * Computes a simple string similarity score (0-1).
+ * Uses bigram Jaccard similarity.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+function _computeSimilarityScore(a, b) {
+  const normalize = s => s.toLowerCase().replace(/[^\w\s]/g, '');
+  const getBigrams = s => {
+    const set = new Set();
+    for (let i = 0; i < s.length - 1; i++) {
+      set.add(s.slice(i, i + 2));
+    }
+    return set;
+  };
+
+  const normA = normalize(a);
+  const normB = normalize(b);
+  const bigramsA = getBigrams(normA);
+  const bigramsB = getBigrams(normB);
+
+  if (bigramsA.size === 0 && bigramsB.size === 0) return 1.0;
+  if (bigramsA.size === 0 || bigramsB.size === 0) return 0.0;
+
+  let intersection = 0;
+  for (const bg of bigramsA) {
+    if (bigramsB.has(bg)) intersection++;
+  }
+
+  return intersection / (bigramsA.size + bigramsB.size - intersection);
 }
 
 // ─── Gotcha vs Anti-Pattern Classification ──────────────────────────────────
@@ -469,6 +626,11 @@ const ExperienceEvolutionMixin = {
 module.exports = {
   ExperienceEvolutionMixin,
   _computeEvolutionThreshold,
+  // P4b: Enhanced exports
+  _computeAdaptiveThreshold,
+  _validateSkillCreation,
+  _generateSkillDescription,
+  // Internal helpers
   _selectEvolutionSection,
   _isEnvironmentSpecific,
 };

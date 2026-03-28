@@ -81,6 +81,7 @@ const ExperienceTransferMixin = {
    * @param {boolean} [options.resetTTL=true]
    * @param {string[]} [options.filterCategories]
    * @param {number}  [options.ttlDays]
+   * @param {string}  [options.scope] - Target scope for imported experiences
    * @returns {{ imported: number, skipped: number, merged: number, errors: string[] }}
    */
   importFrom(source, {
@@ -88,6 +89,7 @@ const ExperienceTransferMixin = {
     resetTTL = true,
     filterCategories = null,
     ttlDays = null,
+    scope = null,
   } = {}) {
     let exportData;
     if (typeof source === 'string') {
@@ -137,6 +139,13 @@ const ExperienceTransferMixin = {
             if (idx !== -1) {
               this.experiences.splice(idx, 1);
               this._titleIndex.delete(existing.title);
+              // Also remove from scope bucket
+              const expScope = existing.scope || 'project';
+              if (this._byScope && this._byScope.has(expScope)) {
+                const scopeExps = this._byScope.get(expScope);
+                const scopeIdx = scopeExps.indexOf(existing);
+                if (scopeIdx !== -1) scopeExps.splice(scopeIdx, 1);
+              }
             }
           }
         }
@@ -149,9 +158,14 @@ const ExperienceTransferMixin = {
           ? new Date(Date.now() + effectiveTtl * 86400_000).toISOString()
           : exp.expiresAt || null;
 
+        // Determine scope for imported experience
+        const { ExperienceScope, determineScope } = require('./experience-types');
+        const targetScope = scope || exp.scope || determineScope(exp) || ExperienceScope.PROJECT;
+
         const importedExp = {
           ...exp,
           id: newId,
+          scope: targetScope,
           hitCount: 0,
           retrievalCount: 0,
           evolutionCount: 0,
@@ -161,6 +175,14 @@ const ExperienceTransferMixin = {
           _importedFrom: exp._importedFrom || exportData.sourceProject || 'external',
           _importedAt: new Date().toISOString(),
         };
+
+        // Add to scope bucket if available
+        if (this._byScope) {
+          if (!this._byScope.has(targetScope)) {
+            this._byScope.set(targetScope, []);
+          }
+          this._byScope.get(targetScope).push(importedExp);
+        }
 
         this.experiences.push(importedExp);
         this._titleIndex.add(importedExp.title);

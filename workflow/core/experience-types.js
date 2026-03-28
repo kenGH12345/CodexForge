@@ -46,6 +46,8 @@ const ExperienceCategory = {
   CSHARP_PATTERN:    'csharp_pattern',
   // ── P1 Code Snippets: category for reusable code patterns ──
   CODE_SNIPPET:      'code_snippet',
+  // ── P3 Problem Abstraction: category for detected fix patterns ──
+  PROBLEM_PATTERN:   'problem_pattern',
 };
 
 // ─── Universal (Project-Agnostic) Categories ──────────────────────────────────
@@ -167,6 +169,150 @@ const PREFERRED_CAPTURE_CATEGORIES = new Set([
   ExperienceCategory.PERFORMANCE,
 ]);
 
+// ─── Experience Source Type ───────────────────────────────────────────────
+
+/**
+ * Experience Source Type Classification
+ *
+ * Distinguishes where an experience originated:
+ * - ARTICLE: Imported from authoritative sources (documentation, blog posts, tutorials)
+ *   → Higher trust weight in conflict resolution
+ * - CONVERSATION: Captured from AI-user dialogue sessions
+ *   → Context-specific, may have caveats
+ * - DISTILLED: Merged from multiple similar experiences
+ *   → Synthesized knowledge, lower trust weight
+ *
+ * This classification enables:
+ * 1. Source-aware conflict resolution: ARTICLE > CONVERSATION > DISTILLED
+ * 2. User-facing source labels: [文章], [对话], [蒸馏]
+ * 3. Trust score computation for ranking
+ */
+const SourceType = {
+  /** Imported from articles, documentation, or authoritative sources */
+  ARTICLE: 'article',
+  /** Captured from AI-user conversation sessions */
+  CONVERSATION: 'conversation',
+  /** Synthesized from multiple similar experiences via distillation */
+  DISTILLED: 'distilled',
+};
+
+/**
+ * Default source type for new experiences.
+ * Most experiences captured during workflow execution are from conversations.
+ */
+const DEFAULT_SOURCE_TYPE = SourceType.CONVERSATION;
+
+/**
+ * Source type trust weights for conflict resolution.
+ * Higher weight = more authoritative = wins in conflicts.
+ */
+const SOURCE_TYPE_WEIGHTS = {
+  [SourceType.ARTICLE]: 3.0,
+  [SourceType.CONVERSATION]: 2.0,
+  [SourceType.DISTILLED]: 1.0,
+};
+
+/**
+ * Get the trust weight for a source type.
+ * @param {string} sourceType - SourceType value
+ * @returns {number} Trust weight (higher = more authoritative)
+ */
+function getSourceTypeWeight(sourceType) {
+  return SOURCE_TYPE_WEIGHTS[sourceType] || SOURCE_TYPE_WEIGHTS[SourceType.CONVERSATION];
+}
+
+/**
+ * Get a human-readable label for a source type.
+ * @param {string} sourceType - SourceType value
+ * @returns {string} Label for display
+ */
+function getSourceTypeLabel(sourceType) {
+  const labels = {
+    [SourceType.ARTICLE]: '文章',
+    [SourceType.CONVERSATION]: '对话',
+    [SourceType.DISTILLED]: '蒸馏',
+  };
+  return labels[sourceType] || '未知';
+}
+
+// ─── Experience Scope (ADR-43 Extension) ───────────────────────────────────
+
+/**
+ * Experience Scope Classification
+ *
+ * Critical insight: Experiences have different ownership and should be stored separately:
+ * - WORKFLOW: WorkFlowAgent framework experiences (how to use /wf, best practices, pitfalls)
+ *   → Stored in ~/.codexforge/workflow-experiences.json (global, shared across all projects)
+ * - PROJECT: Project-specific experiences (business rules, tech choices, team conventions)
+ *   → Stored in <project>/.workflow/experiences.json (can be version-controlled, shared with team)
+ *
+ * This separation prevents:
+ * 1. Framework upgrades from polluting project experiences
+ * 2. Project switches from overwriting workflow knowledge
+ * 3. Team members from losing shared project knowledge
+ *
+ * Storage locations:
+ *   WORKFLOW scope: ~/.codexforge/workflow-experiences.json
+ *   PROJECT scope:  <project-root>/.workflow/experiences.json
+ */
+const ExperienceScope = {
+  /** WorkFlowAgent framework experiences: global, shared across all projects */
+  WORKFLOW: 'workflow',
+  /** Project-specific experiences: version-controlled, shared with team */
+  PROJECT: 'project',
+};
+
+/**
+ * Default scope for new experiences.
+ * Most experiences captured during workflow execution are PROJECT scope.
+ */
+const DEFAULT_SCOPE = ExperienceScope.PROJECT;
+
+/**
+ * Categories that typically belong to WORKFLOW scope.
+ * These are framework-level patterns that apply to any project using WorkFlowAgent.
+ */
+const WORKFLOW_SCOPE_CATEGORIES = new Set([
+  ExperienceCategory.WORKFLOW_PROCESS,
+  // Note: Most other categories are context-dependent and default to PROJECT scope
+]);
+
+/**
+ * Determine the appropriate scope for a given experience.
+ * @param {object} exp - Experience object with category, content, etc.
+ * @returns {string} ExperienceScope value
+ */
+function determineScope(exp) {
+  // Explicit scope takes precedence
+  if (exp.scope) {
+    return exp.scope;
+  }
+
+  // WORKFLOW_PROCESS category → WORKFLOW scope
+  if (WORKFLOW_SCOPE_CATEGORIES.has(exp.category)) {
+    return ExperienceScope.WORKFLOW;
+  }
+
+  // Check content for workflow-related keywords
+  const content = (exp.title + ' ' + exp.content).toLowerCase();
+  const workflowKeywords = [
+    '/wf', 'workflow', 'work flow', 'work-flow',
+    'orchestrator', 'mape', 'agent flow',
+    'skill file', 'skill directory', 'skills/',
+    'experience store', 'complaint wall',
+    'adr-', 'decision log',
+  ];
+
+  for (const keyword of workflowKeywords) {
+    if (content.includes(keyword)) {
+      return ExperienceScope.WORKFLOW;
+    }
+  }
+
+  // Default to PROJECT scope
+  return DEFAULT_SCOPE;
+}
+
 module.exports = {
   ExperienceType,
   ExperienceCategory,
@@ -178,4 +324,15 @@ module.exports = {
   CATEGORY_TO_LAYER,
   getLayerForCategory,
   PREFERRED_CAPTURE_CATEGORIES,
+  // Experience Source Type
+  SourceType,
+  DEFAULT_SOURCE_TYPE,
+  SOURCE_TYPE_WEIGHTS,
+  getSourceTypeWeight,
+  getSourceTypeLabel,
+  // ADR-43 Extension: Experience Scope
+  ExperienceScope,
+  DEFAULT_SCOPE,
+  WORKFLOW_SCOPE_CATEGORIES,
+  determineScope,
 };
