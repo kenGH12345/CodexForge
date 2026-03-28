@@ -14,6 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS } = require('./constants');
+const { introspectionCollector } = require('./workflow-introspection-collector');
 
 // ─── Skill Evolution Engine ───────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ class SkillEvolutionEngine {
    * @param {string[]} [options.domains]   - Applicable domains (e.g. ['backend', 'database'])
    * @returns {SkillMeta}
    */
-  registerSkill({ name, description, domains = [], type = 'domain-skill', loadLevel = 'task', dependencies = [], maxTokens = null, triggers = {} }) {
+  registerSkill({ name, description, domains = [], type = 'domain-skill', loadLevel = 'task', dependencies = [], maxTokens = null, triggers = {}, filePath = null }) {
     if (this.registry.has(name)) {
       console.log(`[SkillEvolution] Skill already registered: ${name}`);
       return this.registry.get(name);
@@ -67,7 +68,7 @@ class SkillEvolutionEngine {
       lastUsedAt: null,      // ISO timestamp of last injection
       lastEffectiveAt: null, // ISO timestamp of last confirmed effectiveness
       retiredAt: null,       // ISO timestamp when retired (null = active)
-      filePath: path.join(this.skillsDir, `${name}.md`),
+      filePath: filePath || path.join(this.skillsDir, `${name}.md`),
       createdAt: new Date().toISOString(),
     };
     this.registry.set(name, meta);
@@ -78,6 +79,16 @@ class SkillEvolutionEngine {
       this._createSkillFile(meta);
     }
     console.log(`[SkillEvolution] Skill registered: ${name}`);
+    
+    // Introspection logging
+    introspectionCollector.recordSkill('registered', {
+      skillName: name,
+      version: meta.version,
+      type: meta.type,
+      domains: meta.domains,
+      loadLevel: meta.loadLevel,
+    });
+    
     return meta;
   }
 
@@ -336,6 +347,19 @@ class SkillEvolutionEngine {
     this._saveRegistry();
 
     console.log(`[SkillEvolution] ✨ Skill evolved: ${skillName} → v${meta.version} (${reason || title})`);
+    
+    // Introspection logging
+    introspectionCollector.recordSkill('evolved', {
+      skillName,
+      oldVersion,
+      newVersion: meta.version,
+      evolutionCount: meta.evolutionCount,
+      sourceExpId,
+      section,
+      title,
+      deduped: false,
+    });
+    
     return true;
   }
 

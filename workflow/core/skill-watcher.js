@@ -127,7 +127,11 @@ class SkillWatcher extends EventEmitter {
     // P1-9 fix: Close all watchers (may have multiple for subdirectories)
     if (this._watchers) {
       for (const watcher of this._watchers) {
-        try { watcher.close(); } catch (_) {}
+try {
+        watcher.close();
+      } catch (e) {
+        // Watcher close failure is not critical
+      }
       }
       this._watchers = [];
     }

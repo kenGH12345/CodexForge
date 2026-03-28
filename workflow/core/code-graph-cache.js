@@ -30,6 +30,17 @@ let _processCache;
 const CodeGraphCacheMixin = {
 
   /**
+   * Public API: Ensure the code graph is loaded into memory.
+   * If already loaded (symbols.size > 0), this is a no-op.
+   * Use this instead of calling _loadFromDisk() directly from external modules.
+   */
+  ensureLoaded() {
+    if (this._symbols.size === 0) {
+      this._loadFromDisk();
+    }
+  },
+
+  /**
    * Loads the code graph index from the persisted JSON file (disk → memory).
    * Called automatically when querySymbol() is invoked on an empty in-memory index.
    */
