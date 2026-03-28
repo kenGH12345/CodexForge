@@ -33,7 +33,7 @@ const { ArchitectAgent } = require('./agents/architect-agent');
 const { DeveloperAgent } = require('./agents/developer-agent');
 const { TesterAgent } = require('./agents/tester-agent');
 const { PlannerAgent } = require('./agents/planner-agent');
-const { buildAgentPrompt, setPromptSlotManager, getPromptSlotManager, setSelfReflectionEngine, setSkillEvolutionEngine, setOrchestrator } = require('./core/prompt-builder');
+const { buildAgentPrompt, setPromptSlotManager, getPromptSlotManager, setSelfReflectionEngine, setSkillEvolutionEngine, setOrchestrator, setEmbeddingService } = require('./core/prompt-builder');
 const { PromptSlotManager } = require('./core/prompt-slot-manager');
 const { WorkflowState, AgentRole, STATE_ORDER } = require('./core/types');
 const { PATHS, HOOK_EVENTS } = require('./core/constants');
@@ -91,6 +91,17 @@ const { MCPServer } = require('./core/mcp-server');
 const { RequestTriage } = require('./core/request-triage');
 // P2-4: Core module contracts (explicit interface validation)
 const { validateContract, assertContract, listContracts, ALL_CONTRACTS } = require('./core/contracts');
+// ADR-45: Write-Around Review (zero-trust edit validation for direct file edits)
+const { quickReview, validateBeforeEdit, reviewAfterEdit, withWriteAroundReview } = require('./core/write-around-review');
+// Plan-C: Lightweight local embedding for semantic skill/experience matching
+const { EmbeddingService } = require('./core/embedding-service');
+// Plan-A: Loop guard for conditional rollback retry limits
+const { LoopGuard } = require('./core/loop-guard');
+// RetryDivergenceGuard: prevents duplicate output during rollback retries
+const { buildRetryContext, compareOutputFingerprint } = require('./core/retry-divergence-guard');
+// Bottom-up dark disconnection prevention: ES6 Proxy wraps shared objects
+// to catch calls to non-existent methods at access time, not at failure time.
+const { createSafeProxy, getDefaultProxyMode } = require('./core/safe-interface-proxy');
 // Smart Context Selection: dynamic adapter block priority adjustment based on project/task type
 // (moved to orchestrator-mcp.js; imports kept only if directly referenced elsewhere)
 // MCP (Model Context Protocol) adapters: moved to orchestrator-mcp.js (P1-1 extraction)
@@ -228,6 +239,13 @@ class Orchestrator {
 
     // Initialise core subsystems
     this.hooks = new HookSystem();
+
+    // P1: Initialize Tool Hook Executor for automatic tool execution hooks
+    // This enables BEFORE/AFTER tool execution hooks across all tool calls
+    const { initializeToolHookExecutor } = require('./tools/tool-hook-executor');
+    initializeToolHookExecutor(this.hooks, { enabled: true });
+    console.log(`[Orchestrator] 🔧 Tool Hook Executor initialized (P1: automatic tool-level hooks)`);
+
     this.bus = new FileRefBus();
     this.stateMachine = new StateMachine(projectId, this.hooks.getEmitter(), {
       manifestPath: path.join(this._outputDir, 'manifest.json'),
@@ -237,7 +255,10 @@ class Orchestrator {
 
     // Initialise AgentFlow subsystems
     this.taskManager = new TaskManager();
-    this.experienceStore = new ExperienceStore();
+    // ADR-43 Extension: Scope-aware ExperienceStore
+    // WORKFLOW scope: ~/.codexforge/workflow-experiences.json (global)
+    // PROJECT scope: <project-root>/.workflow/experiences.json (version-controllable)
+    this.experienceStore = new ExperienceStore({ projectRoot: this.projectRoot });
     // Purge expired experiences at startup to keep the store lean.
     // Negative experiences expire after 90 days, positive after 365 days (configurable via ttlDays).
     this.experienceStore.purgeExpired();
@@ -344,6 +365,15 @@ class Orchestrator {
     }
     if (llmTiers && typeof llmTiers === 'object' && Object.keys(llmTiers).length > 0) {
       console.log(`[Orchestrator] 🎯 LlmRouter tier-based routing enabled: [${Object.keys(llmTiers).join(', ')}] – will auto-assign after ANALYSE stage.`);
+    }
+
+    // ── P2 Feature #2: SmartRouterEnhancement – Bottleneck-aware routing ──
+    // Enhances LlmRouter with bottleneck detection and automatic tier optimization
+    // Requires output directory for observability data access
+    if (this._config?.smartRouterEnhancement !== false) {
+      this.llmRouter.withSmartEnhancement();
+    } else {
+      console.log(`[Orchestrator] ⏭️  SmartRouterEnhancement disabled by config`);
     }
     this._rawLlmCall = async (prompt) => {
       try {
@@ -461,8 +491,44 @@ class Orchestrator {
     // detects a placeholder skill during loading (first-use trigger pattern).
     setOrchestrator(this);
 
+    // ── Plan-C: EmbeddingService (semantic skill/experience matching) ────────
+    // Lightweight local embedding model for cosine-similarity-based semantic search.
+    // Zero LLM token cost, ~50ms per inference. Gracefully degrades if package not installed.
+    const embeddingCfg = (this._config && this._config.embedding) || {};
+    if (embeddingCfg.enabled !== false) {
+      this._embeddingService = new EmbeddingService({
+        cacheDir: path.join(this.projectRoot || PATHS.OUTPUT_DIR, '.workflow', 'models'),
+        maxCacheSize: embeddingCfg.maxCacheSize || 500,
+        quantized: embeddingCfg.quantized !== false,
+      });
+      // Async init (non-blocking): model loads in background, semantic matching
+      // becomes available once loaded. Keyword matching is used as fallback until then.
+      this._embeddingService.init().then(ready => {
+        if (ready) {
+          setEmbeddingService(this._embeddingService);
+          // Also inject into ExperienceStore for semantic boost
+          if (this.experienceStore) {
+            this.experienceStore._embeddingService = this._embeddingService;
+          }
+          console.log(`[Orchestrator] 🧠 EmbeddingService ready (Plan-C: semantic skill/experience matching enabled)`);
+        }
+      }).catch(() => { /* non-fatal, logged inside EmbeddingService */ });
+    } else {
+      this._embeddingService = null;
+      console.log(`[Orchestrator] ⏭️  EmbeddingService disabled by config (embedding.enabled=false)`);
+    }
+
+    // ── Plan-A: LoopGuard (conditional rollback retry limits) ────────────────
+    // Prevents infinite backward transitions when ConditionalEdge rules trigger
+    // stage rollbacks (e.g. TEST → ARCHITECT). Pure rule engine, zero LLM calls.
+    const loopGuardCfg = (this._config && this._config.loopGuard) || {};
+    this._loopGuard = new LoopGuard({
+      maxRetries: loopGuardCfg.maxRetries ?? 2,
+      edgeLimits: loopGuardCfg.edgeLimits || {},
+    });
+    console.log(`[Orchestrator] 🔄 LoopGuard initialised (Plan-A: max ${this._loopGuard._maxRetries} retries per backward edge)`);
+
     // ── EntropyGC: architectural drift scanner ──────────────────────────────
-    const cfg = this._config || {};
     this.entropyGC = new EntropyGC({
       projectRoot:  this.projectRoot,
       outputDir:    PATHS.OUTPUT_DIR,
@@ -503,6 +569,27 @@ class Orchestrator {
       try {
         const result = buildAgentPrompt(role, prompt);
         optimisedPrompt = result.prompt;
+
+        // Optimization C: API Prompt Caching – when buildAgentPrompt returns
+        // cache breakpoint metadata, convert to messages array format so the
+        // LLM adapter can leverage API-level caching (Anthropic cache_control,
+        // OpenAI automatic prefix caching). The system message (fixedPrefix)
+        // is stable across calls for the same role, achieving ~90% cost reduction
+        // on cached tokens. Falls back to string format if the adapter rejects arrays.
+        if (result.meta.cacheBreakpoint && result.meta.cacheablePrefix && result.meta.dynamicSuffix) {
+          optimisedPrompt = [
+            {
+              role: 'system',
+              content: result.meta.cacheablePrefix,
+              cache_control: { type: 'ephemeral' },
+            },
+            {
+              role: 'user',
+              content: result.meta.dynamicSuffix,
+            },
+          ];
+        }
+
         console.log(`[Orchestrator] LLM call for ${role}: ~${result.meta.estimatedTokens} tokens`);
         // Skill Lifecycle: record injected skill names for effectiveness tracking
         if (result.meta.injectedSkillNames && result.meta.injectedSkillNames.length > 0) {
@@ -529,6 +616,42 @@ class Orchestrator {
       // that function is used instead of the default _originalLlmCall.
       const roleLlm = this.llmRouter.getRawForRole(role);
       const rawResponse = await roleLlm(optimisedPrompt);
+      // ── ADR-42: Output Truncation Detection ─────────────────────────────
+      // Check stop_reason/finish_reason to detect when the LLM response was
+      // cut off due to max_tokens limit. This is the L1 detection layer.
+      // When detected, we emit an event and record it for observability.
+      try {
+        const stopReason = rawResponse?.stop_reason || rawResponse?.finish_reason
+          || rawResponse?.choices?.[0]?.finish_reason;
+        if (stopReason === 'max_tokens' || stopReason === 'length') {
+          console.warn(`[Orchestrator] ⚠️  OUTPUT TRUNCATED: ${role} response hit max_tokens limit (stop_reason="${stopReason}")`);
+          // Record in observability for cross-session pattern detection
+          if (this.obs && typeof this.obs.recordLlmCall === 'function') {
+            this.obs._truncationEvents = this.obs._truncationEvents || [];
+            this.obs._truncationEvents.push({
+              role,
+              stopReason,
+              timestamp: new Date().toISOString(),
+            });
+          }
+          // Record in SelfReflection for pattern detection
+          if (this._selfReflection && typeof this._selfReflection.recordIssue === 'function') {
+            this._selfReflection.recordIssue({
+              severity: 'medium',
+              title: `Output truncated for ${role} (stop_reason=${stopReason})`,
+              description: `The LLM response for role "${role}" was truncated because it hit the max_tokens limit. ` +
+                `This may indicate the prompt is too large or the expected output is too long. ` +
+                `Consider: (1) reducing context injection, (2) splitting the task, (3) increasing max_output_tokens.`,
+              source: 'wrappedLlm.truncation_detection',
+              patternKey: `output-truncation:${role}`,
+            });
+          }
+          // Emit hook event for downstream handling
+          try {
+            await this.hooks.emit(HOOK_EVENTS.OUTPUT_TRUNCATED, { role, stopReason });
+          } catch (_) { /* hook emission must never break the call */ }
+        }
+      } catch (_) { /* truncation detection must never break the call */ }
       const actualTokens = (rawResponse && typeof rawResponse === 'object')
         ? (rawResponse.usage?.total_tokens ?? rawResponse.usage?.input_tokens ?? null)
         : null;
@@ -682,6 +805,7 @@ class Orchestrator {
       hooks:           'IHookSystem',
       experienceStore: 'IExperienceStore',
       stageCtx:        'IStageContextStore',
+      codeGraph:       'ICodeGraph',
     };
     for (const [svcName, contractName] of Object.entries(CONTRACT_MAP)) {
       if (this.services.has(svcName)) {
@@ -692,6 +816,47 @@ class Orchestrator {
       }
     }
     console.log(`[Orchestrator] 📜 Contract validation sweep complete (${Object.keys(CONTRACT_MAP).length} service(s) checked).`);
+
+    // ── Safe Interface Proxy: bottom-up dark disconnection prevention ────────
+    // Wraps core shared objects with ES6 Proxy to catch calls to non-existent
+    // methods immediately. This is the root-cause fix for the .query() class of
+    // bugs: instead of typeof checks silently skipping broken code, the Proxy
+    // throws a loud error with the missing method name and suggestions.
+    //
+    // Why here (after Contract Validation, before MCP init):
+    //   - All shared objects are fully constructed and cross-linked
+    //   - Contract validation has already run (it needs the raw objects)
+    //   - MCP init and all subsequent code gets the protected versions
+    //
+    // Mode: 'warn' in production (log + no-op), 'throw' in tests.
+    const _proxyMode = getDefaultProxyMode();
+    this.experienceStore = createSafeProxy(this.experienceStore, 'ExperienceStore', { mode: _proxyMode });
+    this.obs             = createSafeProxy(this.obs,             'Observability',    { mode: _proxyMode });
+    this.complaintWall   = createSafeProxy(this.complaintWall,   'ComplaintWall',    { mode: _proxyMode });
+    this.hooks           = createSafeProxy(this.hooks,           'HookSystem',       { mode: _proxyMode });
+    this.stateMachine    = createSafeProxy(this.stateMachine,    'StateMachine',     { mode: _proxyMode });
+    this.stageCtx        = createSafeProxy(this.stageCtx,        'StageContextStore', { mode: _proxyMode });
+    this.negotiation     = createSafeProxy(this.negotiation,     'NegotiationEngine', { mode: _proxyMode });
+    // Fix 1: Extend SafeProxy to cover 5 additional high-frequency shared objects
+    // that were previously unprotected ("naked") — any call to a non-existent method
+    // on these objects would silently return undefined instead of failing loudly.
+    this.codeGraph        = createSafeProxy(this.codeGraph,        'CodeGraph',          { mode: _proxyMode });
+    this.skillEvolution   = createSafeProxy(this.skillEvolution,   'SkillEvolution',     { mode: _proxyMode });
+    this.bus              = createSafeProxy(this.bus,              'FileRefBus',         { mode: _proxyMode });
+    this.experienceRouter = createSafeProxy(this.experienceRouter, 'ExperienceRouter',   { mode: _proxyMode });
+    this.promptSlotManager = createSafeProxy(this.promptSlotManager, 'PromptSlotManager', { mode: _proxyMode });
+    console.log(`[Orchestrator] 🛡️  SafeInterfaceProxy active (mode=${_proxyMode}, 12 shared objects protected).`);
+
+    // Fix: Re-register SafeProxy-wrapped objects into ServiceContainer so that
+    // services.resolve('name') returns the protected Proxy, not the original raw
+    // object. Without this, code using resolve() bypasses SafeProxy protection.
+    for (const svcName of [
+      'experienceStore', 'obs', 'complaintWall', 'hooks', 'stateMachine',
+      'stageCtx', 'negotiation', 'codeGraph', 'skillEvolution', 'bus',
+      'experienceRouter',
+    ]) {
+      this.services.registerValue(svcName, this[svcName], { force: true });
+    }
 
     // ── MCP + Smart Context + Adapter Telemetry + Plugin Registry ────────────
     // Extracted to orchestrator-mcp.js (P1-1 big file treatment).
@@ -1020,6 +1185,37 @@ class Orchestrator {
       // The last stage's output transitions to FINISHED.
       const stateOrder = [WorkflowState.INIT, ...stages.map(s => s.name), WorkflowState.FINISHED];
 
+      // ── Plan-A: Register conditional transition rules + reset LoopGuard ──
+      // These rules define the backward edges that QualityGate failures can trigger.
+      // LoopGuard enforces max retry counts per edge to prevent infinite loops.
+      if (this._loopGuard) {
+        this._loopGuard.resetAll(); // Fresh counters for each workflow run
+      }
+      // Register conditional edges on StateMachine for observability.
+      // The actual transition logic is handled inside each stage runner
+      // (stage-architect.js, stage-tester.js) using LoopGuard checks.
+      try {
+        this.stateMachine.addConditionalTransition('TEST', {
+          name: 'TestQualityGate',
+          condition: (manifest, ctx) => {
+            if (ctx?.qualityGateResult === 'PASS') return 'pass';
+            if (ctx?.qualityGateResult === 'CODE_ISSUE') return 'code_issue';
+            return 'pass';
+          },
+          targets: { pass: 'FINISHED', code_issue: 'CODE' },
+        });
+        this.stateMachine.addConditionalTransition('ARCHITECT', {
+          name: 'ArchReviewGate',
+          condition: (manifest, ctx) => {
+            if (ctx?.archReviewPassed) return 'pass';
+            return 'reanalyse';
+          },
+          targets: { pass: 'PLAN', reanalyse: 'ANALYSE' },
+        });
+      } catch (_) {
+        // Non-fatal: conditional transitions may already be registered from a previous run
+      }
+
       for (let i = 0; i < stages.length; i++) {
         const { name, runner } = stages[i];
         const fromState = stateOrder[i];     // e.g. INIT for first stage
@@ -1081,6 +1277,13 @@ class Orchestrator {
     } catch (err) {
       await this.hooks.emit(HOOK_EVENTS.WORKFLOW_ERROR, { error: err, state: this.stateMachine.getState() });
 
+      // ── P0-FIX: Record workflow failure as NEGATIVE experience for self-evolution ──
+      // Without this, thrown exceptions (ContractViolationError, empty output, etc.)
+      // vanish after the process exits. By recording them as NEGATIVE experiences,
+      // the Skill Evolution pipeline can learn from failures and the SelfReflection
+      // engine can detect recurring patterns across sessions.
+      this._recordWorkflowFailureExperience(err, rawRequirement);
+
       // Best-effort teardown: even when the workflow fails, commit whatever
       // artifacts were produced so far.  _finalizeWorkflow is wrapped in its
       // own try/catch so a teardown failure cannot mask the original error.
@@ -1122,6 +1325,102 @@ class Orchestrator {
     await this._finalizeWorkflow('sequential', { requirement: rawRequirement });
   }
 
+  // ─── P0-FIX: Record workflow failure as self-evolution material ─────────────
+
+  /**
+   * Records a workflow failure as a NEGATIVE experience and a SelfReflection issue.
+   *
+   * This is the critical missing link in the self-evolution pipeline:
+   * without this, thrown exceptions (ContractViolationError, empty output, etc.)
+   * vanish after the process exits and are never learned from.
+   *
+   * By recording them here, the following downstream systems can learn:
+   *   - ExperienceStore → Skill Evolution pipeline picks up NEGATIVE experiences
+   *   - SelfReflection  → Pattern detection across sessions (recurring issues)
+   *   - ComplaintWall    → Visible "problem ticket" for human review
+   *
+   * @param {Error} err - The thrown error
+   * @param {string} rawRequirement - The original user requirement
+   */
+  _recordWorkflowFailureExperience(err, rawRequirement) {
+    const currentState = this.stateMachine ? this.stateMachine.getState() : 'UNKNOWN';
+
+    // 1. Record as NEGATIVE experience in ExperienceStore
+    if (this.experienceStore && typeof this.experienceStore.recordWithContentCheck === 'function') {
+      try {
+        const { ContractViolationError } = require('./core/file-ref-bus');
+        const isContractViolation = err instanceof ContractViolationError || err.name === 'ContractViolationError';
+
+        const title = isContractViolation
+          ? `Contract violation in ${currentState}: ${err.contractReason || err.message.slice(0, 80)}`
+          : `Workflow failure in ${currentState}: ${err.message.slice(0, 80)}`;
+
+        const content = isContractViolation
+          ? [
+              `**Stage**: ${currentState}`,
+              `**Error**: ContractViolationError`,
+              `**Sender**: ${err.senderRole || 'unknown'}`,
+              `**Receiver**: ${err.receiverRole || 'unknown'}`,
+              `**Tier**: ${err.tier || 'unknown'}`,
+              `**Reason**: ${err.contractReason || err.message}`,
+              `**File**: ${err.filePath || 'unknown'}`,
+              `**Requirement excerpt**: ${(rawRequirement || '').slice(0, 200)}`,
+              `> _Source: Workflow error catch block (auto-captured for self-evolution)_`,
+            ].join('\n')
+          : [
+              `**Stage**: ${currentState}`,
+              `**Error**: ${err.name || 'Error'}`,
+              `**Message**: ${err.message}`,
+              `**Requirement excerpt**: ${(rawRequirement || '').slice(0, 200)}`,
+              `> _Source: Workflow error catch block (auto-captured for self-evolution)_`,
+            ].join('\n');
+
+        const tags = ['workflow-failure', 'auto-captured', `stage:${currentState.toLowerCase()}`];
+        if (isContractViolation) {
+          tags.push('contract-violation', `tier:${err.tier || 'unknown'}`);
+        }
+
+        this.experienceStore.recordWithContentCheck({
+          type: 'negative',
+          category: 'workflow_process',
+          title,
+          content,
+          tags,
+          ttlDays: 180, // Keep failure experiences longer for pattern detection
+        });
+
+        console.log(`[Orchestrator] 📝 Workflow failure recorded to ExperienceStore for self-evolution.`);
+      } catch (expErr) {
+        console.warn(`[Orchestrator] ⚠️  Failed to record failure experience (non-fatal): ${expErr.message}`);
+      }
+    }
+
+    // 2. Record as SelfReflection issue for cross-session pattern detection
+    if (this._selfReflection && typeof this._selfReflection.recordIssue === 'function') {
+      try {
+        this._selfReflection.recordIssue({
+          severity: 'high',
+          title: `Workflow failure in ${currentState}: ${err.message.slice(0, 100)}`,
+          description: `The workflow threw an unrecoverable error during the ${currentState} stage. ` +
+            `Error: ${err.message}. ` +
+            `This may indicate a systemic issue if it recurs across sessions.`,
+          source: `orchestrator.run.catch`,
+          patternKey: `workflow-failure:${currentState}:${err.name || 'Error'}`,
+          rootCause: err.name === 'ContractViolationError'
+            ? `Agent output failed content contract validation (tier: ${err.tier})`
+            : null,
+          suggestedFix: err.name === 'ContractViolationError'
+            ? `Review the ${err.senderRole} Agent's prompt to ensure it produces output matching the ${err.receiverRole} contract.`
+            : `Investigate the ${currentState} stage for the root cause of: ${err.message.slice(0, 100)}`,
+        });
+
+        console.log(`[Orchestrator] 🔍 Workflow failure recorded to SelfReflection for pattern detection.`);
+      } catch (srErr) {
+        console.warn(`[Orchestrator] ⚠️  Failed to record SelfReflection issue (non-fatal): ${srErr.message}`);
+      }
+    }
+  }
+
   // ─── AgentFlow: Task-based methods → see orchestrator-task.js ──────────────
   // runTaskBased(), _runAgentWorker(), _executeTask(), _evaluateReplan(),
   // _validateDecomposition(), _checkCrossTaskCoherence(), _checkRequirementCoverage()
@@ -1148,6 +1447,15 @@ module.exports = {
   RequestTriage,
   // P2-4: Contracts (explicit interface validation)
   assertContract, validateContract, listContracts,
+  // ADR-45: Write-Around Review (zero-trust edit validation)
+  quickReview, validateBeforeEdit, reviewAfterEdit, withWriteAroundReview,
+  // Plan-C: EmbeddingService (semantic skill/experience matching)
+  EmbeddingService,
+  // Plan-A: LoopGuard (conditional rollback retry limits)
+  LoopGuard,
+  // RetryDivergenceGuard: prevents duplicate output during rollback retries
+  buildRetryContext,
+  compareOutputFingerprint,
 };
 
 //  Mixin: attach extracted methods to Orchestrator.prototype 

@@ -222,7 +222,7 @@ How it works:
   }
 
   // ── Step 0: Copy project-init-template files ──────────────────────────────
-  console.log(`[1/7] Copying project knowledge templates...`);
+  console.log(`[1/10] Copying project knowledge templates...`);
   if (!args.dryRun) {
     _copyProjectTemplates(projectRoot, config);
   } else {
@@ -232,7 +232,7 @@ How it works:
   // ── Step 0.5: Run CLI init to scaffold project structure ─────────────────
   const detectedProfile = TECH_PROFILES.find(p => p.techStack === config.techStack);
   if (detectedProfile && detectedProfile.cliInitCommand) {
-  console.log(`[1.5/7] Running CLI scaffolding for ${detectedProfile.name}...`);
+  console.log(`[1.5/10] Running CLI scaffolding for ${detectedProfile.name}...`);
     const cliResult = _runCliInit(projectRoot, detectedProfile, config.projectName || 'app', { dryRun: args.dryRun });
     console.log(`      Command: ${cliResult.command}`);
     if (cliResult.success) {
@@ -246,7 +246,7 @@ How it works:
   }
 
   // ── Step 0.7: Run ProjectProfiler (deep architecture analysis) ────────────
-  console.log(`[2/7] Running ProjectProfiler (deep architecture analysis)...`);
+  console.log(`[2/10] Running ProjectProfiler (deep architecture analysis)...`);
   if (!args.dryRun) {
     try {
       // P2-3: Pass user-defined custom detection rules if configured
@@ -320,7 +320,7 @@ How it works:
   console.log('');
 
   // ── Step 1: Build AGENTS.md ────────────────────────────────────────────────
-  console.log(`[3/7] Building AGENTS.md (global project context)...`);
+  console.log(`[3/10] Building AGENTS.md (global project context)...`);
   if (!args.dryRun) {
     try {
       const memory = new MemoryManager(projectRoot);
@@ -334,7 +334,7 @@ How it works:
   }
 
   // ── Step 2: Generate experiences from source files ─────────────────────────
-  console.log(`[4/7] Generating experience store from source files...`);
+  console.log(`[4/10] Generating experience store from source files...`);
   if (!args.dryRun) {
     try {
       // Dynamically require gen-experiences to avoid circular deps
@@ -354,7 +354,7 @@ How it works:
   }
 
   // ── Step 3: Register built-in skills ──────────────────────────────────────
-  console.log(`[4.5/7] Registering built-in skills...`);
+  console.log(`[4.5/10] Registering built-in skills...`);
   if (!args.dryRun) {
     try {
       const skillEngine = new SkillEvolutionEngine();
@@ -380,7 +380,7 @@ How it works:
   }
 
   // ── Step 4: Generate init.sh (long-running agent pattern) ─────────────────
-  console.log(`[5/7] Generating init.sh (dev server startup script)...`);
+  console.log(`[5/10] Generating init.sh (dev server startup script)...`);
   const initShPath = path.join(projectRoot, 'init.sh');
   if (!args.dryRun) {
     if (fs.existsSync(initShPath)) {
@@ -401,7 +401,7 @@ How it works:
   }
 
   // ── Step 5: Generate feature-list.json template ────────────────────────────
-  console.log(`[5.5/7] Generating feature-list.json template...`);
+  console.log(`[5.5/10] Generating feature-list.json template...`);
   const outputDir = path.join(projectRoot, 'output');
   const featureListPath = path.join(outputDir, 'feature-list.json');
   if (!args.dryRun) {
@@ -423,7 +423,7 @@ How it works:
   }
 
   // ── Step 5.5: Generate IDE Agent definitions ────────────────────────────────
-  console.log(`[5.5/7] Generating IDE Agent definitions (CodeBuddy, Cursor, Claude Code)...`);
+  console.log(`[5.6/10] Generating IDE Agent definitions (CodeBuddy, Cursor, Claude Code)...`);
   if (!args.dryRun) {
     try {
       const agentResult = generateIDEAgents(projectRoot, config, { dryRun: false, force: false });
@@ -445,7 +445,7 @@ How it works:
   console.log('');
 
   // ── Step 6: Build initial code graph ──────────────────────────────────────
-  console.log(`[7/7] Building initial code graph (symbol index + call relationships)...`);
+  console.log(`[6/10] Building initial code graph (symbol index + call relationships)...`);
   if (!args.dryRun) {
     try {
       const { CodeGraph } = require('./core/code-graph');
@@ -478,6 +478,163 @@ How it works:
     console.log(`      [dry-run] Would build code graph for: ${projectRoot}\n`);
   }
 
+  // ── Step 7: Extract business logic patterns ────────────────────────────────
+  console.log(`[7/10] Extracting business logic patterns (entry points, flows, core services)...`);
+  if (!args.dryRun) {
+    try {
+      const { CodeGraph } = require('./core/code-graph');
+      const { BusinessLogicExtractor } = require('./core/business-logic-extractor');
+      const { detectIDEEnvironment } = require('./core/ide-detection');
+      const outputDir = path.join(projectRoot, 'output');
+      const cfg = config || {};
+
+      // Load existing code graph (built in Step 6)
+      const graph = new CodeGraph({
+        projectRoot,
+        outputDir,
+        ignoreDirs:     cfg.ignoreDirs,
+        scopeDirs:      cfg.codeGraph?.scopeDirs,
+      });
+      graph._loadFromDisk();
+
+      // Detect IDE environment for IDE-First strategy
+      const ideDetection = detectIDEEnvironment({ config: cfg });
+
+      // Create extractor with IDE-First strategy
+      const extractor = new BusinessLogicExtractor({
+        codeGraph: graph,
+        projectRoot,
+        outputDir,
+        ideDetection,
+        useIDEFirst: true,  // Follow ADR-37
+      });
+
+      // Extract business logic patterns
+      const extractResult = await extractor.extract({
+        maxFlows: 20,
+        maxDepth: 5,
+        minCalledBy: 3,
+        writeOutput: true,
+      });
+
+      console.log(`      ✅ Business logic extracted:`);
+      console.log(`         • Entry points: ${extractResult.stats.entryPointCount}`);
+      console.log(`         • Business flows: ${extractResult.stats.businessFlowCount}`);
+      console.log(`         • Core services: ${extractResult.stats.coreServiceCount}`);
+      console.log(`         • Utilities: ${extractResult.stats.utilityFunctionCount}`);
+      console.log(`         • Strategy: ${extractResult.stats.strategy}`);
+      console.log(`      📄 JSON: ${path.join(outputDir, 'business-logic.json')}`);
+      console.log(`      📄 Summary: ${path.join(outputDir, 'business-logic.md')}\n`);
+    } catch (err) {
+      console.warn(`      ⚠️  Business logic extraction warning (non-fatal): ${err.message}\n`);
+    }
+  } else {
+    console.log(`      [dry-run] Would extract business logic patterns for: ${projectRoot}\n`);
+  }
+
+  // ── Step 8: Extract API endpoints ───────────────────────────────────────────
+  console.log(`[8/10] Extracting API endpoints (REST routes, handlers, request/response)...`);
+  if (!args.dryRun) {
+    try {
+      const { CodeGraph } = require('./core/code-graph');
+      const { ApiEndpointExtractor } = require('./core/api-endpoint-extractor');
+      const { detectIDEEnvironment } = require('./core/ide-detection');
+      const outputDir = path.join(projectRoot, 'output');
+      const cfg = config || {};
+
+      // Load existing code graph (built in Step 6)
+      const graph = new CodeGraph({
+        projectRoot,
+        outputDir,
+        ignoreDirs:     cfg.ignoreDirs,
+        scopeDirs:      cfg.codeGraph?.scopeDirs,
+      });
+      graph._loadFromDisk();
+
+      // Detect IDE environment for IDE-First strategy
+      const ideDetection = detectIDEEnvironment({ config: cfg });
+
+      // Create extractor with IDE-First strategy
+      const apiExtractor = new ApiEndpointExtractor({
+        codeGraph: graph,
+        projectRoot,
+        outputDir,
+        ideDetection,
+        useIDEFirst: true,  // Follow ADR-37
+      });
+
+      // Extract API endpoints
+      const apiResult = await apiExtractor.extract({
+        maxEndpoints: 50,
+        writeOutput: true,
+      });
+
+      console.log(`      ✅ API endpoints extracted:`);
+      console.log(`         • Endpoints: ${apiResult.stats.endpointCount}`);
+      console.log(`         • By method: GET=${apiResult.stats.byMethod.GET || 0}, POST=${apiResult.stats.byMethod.POST || 0}, PUT=${apiResult.stats.byMethod.PUT || 0}, DELETE=${apiResult.stats.byMethod.DELETE || 0}`);
+      console.log(`         • Strategy: ${apiResult.stats.strategy}`);
+      console.log(`      📄 JSON: ${path.join(outputDir, 'api-endpoints.json')}`);
+      console.log(`      📄 Summary: ${path.join(outputDir, 'api-endpoints.md')}\n`);
+    } catch (err) {
+      console.warn(`      ⚠️  API endpoint extraction warning (non-fatal): ${err.message}\n`);
+    }
+  } else {
+    console.log(`      [dry-run] Would extract API endpoints for: ${projectRoot}\n`);
+  }
+
+  // ── Step 9: Detect duplicate patterns ────────────────────────────────────────
+  console.log(`[9/10] Detecting duplicate patterns (exact duplicates, similar functions)...`);
+  if (!args.dryRun) {
+    try {
+      const { CodeGraph } = require('./core/code-graph');
+      const { DuplicatePatternDetector } = require('./core/duplicate-pattern-detector');
+      const { detectIDEEnvironment } = require('./core/ide-detection');
+      const outputDir = path.join(projectRoot, 'output');
+      const cfg = config || {};
+
+      // Load existing code graph (built in Step 6)
+      const graph = new CodeGraph({
+        projectRoot,
+        outputDir,
+        ignoreDirs:     cfg.ignoreDirs,
+        scopeDirs:      cfg.codeGraph?.scopeDirs,
+      });
+      graph._loadFromDisk();
+
+      // Detect IDE environment for IDE-First strategy
+      const ideDetection = detectIDEEnvironment({ config: cfg });
+
+      // Create detector with IDE-First strategy
+      const dupDetector = new DuplicatePatternDetector({
+        codeGraph: graph,
+        projectRoot,
+        outputDir,
+        ideDetection,
+        useIDEFirst: true,  // Follow ADR-37
+      });
+
+      // Detect duplicate patterns
+      const dupResult = await dupDetector.detect({
+        minBlockLines: 6,
+        similarityThreshold: 0.7,
+        writeOutput: true,
+      });
+
+      console.log(`      ✅ Duplicate patterns detected:`);
+      console.log(`         • Exact duplicate groups: ${dupResult.stats.exactDuplicateGroups}`);
+      console.log(`         • Similar function groups: ${dupResult.stats.similarFunctionGroups}`);
+      console.log(`         • Duplicate blocks: ${dupResult.stats.duplicateBlockCount}`);
+      console.log(`         • Duplication rate: ${dupResult.stats.duplicationRate}`);
+      console.log(`         • Strategy: ${dupResult.stats.strategy}`);
+      console.log(`      📄 JSON: ${path.join(outputDir, 'duplicate-patterns.json')}`);
+      console.log(`      📄 Summary: ${path.join(outputDir, 'duplicate-patterns.md')}\n`);
+    } catch (err) {
+      console.warn(`      ⚠️  Duplicate pattern detection warning (non-fatal): ${err.message}\n`);
+    }
+  } else {
+    console.log(`      [dry-run] Would detect duplicate patterns for: ${projectRoot}\n`);
+  }
+
   // ── Summary ────────────────────────────────────────────────────────────────
   console.log(`${'='.repeat(60)}`);
   console.log(`  ✅ Project initialisation complete!`);
@@ -494,6 +651,12 @@ How it works:
   console.log(`    • output/code-graph.json     – Structured symbol index + call graph (auto-updated)`);
   console.log(`    • output/code-graph.md       – Human-readable code graph summary`);
   console.log(`    • output/project-profile.md  – Deep architecture profile (frameworks, layers, data, infra)`);
+  console.log(`    • output/business-logic.json – Extracted business logic patterns (entry points, flows)`);
+  console.log(`    • output/business-logic.md   – Human-readable business logic summary`);
+  console.log(`    • output/api-endpoints.json  – Extracted REST API endpoints (routes, handlers)`);
+  console.log(`    • output/api-endpoints.md    – Human-readable API endpoint summary`);
+  console.log(`    • output/duplicate-patterns.json – Detected duplicate code patterns`);
+  console.log(`    • output/duplicate-patterns.md   – Human-readable duplication analysis`);
   console.log(`  IDE Agent definitions:`);
   console.log(`    • .codebuddy/agents/workflow-agent.md  – CodeBuddy custom Agent (select in mode dropdown)`);
   console.log(`    • .cursor/rules/workflow-agent.mdc     – Cursor Agent rule`);

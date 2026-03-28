@@ -336,6 +336,29 @@ module.exports = {
     dryRun: false,            // Set to true to enable dry-run mode
   },
 
+  // ─── Tool Hooks ─────────────────────────────────────────────────────────────
+  //
+  // Enable automatic hook injection for thick-tools.
+  // When enabled, ALL calls to thick-tools (getProjectStructure, selectToolStrategy,
+  // scanCodeSymbols, etc.) automatically trigger BEFORE/AFTER hooks for:
+  //   - Metrics collection (latency, token usage, frequency)
+  //   - Logging and tracing
+  //   - Extensibility (custom hook handlers)
+  //
+  // This is a ZERO-COST ABSTRACTION - existing code paths require NO changes.
+  // thick-tools.js automatically redirects to thick-tools-hooked.js when enabled.
+  //
+  // Components:
+  //   - thick-tools-hooked.js: Hook-wrapped tool implementations
+  //   - tool-hook-executor.js: BEFORE/AFTER hook registry and executor
+  //   - Tool metadata registry: Self-describing tools for agent consumption
+  //
+  toolHooks: {
+    enabled: true,            // Set to true to enable automatic tool hooks
+    logMetrics: true,         // Log metrics for each tool call
+    maxMetricsHistory: 1000,  // Max metrics records to keep in memory
+  },
+
   // ─── MCP (Model Context Protocol) ────────────────────────────────────────────
   //
   // Connect external systems (TAPD, CI/CD, DevTools, Web Search) via MCP adapters.
@@ -531,6 +554,30 @@ module.exports = {
     //   codecovToken: '',         // Or set CODECOV_TOKEN env var
     //   codecovOwner: '',         // GitHub org/user
     //   codecovRepo: '',          // Repository name
+    // },
+
+    // ── Plan-C: EmbeddingService (semantic skill/experience matching) ──────
+    // Lightweight local embedding model for cosine-similarity-based semantic search.
+    // Zero LLM token cost, ~50ms per inference. Requires @huggingface/transformers.
+    // Gracefully degrades if the package is not installed.
+    //
+    // embedding: {
+    //   enabled: true,           // Set to false to disable semantic matching entirely
+    //   maxCacheSize: 500,       // Max number of cached embedding vectors
+    //   quantized: true,         // Use quantized model (6MB vs 22MB)
+    // },
+
+    // ── Plan-A: LoopGuard (conditional rollback retry limits) ─────────────
+    // Prevents infinite backward transitions when QualityGate failures trigger
+    // stage rollbacks (e.g. TEST → CODE, ARCHITECT → ANALYSE).
+    // Pure rule engine, zero LLM calls.
+    //
+    // loopGuard: {
+    //   maxRetries: 2,           // Default max retries per backward edge
+    //   edgeLimits: {            // Per-edge override limits
+    //     'TEST→CODE': 2,
+    //     'ARCHITECT→ANALYSE': 1,
+    //   },
     // },
   },
 };

@@ -26,8 +26,11 @@
     "inquirer": "^8.2.6",
     "glob": "^10.3.10"
   },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.4.0"
+  },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   },
   "license": "MIT"
 }

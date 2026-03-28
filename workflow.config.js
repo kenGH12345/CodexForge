@@ -31,6 +31,15 @@ module.exports = {
     failOnUnfixed: false,
   },
 
+  // ─── Tester Agent ─────────────────────────────────────────────────────────
+  tester: {
+    // Minimum test case coverage rate threshold (percentage)
+    // If coverage falls below this, a warning is logged
+    coverageThreshold: 80,
+    // Whether to fail the stage if coverage is below threshold
+    failOnLowCoverage: false,
+  },
+
   // ─── Built-in Skills ─────────────────────────────────────────────────────
   builtinSkills: [
     {
@@ -50,4 +59,71 @@ module.exports = {
 
   // ─── Classification Rules ─────────────────────────────────────────────────
   classificationRules: [],
+
+  // ─── Effective Lines Counter (ADR-XX) ──────────────────────────────────────
+  // Smart file size limits that distinguish code from comments/blank lines.
+  // Reduces false alarms on well-documented files and enforces limits on
+  // actual code complexity.
+  effectiveLines: {
+    // Enable smart line counting (default: true)
+    enabled: true,
+    
+    // Tiered limits based on file role (effective lines, excluding comments)
+    // Adjusted for WorkFlowAgent project: core modules are well-documented and stable
+    tiers: {
+      'entry-point': { maxEffectiveLines: 700, maxTotalLines: 1000 },
+      'core-critical': { maxEffectiveLines: 1000, maxTotalLines: 1500 },
+      'core-standard': { maxEffectiveLines: 800, maxTotalLines: 1200 },
+      'agent': { maxEffectiveLines: 250, maxTotalLines: 400 },
+      'command': { maxEffectiveLines: 400, maxTotalLines: 600 },
+      'default': { maxEffectiveLines: 300, maxTotalLines: 500 },
+    },
+    
+    // Warn if comment ratio exceeds this threshold (percentage)
+    maxCommentRatio: 60,
+  },
+
+  // ─── Scheduler (Automated Triggers) ───────────────────────────────────────
+  // Enables automatic triggering of workflow commands at scheduled intervals.
+  // Designed for "set and forget" automated audits and health checks.
+  //
+  // Supported trigger formats:
+  //   - "hourly", "daily", "weekly", "monthly" (simple keywords)
+  //   - "every N hours", "every N days" (interval-based)
+  //   - Standard cron: "0 2 * * 1" (every Monday 2AM)
+  //
+  // INCREMENTAL MODE (Default):
+  //   - Uses --incremental flag to only audit changed files
+  //   - Reduces token consumption by ~70% for typical runs
+  //   - Automatically skips audit if no files changed since last run
+  //   - Recommended for scheduled/automated audits
+  //
+  // Usage:
+  // 1. Enable scheduler in config
+  // 2. Define tasks with command, cron, and args
+  // 3. Start scheduler: node index.js /scheduler-start
+  // 4. Check status: node index.js /scheduler-status
+  scheduler: {
+    // Enable scheduler (default: false)
+    enabled: false,
+    
+    // Scheduled tasks (default: incremental mode for token efficiency)
+    tasks: [
+      // Example: Weekly deep audit (incremental mode - only audit changed files)
+      // {
+      //   command: 'deep-audit',
+      //   cron: 'weekly',
+      //   args: ['--incremental'],  // ⚡ Incremental mode saves ~70% tokens
+      //   description: 'Weekly automated deep audit (incremental)',
+      // },
+      
+      // Example: Daily high-priority issue check
+      // {
+      //   command: 'review-status',
+      //   cron: 'daily',
+      //   args: ['--severity=high'],
+      //   description: 'Daily high-priority issue check',
+      // },
+    ],
+  },
 };
