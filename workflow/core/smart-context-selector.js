@@ -539,6 +539,70 @@ class ContextProfile {
   }
 
   /**
+   * Returns per-block budget ratio multipliers based on taskType.
+   *
+   * Intent-aware truncation: instead of treating all blocks equally during
+   * ToolResultFilter pre-filtering, we allocate more chars to blocks that
+   * are most relevant to the current task intent.
+   *
+   * @param {string} blockLabel - Block label (e.g. 'Code Graph', 'Security CVE')
+   * @returns {number} Multiplier for maxBlockChars (1.0 = default, >1 = more budget, <1 = less)
+   */
+  getBudgetRatio(blockLabel) {
+    const blockKey = _labelToBlockKey(blockLabel);
+    const relevance = this._relevanceMap.get(blockKey) || 'useful';
+
+    // Base ratio from relevance level
+    const BASE_RATIOS = {
+      essential:  1.5,   // 50% more budget for essential blocks
+      useful:     1.0,   // Default budget
+      low:        0.6,   // 40% less budget for low-priority blocks
+      irrelevant: 0.0,   // Should already be skipped
+    };
+
+    // Task-specific overrides: certain taskTypes need disproportionate
+    // budget allocation to specific block types
+    const TASK_BUDGET_OVERRIDES = {
+      bugfix: {
+        CODE_GRAPH: 1.8,       // Bugfix needs deep code context
+        CI_STATUS: 1.5,        // CI failures are critical for bugfix
+        CODE_QUALITY: 1.5,     // Lint/quality issues often cause bugs
+        EXPERIENCE: 1.3,       // Past fixes are highly relevant
+      },
+      performance: {
+        CODE_GRAPH: 1.8,       // Need to see hot paths
+        TEST_INFRA: 1.5,       // Benchmark results matter
+        EXPERIENCE: 1.3,       // Past perf fixes are relevant
+      },
+      security: {
+        SECURITY_CVE: 2.0,     // CVE data is the primary input
+        CODE_GRAPH: 1.5,       // Need to trace vulnerable paths
+        LICENSE_COMPLIANCE: 1.3,
+      },
+      ui: {
+        FIGMA_DESIGN: 2.0,     // Design specs are primary input
+        CODE_GRAPH: 0.8,       // Less code context needed for UI
+      },
+      refactor: {
+        CODE_GRAPH: 2.0,       // Refactoring needs full code picture
+        CODE_QUALITY: 1.8,     // Quality metrics guide refactoring
+        EXPERIENCE: 1.3,       // Past refactors are relevant
+      },
+      docs: {
+        UNDOCUMENTED_EXPORTS: 2.0, // Primary input for docs tasks
+        CODE_GRAPH: 1.3,          // Need symbol info for docs
+      },
+    };
+
+    const taskOverrides = TASK_BUDGET_OVERRIDES[this.taskType];
+    if (taskOverrides && taskOverrides[blockKey] !== undefined) {
+      return taskOverrides[blockKey];
+    }
+
+    return BASE_RATIOS[relevance] ?? 1.0;
+  }
+
+  /**
    * Returns a summary string for logging.
    * @returns {string}
    */

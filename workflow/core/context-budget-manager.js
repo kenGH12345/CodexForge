@@ -16,10 +16,12 @@
 const {
   STAGE_TOKEN_BUDGET_CHARS,
   STAGE_TOKEN_BUDGET_TOKENS,
+  STAGE_BUDGET_MULTIPLIERS,
   BLOCK_PRIORITY,
   _applyTokenBudget,
   ToolResultFilter,
   getBudgetSummary,
+  INTENT_GREP_PATTERNS,
 } = require('./token-budget');
 
 const {
@@ -52,11 +54,14 @@ module.exports = {
   // Token budget
   STAGE_TOKEN_BUDGET_CHARS,
   STAGE_TOKEN_BUDGET_TOKENS,
+  STAGE_BUDGET_MULTIPLIERS,
   BLOCK_PRIORITY,
   _applyTokenBudget,
   getBudgetSummary,
   // P1: Tool Result Filter (Programmatic Tool Calling)
   ToolResultFilter,
+  // P2: Intent-aware grep patterns
+  INTENT_GREP_PATTERNS,
   // Web search
   webSearchHelper,
   formatWebSearchBlock,

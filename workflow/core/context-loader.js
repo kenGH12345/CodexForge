@@ -22,92 +22,33 @@ const path = require('path');
 const { PATHS } = require('./constants');
 const { estimateTokens } = require('../tools/thin-tools');
 
-// ─── Configuration ────────────────────────────────────────────────────────────
+// ─── Configuration (extracted to context-loader-config.js) ──────────────────
 
-/** Max tokens to inject from skills + ADRs combined (per prompt call) */
-const MAX_INJECT_TOKENS = 2800;
+const {
+  MAX_INJECT_TOKENS,
+  MAX_SKILL_TOKENS,
+  MAX_ADR_TOKENS,
+  MAX_GRAPH_TOKENS,
+  MAX_DEP_SKILL_TOKENS,
+  MAX_DEP_DEPTH,
+  LOAD_LEVEL,
+  BUILTIN_SKILL_KEYWORDS,
+  ROLE_MANDATORY_DOCS,
+  ROLE_CONSTRAINT_SECTIONS,
+} = require('./context-loader-config');
 
-/** Max tokens for a single skill file injection */
-const MAX_SKILL_TOKENS = 800;
+// ─── Skill Loading (extracted to context-loader-skills.js) ──────────────────
 
-/** Max tokens for the ADR digest injection */
-const MAX_ADR_TOKENS = 600;
+const {
+  loadSkillWithDeps,
+  loadSkill,
+  isPlaceholderSkill,
+  validateSkillContent,
+  truncateContent,
+  createLazyEnrichmentTrigger,
+} = require('./context-loader-skills');
 
-/** Max tokens for the code graph injection (compact summary only) */
-const MAX_GRAPH_TOKENS = 600;
-
-/** Max tokens for a dependency skill injection (compact summary) */
-const MAX_DEP_SKILL_TOKENS = 200;
-
-/** Max dependency resolution depth to prevent infinite recursion */
-const MAX_DEP_DEPTH = 2;
-
-// ─── Three-Layer Load Levels ──────────────────────────────────────────────────
-// Skills are loaded in three priority tiers:
-//   Level 1 – Global:  Always loaded for every task (safety, coding standards)
-//   Level 2 – Project: Loaded for all tasks in the project (from config)
-//   Level 3 – Task:    Dynamically matched by keyword from task text
-
-const LOAD_LEVEL = {
-  GLOBAL:  'global',
-  PROJECT: 'project',
-  TASK:    'task',
-};
-
-// ─── Keyword → Skill mapping (built-in defaults) ─────────────────────────────
-// Keys are skill file names (without .md), values are trigger keyword arrays.
-// Projects can extend this via workflow.config.js → skillKeywords.
-
-const BUILTIN_SKILL_KEYWORDS = {
-  'flutter-dev':          ['flutter', 'dart', 'widget', 'riverpod', 'provider', 'bloc', 'pubspec'],
-  'javascript-dev':       ['javascript', 'js', 'node', 'npm', 'typescript', 'ts', 'react', 'vue', 'express'],
-  'go-crud':              ['go', 'golang', 'gin', 'gorm', 'grpc', 'protobuf'],
-  'java-dev':             ['java', 'spring', 'maven', 'gradle', 'jvm', 'kotlin', 'ktor', 'quarkus'],
-  'lua-scripting':        ['lua', 'luajit', 'coroutine', 'metatables', 'unity lua', 'xlua'],
-  'unity-csharp':         ['unity', 'c#', 'csharp', 'monobehaviour', 'scriptableobject', 'ecs'],
-  'api-design':           ['api', 'rest', 'graphql', 'endpoint', 'swagger', 'openapi', 'http'],
-  'architecture-design':  ['architecture', 'design pattern', 'module', 'dependency', 'coupling', 'solid'],
-  'code-review':          ['review', 'refactor', 'clean code', 'lint', 'quality', 'smell'],
-  'test-report':          ['test', 'unit test', 'integration test', 'coverage', 'jest', 'pytest', 'mocha', 'rspec', 'phpunit', 'kotest'],
-  'project-onboarding':   ['onboard', 'setup', 'init', 'new project', 'getting started'],
-  'workflow-orchestration':['workflow', 'orchestrat', 'agent', 'pipeline', 'stage'],
-  'troubleshooting':      ['error', 'bug', 'fix', 'crash', 'fail', 'issue', 'debug', 'troubleshoot', 'exception'],
-  'standards':            ['standard', 'convention', 'naming', 'style', 'format', 'lint'],
-  'code-development':     ['code', 'develop', 'implement', 'build', 'program'],
-  // ── Language-specific skills (auto-matched when skill files exist) ─────
-  'php-dev':              ['php', 'laravel', 'symfony', 'composer', 'wordpress', 'eloquent', 'doctrine', 'blade'],
-  'ruby-dev':             ['ruby', 'rails', 'sinatra', 'hanami', 'gemfile', 'bundler', 'activerecord', 'rspec', 'rack'],
-  'swift-dev':            ['swift', 'swiftui', 'uikit', 'vapor', 'xcode', 'ios', 'macos', 'coredata', 'combine'],
-  'cpp-dev':              ['c++', 'cpp', 'cmake', 'qt', 'boost', 'opencv', 'unreal', 'conan', 'vcpkg'],
-  'scala-dev':            ['scala', 'akka', 'play framework', 'spark', 'sbt', 'slick', 'cats', 'zio'],
-  'elixir-dev':           ['elixir', 'phoenix', 'liveview', 'ecto', 'mix', 'otp', 'erlang', 'genserver'],
-  // ── AEF Best Practice Skills ──────────────────────────────────────────────
-  'bp-coding-best-practices':  ['coding', 'clean code', 'naming', 'guard clause', 'RAII', 'readability', 'safety'],
-  'bp-architecture-design':    ['architecture', 'module', 'dependency', 'data flow', 'trade-off', 'coupling'],
-  'bp-component-design':       ['component', 'class', 'interface', 'SOLID', 'design pattern', 'concurrency', 'error handling'],
-  'bp-distributed-systems':    ['distributed', 'RPC', 'network', 'replication', 'failover', 'consensus', 'circuit breaker'],
-  'bp-performance-optimization':['performance', 'optimize', 'cache', 'latency', 'throughput', 'profiling', 'memory'],
-  'self-refinement':           ['refine', 'reflect', 'improve', 'learn', 'mistake', 'correct', 'feedback'],
-  'spec-template':             ['spec', 'specification', 'feature', 'requirement', 'design document'],
-  'execution-planning':        ['plan', 'execution', 'task breakdown', 'dependency', 'phase', 'milestone', 'acceptance criteria', 'decompose'],
-  // ── P2 Skills (ECC-inspired) ──────────────────────────────────────────────
-  'security-audit':            ['security', 'audit', 'vulnerability', 'penetration', 'cve', 'owasp', 'injection', 'xss', 'csrf', 'auth', 'encrypt', 'secret', 'token', 'credential'],
-  'database-design':           ['database', 'db', 'sql', 'nosql', 'migration', 'schema', 'index', 'query', 'table', 'column', 'foreign key', 'orm', 'model', 'entity', 'transaction', 'mongodb', 'postgresql', 'mysql', 'redis', 'sqlite'],
-  'frontend-review':           ['frontend', 'react', 'vue', 'angular', 'svelte', 'css', 'html', 'dom', 'browser', 'webpack', 'vite', 'accessibility', 'a11y', 'responsive', 'spa', 'component', 'render', 'state management', 'hook', 'redux', 'zustand'],
-};
-
-// ─── Role → Mandatory docs mapping ───────────────────────────────────────────
-// These docs are ALWAYS injected for the given role, regardless of task content.
-
-const ROLE_MANDATORY_DOCS = {
-  analyst:    ['docs/architecture-constraints.md', 'output/spec.md', 'output/project-profile.md'],
-  architect:  ['docs/architecture-constraints.md', 'docs/decision-log.md', 'output/spec.md', 'output/project-profile.md'],
-  planner:    ['docs/architecture-constraints.md', 'output/spec.md', 'output/architecture.md', 'output/project-profile.md'],
-  developer:  ['docs/architecture-constraints.md', 'output/code-graph.md', 'output/spec.md', 'output/project-profile.md'],
-  tester:     ['docs/architecture-constraints.md', 'output/spec.md', 'output/project-profile.md'],
-  'coding-agent': ['docs/architecture-constraints.md', 'output/code-graph.md', 'output/project-profile.md'],
-  'init-agent':   [],
-};
+// Re-export LOAD_LEVEL for backward compatibility (exported at end of file)
 
 // ─── ContextLoader ────────────────────────────────────────────────────────────
 
@@ -130,6 +71,7 @@ class ContextLoader {
     retiredSkills   = null,  // Set<string> of retired skill names to exclude
     codeGraph       = null,  // P0: externally-provided CodeGraph instance (avoids re-creation)
     orchestrator    = null,  // ADR-45: Orchestrator reference for lazy skill enrichment
+    embeddingService = null, // Plan-C: EmbeddingService instance for semantic skill matching
   } = {}) {
     this._workflowRoot     = workflowRoot;
     this._projectRoot      = projectRoot || null;
@@ -147,6 +89,8 @@ class ContextLoader {
     this._codeGraph        = codeGraph || null;
     /** @type {object|null} Orchestrator reference for lazy skill enrichment (ADR-45) */
     this._orchestrator     = orchestrator;
+    /** @type {import('./embedding-service').EmbeddingService|null} Semantic matching engine (Plan-C) */
+    this._embeddingService = embeddingService || null;
     /** @type {Set<string>} Skills currently being enriched (prevent duplicate triggers) */
     this._enrichmentInProgress = new Set();
 
@@ -313,6 +257,21 @@ class ContextLoader {
               }
             }
           } catch (_) { /* non-fatal: hotspot analysis is optional enhancement */ }
+        }
+      } else if (docName === 'architecture-constraints.md') {
+        // Per-role section filtering: inject only the sections relevant to this role.
+        // This saves ~6-9K tokens per pipeline run (architect gets full doc, others get subsets).
+        const filtered = this._filterConstraintSections(content, role);
+        const tokens = estimateTokens(filtered);
+        const truncated = this._truncate(filtered, Math.min(tokens, budget));
+        if (truncated) {
+          const sectionInfo = ROLE_CONSTRAINT_SECTIONS[role];
+          const suffix = (sectionInfo && sectionInfo !== '*' && Array.isArray(sectionInfo))
+            ? ` (${sectionInfo.length} sections for ${role})`
+            : '';
+          sections.push(`## 📐 ${docName}${suffix}\n\n${truncated}`);
+          sources.push(`architecture-constraints.md${suffix}`);
+          budget -= estimateTokens(truncated);
         }
       } else {
         const tokens = estimateTokens(content);
@@ -509,11 +468,50 @@ class ContextLoader {
    * Returns skill names whose keywords appear in the task text.
    * Sorted by match score (most matches first).
    *
+   * Plan-C enhancement: When keyword matching returns fewer than 2 results and
+   * an EmbeddingService is available, a semantic matching supplementary layer
+   * fills the gap using cosine similarity on skill titles + first paragraphs.
+   * This handles the "user says 'performance optimization' but skill file is
+   * named bp-performance-optimization.md with no matching keyword" case.
+   *
    * @param {string} taskText
    * @param {string} role
    * @returns {string[]}
    */
   _matchSkills(taskText, role) {
+    // Layer 1: Keyword matching (existing, <1ms)
+    const keywordResults = this._matchSkillsByKeyword(taskText, role);
+
+    // Layer 2: Semantic matching (Plan-C, ~50ms, only if keyword results < 2)
+    if (keywordResults.length < 2 && this._embeddingService && this._embeddingService.isReady()) {
+      const semanticResults = this._matchSkillsBySemantic(taskText, keywordResults);
+      if (semanticResults.length > 0) {
+        // Merge: keyword results take priority, semantic fills gaps
+        const merged = [...keywordResults];
+        const keywordSet = new Set(keywordResults);
+        for (const sr of semanticResults) {
+          if (!keywordSet.has(sr) && merged.length < 3) {
+            merged.push(sr);
+          }
+        }
+        if (merged.length > keywordResults.length) {
+          console.log(`[ContextLoader] 🧠 Semantic matching added ${merged.length - keywordResults.length} skill(s): [${merged.filter(s => !keywordSet.has(s)).join(', ')}]`);
+        }
+        return merged;
+      }
+    }
+
+    return keywordResults;
+  }
+
+  /**
+   * Layer 1: Pure keyword matching (original implementation).
+   * @param {string} taskText
+   * @param {string} role
+   * @returns {string[]}
+   * @private
+   */
+  _matchSkillsByKeyword(taskText, role) {
     const lower = taskText.toLowerCase();
     const scores = [];
 
@@ -539,6 +537,126 @@ class ContextLoader {
       .sort((a, b) => b.score - a.score)
       .slice(0, 3)
       .map(s => s.skillName);
+  }
+
+  /**
+   * Layer 2: Semantic matching via EmbeddingService (Plan-C).
+   * Computes cosine similarity between task text and skill titles + first paragraphs.
+   * Only called when keyword matching returns insufficient results.
+   *
+   * @param {string} taskText
+   * @param {string[]} alreadyMatched - Skills already matched by keywords (to exclude)
+   * @returns {string[]} Additional skill names matched semantically
+   * @private
+   */
+  _matchSkillsBySemantic(taskText, alreadyMatched = []) {
+    if (!this._embeddingService || !this._embeddingService.isReady()) return [];
+
+    const alreadySet = new Set(alreadyMatched);
+    const candidates = [];
+
+    for (const [skillName] of Object.entries(this._skillKeywords)) {
+      if (this._retiredSkills.has(skillName)) continue;
+      if (alreadySet.has(skillName)) continue;
+
+      const skillPath = path.join(this._skillsDir, `${skillName}.md`);
+      const content = this._readFileCached(skillPath);
+      if (!content) continue;
+
+      // Build a short description from the skill name + first paragraph
+      const title = skillName.replace(/-/g, ' ');
+      const firstParagraph = content.split('\n\n')[0] || '';
+      const description = `${title}: ${firstParagraph.slice(0, 200)}`;
+
+      candidates.push({ name: skillName, text: description });
+    }
+
+    if (candidates.length === 0) return [];
+
+    // Synchronous-safe: findMostSimilar is async but we need sync here.
+    // Use the cached embeddings (pre-heated during init) for sync lookup.
+    // If embeddings are not cached yet, fall back to empty results.
+    try {
+      const queryVec = this._embeddingService._cache.get(taskText.trim().toLowerCase());
+      if (!queryVec) {
+        // Query not pre-cached — can't do sync semantic matching.
+        // Schedule async preheat for next call.
+        return [];
+      }
+
+      const scored = [];
+      for (const { name, text } of candidates) {
+        const candidateVec = this._embeddingService._cache.get(text.trim().toLowerCase());
+        if (!candidateVec) continue;
+        const score = this._embeddingService.cosineSimilarity(queryVec, candidateVec);
+        if (score >= 0.35) { // Minimum similarity threshold
+          scored.push({ name, score });
+        }
+      }
+
+      return scored
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 2) // Max 2 semantic additions
+        .map(s => s.name);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // ─── Constraint Section Filtering ────────────────────────────────────────
+
+  /**
+   * Filters architecture-constraints.md content to include only sections
+   * relevant to the given role. This saves ~6-9K tokens per pipeline run
+   * by not injecting the full ~3K-token document into every stage.
+   *
+   * Splitting strategy: the document is split at `## ` heading boundaries.
+   * The preamble (content before the first ## heading, including the # title
+   * and any introductory text) is always included.
+   *
+   * @param {string} content - Full content of architecture-constraints.md
+   * @param {string} role    - Agent role (analyst|architect|developer|tester|...)
+   * @returns {string} Filtered content (may be the full document if role = '*' or unknown)
+   */
+  _filterConstraintSections(content, role) {
+    const sectionConfig = ROLE_CONSTRAINT_SECTIONS[role];
+
+    // No config for this role, or '*' = full document
+    if (!sectionConfig || sectionConfig === '*') {
+      return content;
+    }
+
+    // Empty array = no sections needed (e.g. init-agent)
+    if (Array.isArray(sectionConfig) && sectionConfig.length === 0) {
+      return '';
+    }
+
+    // Split at ## headings, preserving the heading line in each chunk
+    const chunks = content.split(/(?=^## )/m);
+
+    // Preamble: everything before the first ## heading (title + intro)
+    const preamble = chunks.length > 0 && !chunks[0].startsWith('## ')
+      ? chunks[0]
+      : '';
+
+    // Filter: keep only chunks whose heading starts with a configured section name.
+    // We use startsWith instead of exact match because headings may have suffixes
+    // like "(P1-4)" or "(Foundational Constraint, ADR-37)".
+    const allowedSections = sectionConfig.map(s => s.toLowerCase());
+    const kept = chunks.filter(chunk => {
+      if (!chunk.startsWith('## ')) return false; // skip preamble (handled above)
+      // Extract heading text: "## File Size Limits\n..." → "file size limits"
+      const headingLine = chunk.split('\n')[0];
+      const headingText = headingLine.replace(/^##\s+/, '').trim().toLowerCase();
+      return allowedSections.some(s => headingText.startsWith(s));
+    });
+
+    if (kept.length === 0) {
+      // No matching sections found — return preamble only as a safety fallback
+      return preamble.trim();
+    }
+
+    return (preamble + kept.join('\n')).trim();
   }
 
   // ─── ADR Extraction ───────────────────────────────────────────────────────
@@ -687,49 +805,16 @@ class ContextLoader {
    * @param {Set<string>} [visited] - Visited set for circular dependency detection
    * @returns {{ sections: string[], sources: string[], tokens: number }|null}
    */
-  _loadSkillWithDeps(skillName, tokenBudget, depth = 0, visited = null) {
-    if (!visited) visited = new Set();
-
-    // Circular dependency guard
-    if (visited.has(skillName)) {
-      console.log(`[ContextLoader] ⚠️ Circular dependency detected: ${skillName} – skipping`);
-      return null;
-    }
-    visited.add(skillName);
-
-    const result = { sections: [], sources: [], tokens: 0 };
-
-    // Load the skill itself
-    const loaded = this._loadSkill(skillName, tokenBudget, depth > 0);
-    if (!loaded) return null;
-
-    result.sections.push(loaded.section);
-    result.sources.push(loaded.source);
-    result.tokens += loaded.tokens;
-    this._loadedSkillsInResolve.add(skillName);
-
-    // Resolve dependencies if within depth limit
-    if (depth < MAX_DEP_DEPTH && loaded.dependencies && loaded.dependencies.length > 0) {
-      let depBudget = tokenBudget - loaded.tokens;
-      for (const depName of loaded.dependencies) {
-        if (depBudget <= 0) break;
-        if (this._loadedSkillsInResolve.has(depName)) continue;
-        const depLoaded = this._loadSkillWithDeps(
-          depName,
-          Math.min(MAX_DEP_SKILL_TOKENS, depBudget),
-          depth + 1,
-          visited
-        );
-        if (depLoaded) {
-          result.sections.push(...depLoaded.sections);
-          result.sources.push(...depLoaded.sources);
-          result.tokens += depLoaded.tokens;
-          depBudget -= depLoaded.tokens;
-        }
-      }
-    }
-
-    return result;
+_loadSkillWithDeps(skillName, tokenBudget, depth = 0, visited = null) {
+    return loadSkillWithDeps({
+      skillName,
+      tokenBudget,
+      depth,
+      visited,
+      loadedSkillsInResolve: this._loadedSkillsInResolve,
+      loadSkill: (name, budget, isDep) => this._loadSkill(name, budget, isDep),
+      skillsDir: this._skillsDir,
+    });
   }
 
   /**
@@ -741,83 +826,33 @@ class ContextLoader {
    * @param {boolean} [isDep=false] - True if loaded as a dependency (uses compact format)
    * @returns {{ section: string, source: string, tokens: number, dependencies: string[] }|null}
    */
-  _loadSkill(skillName, tokenBudget, isDep = false) {
-    // Gap 1 fix: double-check retired status at load time (defence-in-depth).
-    // This catches retired skills loaded via alwaysLoadSkills / globalSkills paths
-    // that bypass _matchSkills.
-    if (this._retiredSkills.has(skillName)) return null;
-
-    const skillPath = path.join(this._skillsDir, `${skillName}.md`);
-    const content = this._readFileCached(skillPath);
-    if (!content) return null;
-
-    // ADR-45: Lazy enrichment trigger for placeholder skills.
-    // When a placeholder skill is detected during loading, trigger async enrichment
-    // in fire-and-forget mode. The skill will be populated for subsequent loads.
-    if (this._isPlaceholderSkill(content)) {
-      this._triggerLazyEnrichment(skillName);
-      return null;  // Skip this load; enrichment will populate for next time
-    }
-
-    // Parse frontmatter for metadata
-    const { meta, body } = this._parseFrontmatter(content);
-    const dependencies = meta.dependencies || [];
-
-    // Gap 2 fix: validate skill content structure before injection.
-    // Skip skills that fail quality checks to avoid wasting token budget on
-    // poorly-formed or near-empty skill files.
-    const validation = this._validateSkillContent(content, meta);
-    if (!validation.valid) {
-      console.log(`[ContextLoader] ⚠️ Skipping skill "${skillName}": ${validation.reason}`);
-      return null;
-    }
-
-    // Use frontmatter max_tokens if available, capped by tokenBudget
-    const effectiveBudget = meta.max_tokens
-      ? Math.min(meta.max_tokens, tokenBudget)
-      : tokenBudget;
-
-    // For dependency skills, use only the body (compact)
-    const toTruncate = isDep ? body : content;
-    const truncated = this._truncate(toTruncate, effectiveBudget);
-    if (!truncated) return null;
-
-    const tokens = estimateTokens(truncated);
-    const label = isDep ? '🔗 Dep-Skill' : '🧠 Skill';
-    return {
-      section: `## ${label}: ${skillName}\n\n${truncated}`,
-      source:  `${skillName}.md`,
-      tokens,
-      dependencies,
-    };
+_loadSkill(skillName, tokenBudget, isDep = false) {
+    // Resolve skill registry for custom filePath lookup (project-specific skills
+    // stored outside workflow/skills/, e.g. <projectRoot>/.workflow/skills/)
+    const skillRegistry = this._orchestrator && this._orchestrator.skillEvolution
+      ? this._orchestrator.skillEvolution.registry
+      : null;
+    return loadSkill({
+      skillName,
+      tokenBudget,
+      isDep,
+      retiredSkills: this._retiredSkills,
+      skillsDir: this._skillsDir,
+      readFileCached: (p) => this._readFileCached(p),
+      parseFrontmatter: (c) => this._parseFrontmatter(c),
+      truncate: (c, b) => this._truncate(c, b),
+      isPlaceholderSkill: (c) => this._isPlaceholderSkill(c),
+      triggerLazyEnrichment: (n) => this._triggerLazyEnrichment(n),
+      validateSkillContent: (c, m) => this._validateSkillContent(c, m),
+      skillRegistry,
+    });
   }
 
   /**
    * Returns true if a skill file has no real content yet (only placeholder text).
    */
-  _isPlaceholderSkill(content) {
-    const placeholderPhrases = [
-      '_No rules defined yet',
-      '_No SOP defined yet',
-      '_No best practices defined yet',
-      '_No errors documented yet',
-      '_No root causes documented yet',
-      '_No fix recipes documented yet',
-      '_No prevention rules defined yet',
-      '_No coding standards defined yet',
-      '_No naming conventions defined yet',
-      '_No directory structure rules defined yet',
-      '_No commit conventions defined yet',
-      '_No checklist defined yet',
-      '_No anti-patterns defined yet',
-      '_No context hints defined yet',
-    ];
-    // If ALL sections are placeholders, skip the file
-    const nonPlaceholderLines = content
-      .split('\n')
-      .filter(l => l.trim() && !l.startsWith('#') && !l.startsWith('>') && !l.startsWith('|') && !l.startsWith('---'))
-      .filter(l => !placeholderPhrases.some(p => l.includes(p)));
-    return nonPlaceholderLines.length < 3;
+_isPlaceholderSkill(content) {
+    return isPlaceholderSkill(content);
   }
 
   /**
@@ -828,45 +863,14 @@ class ContextLoader {
    * @param {string} skillName - Name of the skill to enrich
    * @private
    */
-  _triggerLazyEnrichment(skillName) {
-    // Prevent duplicate enrichment triggers for the same skill
-    if (this._enrichmentInProgress.has(skillName)) {
-      return;
-    }
-
-    // Require orchestrator reference for enrichment
-    if (!this._orchestrator) {
-      console.log(`[ContextLoader] ⚠️ Cannot enrich "${skillName}": no orchestrator reference`);
-      return;
-    }
-
-    // Mark as in-progress
-    this._enrichmentInProgress.add(skillName);
-
-    // Import enrichment function lazily to avoid circular dependencies
-    const { enrichSkillFromExternalKnowledge } = require('./context-budget-manager');
-
-    // Fire-and-forget enrichment
-    console.log(`[ContextLoader] 🔄 Triggering lazy enrichment for "${skillName}"...`);
-
-    enrichSkillFromExternalKnowledge(this._orchestrator, skillName, { maxSearchResults: 3, maxFetchPages: 2 })
-      .then(r => {
-        if (r.success) {
-          console.log(`[ContextLoader] ✅ Lazy enrichment completed for "${skillName}": ${r.sectionsAdded} entries from ${r.sources.length} source(s)`);
-          // Invalidate file cache so next load gets fresh content
-          const skillPath = path.join(this._skillsDir, `${skillName}.md`);
-          this._fileCache.delete(skillPath);
-        } else {
-          console.log(`[ContextLoader] ⚠️ Lazy enrichment failed for "${skillName}": ${r.error || 'unknown error'}`);
-        }
-      })
-      .catch(err => {
-        console.log(`[ContextLoader] ⚠️ Lazy enrichment error for "${skillName}": ${err.message}`);
-      })
-      .finally(() => {
-        // Always remove from in-progress set
-        this._enrichmentInProgress.delete(skillName);
-      });
+_triggerLazyEnrichment(skillName) {
+    const trigger = createLazyEnrichmentTrigger({
+      orchestrator: this._orchestrator,
+      enrichmentInProgress: this._enrichmentInProgress,
+      skillsDir: this._skillsDir,
+      fileCache: this._fileCache,
+    });
+    trigger(skillName);
   }
 
   // ─── Gap 2: Skill Content Structure Validation ──────────────────────────
@@ -884,42 +888,9 @@ class ContextLoader {
    * @param {object} meta - Parsed frontmatter metadata
    * @returns {{ valid: boolean, reason: string }}
    */
-  _validateSkillContent(content, meta) {
-    if (!content || !content.trim()) {
-      return { valid: false, reason: 'empty content' };
-    }
-
-    // Check 1: minimum word count (exclude headings, frontmatter, table rows)
-    const bodyLines = content
-      .split('\n')
-      .filter(l => {
-        const t = l.trim();
-        return t && !t.startsWith('#') && !t.startsWith('>') && !t.startsWith('|')
-          && !t.startsWith('---') && !t.startsWith('_No ');
-      });
-    const wordCount = bodyLines.join(' ').split(/\s+/).filter(w => w.length > 0).length;
-    if (wordCount < 8) {
-      return { valid: false, reason: `insufficient content (${wordCount} words, need ≥8)` };
-    }
-
-    // Check 2: if skill has YAML frontmatter (structured skill), require at least one ## heading.
-    // Simple skills without frontmatter (e.g. hand-written notes) are allowed without sections.
-    const hasFrontmatter = meta && Object.keys(meta).length > 0;
-    if (hasFrontmatter) {
-      const hasSections = /^## /m.test(content);
-      if (!hasSections) {
-        return { valid: false, reason: 'structured skill (has frontmatter) missing ## section headings' };
-      }
-
-      // Check 3: frontmatter must have name field for structured skills
-      if (!meta.name) {
-        return { valid: false, reason: 'frontmatter missing required "name" field' };
-      }
-    }
-
-    return { valid: true, reason: '' };
+_validateSkillContent(content, meta) {
+    return validateSkillContent(content, meta);
   }
-
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   /**
@@ -935,22 +906,8 @@ class ContextLoader {
    * @param {number} tokenBudget
    * @returns {string}
    */
-  _truncate(content, tokenBudget) {
-    if (!content) return '';
-    // Estimate CJK ratio from the first 200 chars to adjust chars/token ratio.
-    // CJK characters: ~2 chars/token; ASCII/Latin: ~4 chars/token.
-    const sample = content.slice(0, 200);
-    const cjkCount = (sample.match(/[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/g) || []).length;
-    const cjkRatio = sample.length > 0 ? cjkCount / sample.length : 0;
-    const charsPerToken = cjkRatio > 0.3 ? 2 : (cjkRatio > 0.1 ? 3 : 4);
-    const maxChars = tokenBudget * charsPerToken;
-    if (content.length <= maxChars) return content;
-
-    // Try to truncate at a paragraph boundary
-    const truncated = content.slice(0, maxChars);
-    const lastPara  = truncated.lastIndexOf('\n\n');
-    const result    = lastPara > maxChars * 0.7 ? truncated.slice(0, lastPara) : truncated;
-    return result + '\n\n> *(truncated to fit token budget)*';
+_truncate(content, tokenBudget) {
+    return truncateContent(content, tokenBudget);
   }
 }
 

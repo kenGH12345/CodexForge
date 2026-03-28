@@ -21,9 +21,11 @@
 const fs   = require('fs');
 const path = require('path');
 const { BlockCompressor } = require('./block-compressor');
+const { SemanticCompressor } = require('./semantic-compressor');
 
-// Singleton compressor instance (stateless, safe to share)
+// Singleton compressor instances (stateless, safe to share)
 const _compressor = new BlockCompressor();
+const _semanticCompressor = new SemanticCompressor({ targetRatio: 0.7 });
 
 // ─── Token Budget Guard ──────────────────────────────────────────────────────
 
@@ -59,6 +61,34 @@ const _compressor = new BlockCompressor();
 const CHARS_PER_TOKEN = 4; // Must stay in sync with constants.js LLM.CHARS_PER_TOKEN
 const STAGE_TOKEN_BUDGET_CHARS = 60000; // ~15k tokens – safe margin for enrichment blocks
 const STAGE_TOKEN_BUDGET_TOKENS = Math.floor(STAGE_TOKEN_BUDGET_CHARS / CHARS_PER_TOKEN); // 15000 tokens
+
+/**
+ * Per-stage budget multipliers.
+ *
+ * Rationale: Not all stages consume the same amount of enrichment context.
+ *   - ANALYSE: Minimal adapter data needed (mostly requirement text + experience).
+ *   - ARCHITECT: Moderate — needs code graph, security, quality, but not full budget.
+ *   - PLAN: Minimal — mostly consumes upstream context from ANALYSE + ARCHITECT.
+ *   - DEVELOPER: Maximum — needs code graph, packages, CI, quality, experience, etc.
+ *   - TESTER: Moderate-high — needs test infra, CI status, execution results.
+ *
+ * By giving lighter stages a smaller budget, we:
+ *   1. Reduce unnecessary truncation warnings (budget rarely exceeded → cleaner logs)
+ *   2. Tighten the signal-to-noise ratio (less room = less low-value content injected)
+ *   3. Save ~15-20% total token consumption across a full workflow run
+ *
+ * The multiplier is applied to STAGE_TOKEN_BUDGET_CHARS in _applyTokenBudget().
+ * Stages not listed here default to 1.0 (full budget).
+ */
+const STAGE_BUDGET_MULTIPLIERS = {
+  ANALYSE:   0.6,   // 36K chars — requirement analysis needs minimal enrichment
+  ARCHITECT: 0.85,  // 51K chars — architecture needs code graph + security + quality
+  PLAN:      0.5,   // 30K chars — planning mostly uses upstream context, little enrichment
+  DEVELOPER: 1.0,   // 60K chars — full budget, heaviest enrichment consumer
+  TESTER:    0.85,  // 51K chars — test needs CI + test infra + execution results
+  ENTROPY:   0.3,   // 18K chars — entropy scan is lightweight
+  CI:        0.4,   // 24K chars — CI stage is lightweight
+};
 
 /**
  * Priority levels for context blocks (higher = more important, kept longer).
@@ -102,7 +132,14 @@ const BLOCK_PRIORITY = {
  * @returns {{ assembled: string, stats: {total: number, dropped: string[], truncated: string[]} }}
  */
 function _applyTokenBudget(blocks, budget = STAGE_TOKEN_BUDGET_CHARS, opts = {}) {
-  const { telemetry = null, stage = 'UNKNOWN' } = opts;
+  const { telemetry = null, stage = 'UNKNOWN', profile = null } = opts;
+
+  // Per-stage budget adjustment: apply stage-specific multiplier when caller
+  // uses the default budget (i.e. didn't pass an explicit override).
+  // This ensures ANALYSE/PLAN get tighter budgets while DEVELOPER keeps full budget.
+  if (budget === STAGE_TOKEN_BUDGET_CHARS && STAGE_BUDGET_MULTIPLIERS[stage]) {
+    budget = Math.floor(STAGE_TOKEN_BUDGET_CHARS * STAGE_BUDGET_MULTIPLIERS[stage]);
+  }
 
   // Filter out empty blocks
   const active = blocks.filter(b => b.content && b.content.length > 0);
@@ -117,8 +154,47 @@ function _applyTokenBudget(blocks, budget = STAGE_TOKEN_BUDGET_CHARS, opts = {})
   // result blocks are pre-filtered BEFORE entering the budget pipeline.
   // This prevents bloated tool results from consuming the entire token budget
   // and forces information extraction at the source.
+  //
+  // P2 Enhancement: Intent-aware filtering — when a ContextProfile is available,
+  // ToolResultFilter uses taskType-specific grep patterns and per-block budget
+  // ratios to extract the most relevant content for the current task intent.
   const _toolResultFilter = new ToolResultFilter();
-  const { totalSaved: preFilterSaved, filteredLabels: preFilterLabels } = _toolResultFilter.applyToBlocks(active);
+  const { totalSaved: preFilterSaved, filteredLabels: preFilterLabels } = _toolResultFilter.applyToBlocks(active, {
+    taskType: profile ? profile.taskType : null,
+    profile,
+  });
+
+  // ── Phase 0.75: Semantic Compression ──────────────────────────────────────
+  // P0 Enhancement: Natural language compression for non-structured blocks.
+  // Complements BlockCompressor's 60-65% savings with additional 15-25% on
+  // natural language content (experience blocks, research results, etc.)
+  let semanticSaved = 0;
+  const semanticLabels = [];
+  
+  // Only apply semantic compression to natural language blocks (not structured data)
+  const semanticEligibleLabels = new Set([
+    'Experience', 'External Experience', 'Industry Research',
+    'API Research', 'Test Best Practices', 'Complaints',
+  ]);
+  
+  for (const block of active) {
+    if (semanticEligibleLabels.has(block.label) && block.content.length > 300) {
+      const result = _semanticCompressor.compress(block.content, {
+        contentType: 'text',
+        targetRatio: 0.7,
+      });
+      
+      if (result.saved > 100 && result.ratio < 0.85) {
+        block.content = result.content;
+        semanticSaved += result.saved;
+        semanticLabels.push(`${block.label}(-${result.saved},${result.strategy})`);
+      }
+    }
+  }
+  
+  if (semanticLabels.length > 0) {
+    console.log(`[TokenBudget] 🧠 Semantic compression: saved ${semanticSaved} chars across [${semanticLabels.join(', ')}]`);
+  }
 
   // Record compression telemetry
   if (telemetry && compressedLabels.length > 0) {
@@ -156,6 +232,8 @@ function _applyTokenBudget(blocks, budget = STAGE_TOKEN_BUDGET_CHARS, opts = {})
         compressionSaved,
         preFilterSaved,
         preFilterLabels,
+        semanticSaved,
+        semanticLabels,
       },
     };
   }
@@ -257,6 +335,8 @@ function _applyTokenBudget(blocks, budget = STAGE_TOKEN_BUDGET_CHARS, opts = {})
       compressionSaved,
       preFilterSaved,
       preFilterLabels,
+      semanticSaved,
+      semanticLabels,
     },
   };
 }
@@ -279,6 +359,26 @@ function _applyTokenBudget(blocks, budget = STAGE_TOKEN_BUDGET_CHARS, opts = {})
 //   2. Repetitive line dedup: adjacent similar lines are collapsed
 //   3. Relevance grep: if a relevance pattern is provided, only matching lines + context are kept
 //   4. Structured data extraction: JSON/YAML blocks are summarised to keys/stats
+//   5. Intent-aware grep: taskType-specific patterns extract the most relevant lines
+
+/**
+ * Intent-aware grep patterns per taskType.
+ *
+ * When ToolResultFilter processes a block and no explicit grepPattern is provided,
+ * it falls back to these taskType-specific patterns. This ensures that even without
+ * caller-specified patterns, the filter extracts lines most relevant to the current
+ * task intent.
+ *
+ * Each entry maps a taskType to a RegExp that matches high-signal lines for that intent.
+ */
+const INTENT_GREP_PATTERNS = {
+  bugfix: /\b(error|err|fail|bug|crash|exception|stack\s*trace|undefined|null|NaN|reject|throw|catch|fix|patch|regression|broken|issue)\b/i,
+  performance: /\b(perf|latency|throughput|cache|memo|lazy|defer|async|await|bottleneck|slow|fast|O\(|time|memory|heap|gc|profile|benchmark|ms\b|\d+ms)\b/i,
+  security: /\b(auth|token|secret|password|encrypt|decrypt|hash|salt|csrf|xss|injection|sanitize|escape|cors|helmet|oauth|jwt|permission|role|acl|vulnerability|cve)\b/i,
+  ui: /\b(style|css|layout|flex|grid|margin|padding|color|font|theme|responsive|media\s*query|component|render|jsx|tsx|svg|icon|animation|transition)\b/i,
+  refactor: /\b(class|function|module|export|import|interface|type|abstract|extend|implement|extract|inline|rename|move|split|merge|decouple|encapsulate|pattern)\b/i,
+  docs: /\b(doc|comment|jsdoc|readme|changelog|api|param|return|example|usage|description|summary|@param|@returns|@example|@deprecated|@see)\b/i,
+};
 
 /**
  * ToolResultFilter — pre-filters adapter/tool result blocks to reduce token waste.
@@ -320,8 +420,11 @@ class ToolResultFilter {
 
     const originalChars = content.length;
 
+    // P2: Support per-block budget override from intent-aware applyToBlocks
+    const effectiveMax = opts.maxBlockChars || this.maxBlockChars;
+
     // Fast path: content is within budget — no filtering needed
-    if (originalChars <= this.maxBlockChars) {
+    if (originalChars <= effectiveMax) {
       return { content, stats: { originalChars, filteredChars: originalChars, strategy: 'passthrough' } };
     }
 
@@ -335,7 +438,7 @@ class ToolResultFilter {
       if (grepResult.matchCount > 0) {
         result = grepResult.content;
         strategy = `grep(${grepResult.matchCount} matches)`;
-        if (result.length <= this.maxBlockChars) {
+        if (result.length <= effectiveMax) {
           console.log(`[ToolResultFilter] 🔍 ${label}: ${originalChars} → ${result.length} chars (${strategy})`);
           return { content: result, stats: { originalChars, filteredChars: result.length, strategy } };
         }
@@ -347,7 +450,7 @@ class ToolResultFilter {
     if (dedupResult.removedCount > 0) {
       result = dedupResult.content;
       strategy += (strategy ? ' + ' : '') + `dedup(${dedupResult.removedCount} lines)`;
-      if (result.length <= this.maxBlockChars) {
+      if (result.length <= effectiveMax) {
         console.log(`[ToolResultFilter] 🔁 ${label}: ${originalChars} → ${result.length} chars (${strategy})`);
         return { content: result, stats: { originalChars, filteredChars: result.length, strategy } };
       }
@@ -366,21 +469,42 @@ class ToolResultFilter {
    * Batch-apply filtering to an array of labelled blocks.
    * Modifies blocks in-place for efficiency.
    *
+   * P2 Enhancement: accepts taskType for intent-aware grep pattern selection.
+   * When no explicit grepPattern is provided, the filter automatically selects
+   * a taskType-specific pattern from INTENT_GREP_PATTERNS.
+   *
+   * P2 Enhancement: accepts profile (ContextProfile) for per-block budget ratio.
+   * Each block's effective maxBlockChars is scaled by profile.getBudgetRatio(label),
+   * giving essential blocks more room and low-priority blocks less.
+   *
    * @param {Array<{label: string, content: string, priority: number}>} blocks
    * @param {object} [opts]
-   * @param {RegExp} [opts.grepPattern] - Global grep pattern for all blocks
+   * @param {RegExp} [opts.grepPattern] - Global grep pattern for all blocks (overrides intent pattern)
+   * @param {string} [opts.taskType]   - Task type for intent-aware grep pattern selection
+   * @param {import('./smart-context-selector').ContextProfile} [opts.profile] - For per-block budget ratio
    * @returns {{ totalSaved: number, filteredLabels: string[] }}
    */
   applyToBlocks(blocks, opts = {}) {
     let totalSaved = 0;
     const filteredLabels = [];
 
+    // P2: Resolve intent-aware grep pattern from taskType
+    const intentPattern = opts.taskType ? INTENT_GREP_PATTERNS[opts.taskType] : null;
+
     for (const block of blocks) {
-      if (!block.content || block.content.length <= this.maxBlockChars) continue;
+      // P2: Calculate per-block budget using profile's getBudgetRatio
+      const budgetRatio = opts.profile ? opts.profile.getBudgetRatio(block.label) : 1.0;
+      const effectiveMaxChars = Math.round(this.maxBlockChars * budgetRatio);
+
+      if (!block.content || block.content.length <= effectiveMaxChars) continue;
+
+      // P2: Use explicit grepPattern > intent pattern > no pattern
+      const grepPattern = opts.grepPattern || intentPattern || null;
 
       const { content, stats } = this.apply(block.content, {
         label: block.label,
-        grepPattern: opts.grepPattern,
+        grepPattern,
+        maxBlockChars: effectiveMaxChars,
       });
 
       const saved = stats.originalChars - stats.filteredChars;
@@ -392,7 +516,8 @@ class ToolResultFilter {
     }
 
     if (filteredLabels.length > 0) {
-      console.log(`[ToolResultFilter] 📊 Batch filter: saved ${totalSaved} chars across ${filteredLabels.length} block(s): [${filteredLabels.join(', ')}]`);
+      const intentInfo = opts.taskType ? ` [intent:${opts.taskType}]` : '';
+      console.log(`[ToolResultFilter] 📊 Batch filter${intentInfo}: saved ${totalSaved} chars across ${filteredLabels.length} block(s): [${filteredLabels.join(', ')}]`);
     }
 
     return { totalSaved, filteredLabels };
@@ -517,10 +642,14 @@ class ToolResultFilter {
  * @param {object} [l3Analysis] - noiseAnalysis from prompt-builder.js
  * @returns {string} Human-readable budget summary
  */
-function getBudgetSummary(l2Stats, l3Analysis = null) {
+function getBudgetSummary(l2Stats, l3Analysis = null, stage = null) {
+  const multiplier = (stage && STAGE_BUDGET_MULTIPLIERS[stage]) || 1.0;
+  const effectiveBudgetChars = Math.floor(STAGE_TOKEN_BUDGET_CHARS * multiplier);
+  const effectiveBudgetTokens = Math.floor(effectiveBudgetChars / CHARS_PER_TOKEN);
+  const multiplierInfo = multiplier < 1.0 ? ` (×${multiplier} for ${stage})` : '';
   const lines = [
     `── Token Budget Summary (unified view) ──`,
-    `  L2 Stage Budget  : ${l2Stats.total} chars ≈ ${l2Stats.estimatedTokens} tokens (limit: ${STAGE_TOKEN_BUDGET_CHARS} chars ≈ ${STAGE_TOKEN_BUDGET_TOKENS} tokens)`,
+    `  L2 Stage Budget  : ${l2Stats.total} chars ≈ ${l2Stats.estimatedTokens} tokens (limit: ${effectiveBudgetChars} chars ≈ ${effectiveBudgetTokens} tokens${multiplierInfo})`,
   ];
   if (l2Stats.dropped.length > 0) {
     lines.push(`  L2 dropped       : [${l2Stats.dropped.join(', ')}]`);
@@ -545,8 +674,10 @@ function getBudgetSummary(l2Stats, l3Analysis = null) {
 module.exports = {
   STAGE_TOKEN_BUDGET_CHARS,
   STAGE_TOKEN_BUDGET_TOKENS,
+  STAGE_BUDGET_MULTIPLIERS,
   BLOCK_PRIORITY,
   _applyTokenBudget,
   ToolResultFilter,
   getBudgetSummary,
+  INTENT_GREP_PATTERNS,
 };
