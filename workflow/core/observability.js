@@ -23,20 +23,11 @@
 
 const fs     = require('fs');
 const path   = require('path');
-const crypto = require('crypto');
 const ObsStrategy = require('./observability-strategy');
-
-/**
- * Compute a fast SHA-256 hex hash of a string.
- * Used by prompt tracing to generate a deterministic fingerprint
- * for dedup and cross-session lookup without storing the full text.
- *
- * @param {string} text
- * @returns {string} 64-char hex hash
- */
-function _quickHash(text) {
-  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
-}
+const { PromptTraceStore, quickHash } = require('./observability-prompt-tracing');
+const { buildHTMLReport } = require('./observability-html-report');
+const { printDashboard, printTrendSummary } = require('./observability-dashboard');
+const { buildMetrics, buildHistoryLine, writeMetricsFiles } = require('./observability-flush');
 
 class Observability {
   /**
@@ -84,6 +75,13 @@ class Observability {
      */
     this._expInjectedCount = 0;
     this._expHitCount = 0;
+    
+    /**
+     * Detailed tracking of which specific experiences were hit and their outcomes.
+     * Enables fine-grained attribution analysis.
+     * @type {Array<{timestamp: string, expIds: string[], stagePassed: boolean, qualityScore: number}>}
+     */
+    this._expHitDetails = [];
 
     /**
      * Skill injection tracking for Skill Lifecycle Management.
@@ -236,7 +234,7 @@ class Observability {
 
     // P0 Prompt Tracing: store compact digest if prompt text is provided
     if (promptText && typeof promptText === 'string' && promptText.length > 0) {
-      const promptHash = _quickHash(promptText);
+      const promptHash = quickHash(promptText);
       const promptLength = promptText.length;
       const promptHead = promptText.slice(0, 500);
       const promptTail = promptLength > 700 ? promptText.slice(-200) : '';
@@ -339,19 +337,36 @@ class Observability {
    *
    * Call this from orchestrator-stages.js at two points:
    *   1. After getContextBlockWithIds(): recordExpUsage({ injected: ids.length })
-   *   2. After markUsedBatch() succeeds: recordExpUsage({ hits: triggerCount })
+   *   2. After markUsedBatch() succeeds: recordExpUsage({ hits, matchedExpIds, stageResult })
    *
    * The accumulated injectedCount and hitCount are written to metrics-history.jsonl
    * by flush(), enabling deriveStrategy() to compute a cross-session hit rate and
    * adjust maxExpInjected accordingly.
    *
+   * P2 Enhancement: When matchedExpIds is provided, a detailed attribution record
+   * is appended to _expHitDetails for fine-grained analysis of which specific
+   * experiences contributed to stage success/failure.
+   *
    * @param {object} options
-   * @param {number} [options.injected=0] - Number of experience IDs injected this call
-   * @param {number} [options.hits=0]     - Number of those IDs confirmed effective
+   * @param {number}   [options.injected=0]      - Number of experience IDs injected this call
+   * @param {number}   [options.hits=0]           - Number of those IDs confirmed effective
+   * @param {string[]} [options.matchedExpIds=[]] - Specific experience IDs that were matched
+   * @param {object}   [options.stageResult={}]   - Stage outcome (passed, score, stageLabel)
    */
-  recordExpUsage({ injected = 0, hits = 0 } = {}) {
+  recordExpUsage({ injected = 0, hits = 0, matchedExpIds = [], stageResult = {} } = {}) {
     this._expInjectedCount += injected;
     this._expHitCount += hits;
+
+    // P2: Record detailed attribution when specific matched IDs are provided
+    if (matchedExpIds.length > 0) {
+      this._expHitDetails.push({
+        timestamp: new Date().toISOString(),
+        expIds: matchedExpIds,
+        stagePassed: stageResult.passed ?? true,
+        qualityScore: stageResult.score ?? null,
+        stageLabel: stageResult.stageLabel ?? null,
+      });
+    }
   }
 
   /**
@@ -684,168 +699,10 @@ class Observability {
    * Safe to call multiple times (overwrites previous report for this session).
    * @returns {object} The metrics object
    */
-  flush() {
-    const totalMs      = Date.now() - this._startedAt;
-    const totalTokensEst    = this._llmCalls.reduce((s, c) => s + (c.estimatedTokens || 0), 0);
-    const totalTokensActual = this._llmCalls.reduce((s, c) => s + (c.actualTokens || 0), 0);
-    const callsByRole  = {};
-    const tokensByRole = {};
-    for (const c of this._llmCalls) {
-      callsByRole[c.role]  = (callsByRole[c.role]  || 0) + 1;
-      tokensByRole[c.role] = (tokensByRole[c.role] || 0) + (c.actualTokens || c.estimatedTokens || 0);
-    }
-
-    const stagesArr = [];
-    for (const [name, entry] of this._stages) {
-      stagesArr.push({ name, ...entry });
-    }
-
-    const metrics = {
-      sessionId:      this._sessionId,
-      projectId:      this._projectId,
-      startedAt:      new Date(this._startedAt).toISOString(),
-      finishedAt:     new Date().toISOString(),
-      totalDurationMs: totalMs,
-      stages:         stagesArr,
-      llm: {
-        totalCalls:      this._llmCalls.length,
-        totalTokensEst:  totalTokensEst,
-        totalTokensActual: totalTokensActual > 0 ? totalTokensActual : null,
-        callsByRole,
-        tokensByRole,
-      },
-      errors: {
-        count:   this._errors.length,
-        details: this._errors,
-      },
-      testResult:      this._testResult,
-      entropyResult:   this._entropyResult,
-      ciResult:        this._ciResult,
-      codeGraphResult: this._codeGraphResult,
-      // Defect G fix: clarification quality metrics for deriveStrategy Rule 5
-      clarificationQuality: this._clarificationQuality,
-      // Defect J fix: task complexity assessment for deriveStrategy Rule 6
-      taskComplexity: this._taskComplexity,
-      // Adapter telemetry: per-block lifecycle tracking
-      blockTelemetry: this._blockTelemetry,
-      // P1 Tool Search: plugin skip statistics (quantitative baseline)
-      toolSearchStats: this._toolSearchStats,
-      // P1 Programmatic Tool Calling: ToolResultFilter savings
-      toolResultFilterStats: this._toolResultFilterStats,
-      // Self-Reflection: quality gate results
-      reflectionGating: this._reflectionGating,
-      // P0 Prompt Tracing: compact summary (full traces in prompt-traces.jsonl)
-      promptTraceSummary: this.getPromptTraceSummary(),
-      // Skill Lifecycle: per-skill injection and effectiveness tracking
-      skillUsage: this._skillInjectedCounts.size > 0 ? {
-        injected: Object.fromEntries(this._skillInjectedCounts),
-        effective: [...this._skillEffectiveSet],
-        totalInjected: [...this._skillInjectedCounts.values()].reduce((s, c) => s + c, 0),
-        totalEffective: this._skillEffectiveSet.size,
-      } : null,
-    };
-
-    try {
-      if (!fs.existsSync(this._outputDir)) {
-        fs.mkdirSync(this._outputDir, { recursive: true });
-      }
-      // Overwrite latest session snapshot
-      const outPath = path.join(this._outputDir, 'run-metrics.json');
-      fs.writeFileSync(outPath, JSON.stringify(metrics, null, 2), 'utf-8');
-
-      // Append to cross-session history (JSONL format)
-      // ── Defect #6 fix: atomic append to metrics-history.jsonl ────────────────
-      // Previously used appendFileSync() directly. If the process crashed mid-write,
-      // a partial JSON line would be written, causing JSON.parse() to throw in
-      // loadHistory() and silently returning [] (all history lost).
-      // Fix: write the new line to a .tmp file first, then read-append-write the
-      // full history file atomically via writeFileSync (overwrite). This ensures
-      // the file is always a valid sequence of complete JSON lines.
-      const historyPath = path.join(this._outputDir, 'metrics-history.jsonl');
-      const historyLine = JSON.stringify({
-        sessionId:       metrics.sessionId,
-        projectId:       metrics.projectId,
-        startedAt:       metrics.startedAt,
-        totalDurationMs: metrics.totalDurationMs,
-        llmCalls:        metrics.llm.totalCalls,
-        tokensEst:       metrics.llm.totalTokensEst,
-        tokensActual:    metrics.llm.totalTokensActual,
-        errorCount:      metrics.errors.count,
-        testPassed:      metrics.testResult?.passed ?? null,
-        testFailed:      metrics.testResult?.failed ?? null,
-        entropyViolations: metrics.entropyResult?.violations ?? null,
-        ciStatus:        metrics.ciResult?.status ?? null,
-        codeGraphSymbols: metrics.codeGraphResult?.symbolCount ?? null,
-        // Improvement 4: experience hit-rate tracking
-        // expInjectedCount: how many experience IDs were injected into agent prompts
-        // expHitCount: how many of those were confirmed effective (task succeeded)
-        // hitRate = expHitCount / expInjectedCount → used by deriveStrategy Rule 4
-        expInjectedCount: this._expInjectedCount,
-        expHitCount:      this._expHitCount,
-        // Defect G fix: clarification quality metrics for cross-session trend analysis
-        // deriveStrategy Rule 5 reads these to adjust maxClarificationRounds
-        clarificationEffectiveness: this._clarificationQuality?.effectivenessScore ?? null,
-        clarificationRounds: this._clarificationQuality?.rounds ?? null,
-        clarificationTextChangePct: this._clarificationQuality?.textChangePct ?? null,
-        clarificationNewSignals: this._clarificationQuality?.newSignalsIntroduced ?? null,
-        // Defect J fix: task complexity for cross-session complexity-aware strategy
-        // deriveStrategy Rule 6 reads this to modulate maxFixRounds/maxReviewRounds
-        // based on how complex the current task actually is, rather than relying only
-        // on historical success rates (which are biased by the historical task mix).
-        taskComplexityScore: this._taskComplexity?.score ?? null,
-        taskComplexityLevel: this._taskComplexity?.level ?? null,
-        // Prompt A/B testing: variant usage stats for cross-session tracking
-        // promptVariantStats captures which variants were used and their outcomes
-        // this session. Stored as { [slotKey]: { variantId, trials, passes } }.
-        promptVariantStats: this._promptVariantStats ?? null,
-        // Adapter telemetry: per-block lifecycle summary for cross-session analysis
-        // blockTelemetry captures injection/truncation/drop/reference counts per block
-        blockTelemetrySummary: this._blockTelemetry?.summary ?? null,
-        blockTelemetryRecommendations: this._blockTelemetry?.recommendations ?? null,
-        // P1 Tool Search: plugin skip stats for cross-session analysis
-        toolSearchSkippedByKeyword: this._toolSearchStats?.skippedByKeyword ?? null,
-        toolSearchTotalPlugins: this._toolSearchStats?.totalPlugins ?? null,
-        toolSearchExecuted: this._toolSearchStats?.executed ?? null,
-        // P1 ToolResultFilter: chars saved for cross-session analysis
-        toolResultFilterSaved: this._toolResultFilterStats?.totalSaved ?? null,
-        toolResultFilterBlocks: this._toolResultFilterStats?.filteredBlocks ?? null,
-        // Self-Reflection: quality gate pass/fail for cross-session trends
-        reflectionGatingPassed: this._reflectionGating?.passed ?? null,
-        reflectionGatingFailedGates: this._reflectionGating?.failedGates ?? null,
-        // P0 Prompt Tracing: summary stats for cross-session prompt drift analysis
-        promptTraceCount: this._promptTraces.length,
-        promptTraceUniqueCount: new Set(this._promptTraces.map(t => t.promptHash)).size,
-        promptTraceAvgLength: this._promptTraces.length > 0
-          ? Math.round(this._promptTraces.reduce((s, t) => s + t.promptLength, 0) / this._promptTraces.length)
-          : null,
-        // Skill Lifecycle: cross-session skill effectiveness tracking
-        skillInjectedNames: this._skillInjectedCounts.size > 0 ? [...this._skillInjectedCounts.keys()] : null,
-        skillInjectedTotal: this._skillInjectedCounts.size > 0 ? [...this._skillInjectedCounts.values()].reduce((s, c) => s + c, 0) : null,
-        skillEffectiveNames: this._skillEffectiveSet.size > 0 ? [...this._skillEffectiveSet] : null,
-        skillEffectiveCount: this._skillEffectiveSet.size > 0 ? this._skillEffectiveSet.size : null,
-        // P1 Recovery Hook: stage retry tracking for cross-session analysis
-        // Records how many transient errors were auto-recovered via retry.
-        // Used by deriveStrategy to tune maxStageRetries budget.
-        stageRetryCount: (this._stageRetries && this._stageRetries.length) || 0,
-        stageRetries: (this._stageRetries && this._stageRetries.length > 0) ? this._stageRetries : null,
-      }) + '\n';
-      // R1-3 audit: optimised from read-full+append+write-full to atomic append.
-      // The previous approach read the ENTIRE history file into memory, appended one line,
-      // and wrote the whole file back. For long-running projects with hundreds of sessions,
-      // this caused O(n) I/O on every flush. The new approach writes only the new line to
-      // a tmp file, then atomically appends it via a two-step process:
-      //   1. Write new line to tmp file
-      //   2. Append tmp file content to history file using appendFileSync
-      //   3. Clean up tmp file
-      // If the append fails mid-write, only the new line is at risk (not the entire history).
-      const historyTmpPath = historyPath + '.tmp';
-      fs.writeFileSync(historyTmpPath, historyLine, 'utf-8');
-      fs.appendFileSync(historyPath, historyLine, 'utf-8');
-      try { fs.unlinkSync(historyTmpPath); } catch (_) { /* cleanup best-effort */ }
-    } catch (err) {
-      console.warn(`[Observability] Failed to write metrics: ${err.message}`);
-    }
-
+flush() {
+    const metrics = buildMetrics(this);
+    const historyLine = buildHistoryLine(metrics, this);
+    writeMetricsFiles(metrics, historyLine, this._outputDir);
     return metrics;
   }
 
@@ -869,110 +726,13 @@ class Observability {
     return ObsStrategy.deriveStrategy(outputDir, defaults);
   }
 
-  /**
+/**
    * Prints a human-readable dashboard to stdout.
    * Call after flush() to display the session summary.
    */
   printDashboard() {
     const m = this.flush();
-    const bar = '─'.repeat(58);
-    console.log(`\n${bar}`);
-    console.log(`  📊 WORKFLOW OBSERVABILITY DASHBOARD`);
-    console.log(`  Session : ${m.sessionId}`);
-    console.log(`  Duration: ${(m.totalDurationMs / 1000).toFixed(1)}s`);
-    console.log(bar);
-
-    // Stage timings
-    console.log(`  Stages:`);
-    for (const s of m.stages) {
-      const icon   = s.status === 'ok' ? '✅' : s.status === 'error' ? '❌' : '⚠️ ';
-      const dur    = s.durationMs != null ? `${(s.durationMs / 1000).toFixed(1)}s` : '–';
-      console.log(`    ${icon} ${s.name.padEnd(14)} ${dur}`);
-    }
-
-    // LLM usage
-    const tokenDisplay = m.llm.totalTokensActual != null
-      ? `${m.llm.totalTokensActual.toLocaleString()} actual (est: ~${m.llm.totalTokensEst.toLocaleString()})`
-      : `~${m.llm.totalTokensEst.toLocaleString()} est.`;
-    console.log(`  LLM Calls: ${m.llm.totalCalls} total | ${tokenDisplay} tokens`);
-    for (const [role, cnt] of Object.entries(m.llm.callsByRole)) {
-      const roleTokens = m.llm.tokensByRole?.[role] || 0;
-      console.log(`    • ${role}: ${cnt} call(s), ~${roleTokens.toLocaleString()} tokens`);
-    }
-
-    // Errors
-    if (m.errors.count > 0) {
-      console.log(`  ⚠️  Errors: ${m.errors.count}`);
-      for (const e of m.errors.details.slice(0, 3)) {
-        console.log(`    [${e.stage}] ${e.message.slice(0, 80)}`);
-      }
-    }
-
-    // Test result
-    if (m.testResult) {
-      const t = m.testResult;
-      const icon = t.failed === 0 ? '✅' : '❌';
-      console.log(`  ${icon} Tests: ${t.passed} passed / ${t.failed} failed / ${t.skipped} skipped (${t.rounds} round(s))`);
-    }
-
-    // Entropy
-    if (m.entropyResult) {
-      const e = m.entropyResult;
-      const icon = e.violations === 0 ? '✅' : '⚠️ ';
-      console.log(`  ${icon} Entropy GC: ${e.violations} violation(s) in ${e.filesScanned} files scanned`);
-      if (e.reportPath) console.log(`    Report: ${e.reportPath}`);
-    }
-
-    // CI result
-    if (m.ciResult) {
-      const c    = m.ciResult;
-      const icon = c.status === 'success' ? '✅' : c.status === 'failed' ? '❌' : '🔄';
-      console.log(`  ${icon} CI [${c.provider}]: ${c.status} (${(c.durationMs / 1000).toFixed(1)}s)`);
-    }
-
-    // Code graph
-    if (m.codeGraphResult) {
-      const g = m.codeGraphResult;
-      console.log(`  📊 Code Graph: ${g.symbolCount} symbols | ${g.edgeCount} call edges | ${g.fileCount} files`);
-    }
-
-    // P1 Tool Search stats
-    if (m.toolSearchStats) {
-      const ts = m.toolSearchStats;
-      const skipRatio = ts.totalPlugins > 0 ? ((ts.skippedByKeyword / ts.totalPlugins) * 100).toFixed(0) : 0;
-      console.log(`  🔍 Tool Search: ${ts.skippedByKeyword} of ${ts.totalPlugins} plugins skipped by keyword (${skipRatio}% savings)`);
-    }
-
-    // P1 ToolResultFilter stats
-    if (m.toolResultFilterStats) {
-      const trf = m.toolResultFilterStats;
-      console.log(`  ✂️  ToolResultFilter: ${trf.totalSaved.toLocaleString()} chars saved across ${trf.filteredBlocks} block(s)`);
-    }
-
-    // Self-Reflection quality gates
-    if (m.reflectionGating) {
-      const rg = m.reflectionGating;
-      const icon = rg.passed ? '✅' : '❌';
-      console.log(`  ${icon} Quality Gates: ${rg.passed ? 'ALL PASSED' : `${rg.failedGates.length} of ${rg.gateCount} FAILED [${rg.failedGates.join(', ')}]`}`);
-    }
-
-    // Skill Lifecycle: injection & effectiveness
-    if (m.skillUsage) {
-      const su = m.skillUsage;
-      const uniqueCount = Object.keys(su.injected).length;
-      const injectedNames = Object.keys(su.injected).join(', ');
-      console.log(`  📚 Skills: ${uniqueCount} unique skill(s) injected (${su.totalInjected} total), ${su.totalEffective} effective`);
-      if (injectedNames) console.log(`    Injected: ${injectedNames}`);
-      if (su.effective.length > 0) console.log(`    Effective: ${su.effective.join(', ')}`);
-    }
-
-    console.log(bar);
-    console.log(`  Full metrics: output/run-metrics.json`);
-    console.log(`  History:      output/metrics-history.jsonl`);
-    console.log(`${bar}\n`);
-
-    // Cross-session trend summary (if history exists)
-    this._printTrendSummary();
+    printDashboard(m, this._outputDir);
   }
 
 
@@ -1007,7 +767,8 @@ class Observability {
       history = Observability.loadHistory(this._outputDir);
     } catch (err) { console.warn(`[Observability] Failed to load history: ${err.message}`); }
 
-    const html = this._buildHTML(m, history);
+    // Use extracted module (ADR-41)
+    const html = buildHTMLReport(m, history);
 
     try {
       if (!fs.existsSync(this._outputDir)) {
@@ -1022,342 +783,6 @@ class Observability {
     return outputPath;
   }
 
-  /**
-   * Builds the complete HTML string for the session report.
-   * @private
-   */
-  _buildHTML(m, history) {
-    const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    const dur = (ms) => ms != null ? `${(ms / 1000).toFixed(1)}s` : '–';
-    const pct = (n, total) => total > 0 ? `${((n / total) * 100).toFixed(1)}%` : '0%';
-
-    // ── Stage timeline data ──
-    const stageRows = m.stages.map(s => {
-      const statusClass = s.status === 'ok' ? 'status-ok' : s.status === 'error' ? 'status-error' : 'status-warn';
-      const icon = s.status === 'ok' ? '✅' : s.status === 'error' ? '❌' : '⚠️';
-      return `<tr>
-        <td>${icon} ${esc(s.name)}</td>
-        <td class="${statusClass}">${esc(s.status || '–')}</td>
-        <td>${dur(s.durationMs)}</td>
-        <td><div class="bar-container"><div class="bar ${statusClass}" style="width: ${m.totalDurationMs > 0 ? Math.max(2, (s.durationMs || 0) / m.totalDurationMs * 100) : 0}%"></div></div></td>
-      </tr>`;
-    }).join('\n');
-
-    // ── LLM usage by role ──
-    const roleEntries = Object.entries(m.llm.callsByRole || {});
-    const maxRoleTokens = Math.max(1, ...Object.values(m.llm.tokensByRole || {}).map(Number));
-    const llmRoleRows = roleEntries.map(([role, cnt]) => {
-      const tokens = m.llm.tokensByRole?.[role] || 0;
-      return `<tr>
-        <td>${esc(role)}</td>
-        <td>${cnt}</td>
-        <td>~${tokens.toLocaleString()}</td>
-        <td><div class="bar-container"><div class="bar bar-tokens" style="width: ${(tokens / maxRoleTokens) * 100}%"></div></div></td>
-      </tr>`;
-    }).join('\n');
-
-    // ── Error details ──
-    const errorRows = (m.errors.details || []).map(e => {
-      return `<tr>
-        <td>${esc(e.stage)}</td>
-        <td>${esc(e.message)}</td>
-        <td>${new Date(e.ts).toLocaleTimeString()}</td>
-      </tr>`;
-    }).join('\n');
-
-    // ── Test result ──
-    const testSection = m.testResult ? `
-      <div class="card">
-        <h3>${m.testResult.failed === 0 ? '✅' : '❌'} Test Results</h3>
-        <table>
-          <tr><td>Passed</td><td><strong>${m.testResult.passed}</strong></td></tr>
-          <tr><td>Failed</td><td><strong>${m.testResult.failed}</strong></td></tr>
-          <tr><td>Skipped</td><td>${m.testResult.skipped}</td></tr>
-          <tr><td>Rounds</td><td>${m.testResult.rounds}</td></tr>
-        </table>
-      </div>` : '';
-
-    // ── Entropy result ──
-    const entropySection = m.entropyResult ? `
-      <div class="card">
-        <h3>${m.entropyResult.violations === 0 ? '✅' : '⚠️'} Entropy GC</h3>
-        <table>
-          <tr><td>Violations</td><td><strong>${m.entropyResult.violations}</strong></td></tr>
-          <tr><td>Files Scanned</td><td>${m.entropyResult.filesScanned}</td></tr>
-        </table>
-      </div>` : '';
-
-    // ── CI result ──
-    const ciSection = m.ciResult ? `
-      <div class="card">
-        <h3>${m.ciResult.status === 'success' ? '✅' : '❌'} CI Pipeline [${esc(m.ciResult.provider)}]</h3>
-        <table>
-          <tr><td>Status</td><td><strong>${esc(m.ciResult.status)}</strong></td></tr>
-          <tr><td>Duration</td><td>${dur(m.ciResult.durationMs)}</td></tr>
-          <tr><td>Steps</td><td>${(m.ciResult.steps || []).length}</td></tr>
-        </table>
-      </div>` : '';
-
-    // ── Code graph ──
-    const graphSection = m.codeGraphResult ? `
-      <div class="card">
-        <h3>📊 Code Graph</h3>
-        <table>
-          <tr><td>Symbols</td><td><strong>${m.codeGraphResult.symbolCount}</strong></td></tr>
-          <tr><td>Call Edges</td><td>${m.codeGraphResult.edgeCount}</td></tr>
-          <tr><td>Files</td><td>${m.codeGraphResult.fileCount}</td></tr>
-        </table>
-      </div>` : '';
-
-    // ── Task complexity ──
-    const complexitySection = m.taskComplexity ? `
-      <div class="card">
-        <h3>🎯 Task Complexity</h3>
-        <table>
-          <tr><td>Level</td><td><strong>${esc(m.taskComplexity.level)}</strong></td></tr>
-          <tr><td>Score</td><td>${m.taskComplexity.score}/100</td></tr>
-        </table>
-      </div>` : '';
-
-    // ── P1 Tool Search stats ──
-    const toolSearchSection = m.toolSearchStats ? `
-      <div class="card">
-        <h3>🔍 Tool Search (P1)</h3>
-        <table>
-          <tr><td>Total Plugins</td><td><strong>${m.toolSearchStats.totalPlugins}</strong></td></tr>
-          <tr><td>Skipped (keyword)</td><td><strong>${m.toolSearchStats.skippedByKeyword}</strong></td></tr>
-          <tr><td>Executed</td><td>${m.toolSearchStats.executed}</td></tr>
-          <tr><td>Skip Ratio</td><td>${m.toolSearchStats.totalPlugins > 0 ? ((m.toolSearchStats.skippedByKeyword / m.toolSearchStats.totalPlugins) * 100).toFixed(0) : 0}%</td></tr>
-        </table>
-      </div>` : '';
-
-    // ── P1 ToolResultFilter stats ──
-    const toolResultFilterSection = m.toolResultFilterStats ? `
-      <div class="card">
-        <h3>✂️ ToolResultFilter (P1)</h3>
-        <table>
-          <tr><td>Chars Saved</td><td><strong>${m.toolResultFilterStats.totalSaved.toLocaleString()}</strong></td></tr>
-          <tr><td>Blocks Filtered</td><td>${m.toolResultFilterStats.filteredBlocks}</td></tr>
-        </table>
-      </div>` : '';
-
-    // ── Quality Gates ──
-    const gatingSection = m.reflectionGating ? `
-      <div class="card">
-        <h3>${m.reflectionGating.passed ? '✅' : '❌'} Quality Gates</h3>
-        <table>
-          <tr><td>Status</td><td><strong class="${m.reflectionGating.passed ? 'status-ok' : 'status-error'}">${m.reflectionGating.passed ? 'ALL PASSED' : 'FAILED'}</strong></td></tr>
-          <tr><td>Gates Checked</td><td>${m.reflectionGating.gateCount}</td></tr>
-          ${m.reflectionGating.failedGates.length > 0 ? `<tr><td>Failed</td><td class="status-error">${m.reflectionGating.failedGates.join(', ')}</td></tr>` : ''}
-        </table>
-      </div>` : '';
-
-    // ── Trend history table ──
-    let trendSection = '';
-    if (history.length >= 2) {
-      const trends = Observability.computeTrends(history);
-      const trendIcon = (t) => t === 'increasing' ? '📈' : t === 'decreasing' ? '📉' : '➡️';
-      const historyRows = history.slice(0, 10).map(h => {
-        const hdur = h.totalDurationMs ? dur(h.totalDurationMs) : '–';
-        const ci = h.ciStatus ? (h.ciStatus === 'success' ? '✅' : '❌') : '–';
-        return `<tr>
-          <td>${esc(h.sessionId?.slice(-12) || '?')}</td>
-          <td>${esc(h.startedAt?.slice(0, 16) || '–')}</td>
-          <td>${hdur}</td>
-          <td>~${(h.tokensEst || 0).toLocaleString()}</td>
-          <td>${h.errorCount || 0}</td>
-          <td>${ci}</td>
-        </tr>`;
-      }).join('\n');
-
-      trendSection = `
-      <div class="card wide">
-        <h3>📈 Cross-Session Trends (last ${trends?.sessionCount || history.length} sessions)</h3>
-        ${trends ? `<div class="trend-summary">
-          <span>${trendIcon(trends.durationTrend)} Duration: ${dur(trends.avgDurationMs)} avg</span>
-          <span>${trendIcon(trends.tokenTrend)} Tokens: ~${trends.avgTokensEst?.toLocaleString() || 0} avg</span>
-          <span>${trendIcon(trends.errorTrend)} Errors: ${trends.avgErrorCount} avg</span>
-        </div>` : ''}
-        <table class="full-width">
-          <thead><tr><th>Session</th><th>Date</th><th>Duration</th><th>Tokens</th><th>Errors</th><th>CI</th></tr></thead>
-          <tbody>${historyRows}</tbody>
-        </table>
-      </div>`;
-    }
-
-    // ── Token display ──
-    const tokenDisplay = m.llm.totalTokensActual != null
-      ? `${m.llm.totalTokensActual.toLocaleString()} actual (est: ~${m.llm.totalTokensEst.toLocaleString()})`
-      : `~${m.llm.totalTokensEst.toLocaleString()} est.`;
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Workflow Session Report – ${esc(m.sessionId)}</title>
-<style>
-  :root {
-    --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
-    --border: #30363d; --text: #e6edf3; --text-dim: #8b949e;
-    --accent: #58a6ff; --green: #3fb950; --red: #f85149;
-    --orange: #d29922; --purple: #bc8cff;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-    background: var(--bg); color: var(--text);
-    line-height: 1.5; padding: 24px; max-width: 1200px; margin: 0 auto;
-  }
-  h1 { font-size: 1.5rem; margin-bottom: 4px; }
-  h2 { font-size: 1.2rem; color: var(--accent); margin: 24px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-  h3 { font-size: 1rem; margin-bottom: 8px; }
-  .header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
-  .header-meta { color: var(--text-dim); font-size: 0.85rem; }
-  .overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
-  .stat-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-    padding: 14px; text-align: center;
-  }
-  .stat-card .value { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
-  .stat-card .label { font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
-  .card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-    padding: 16px; margin-bottom: 12px;
-  }
-  .card.wide { grid-column: 1 / -1; }
-  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-  table.full-width { width: 100%; }
-  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-  th { color: var(--text-dim); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
-  .bar-container { background: var(--surface2); border-radius: 4px; height: 18px; overflow: hidden; min-width: 60px; }
-  .bar { height: 100%; border-radius: 4px; transition: width 0.3s ease; min-width: 2px; }
-  .bar.status-ok { background: var(--green); }
-  .bar.status-error { background: var(--red); }
-  .bar.status-warn { background: var(--orange); }
-  .bar.bar-tokens { background: var(--purple); }
-  .status-ok { color: var(--green); }
-  .status-error { color: var(--red); }
-  .status-warn { color: var(--orange); }
-  .trend-summary {
-    display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 12px;
-    font-size: 0.9rem; color: var(--text-dim);
-  }
-  .trend-summary span { white-space: nowrap; }
-  .footer { margin-top: 32px; text-align: center; color: var(--text-dim); font-size: 0.8rem; border-top: 1px solid var(--border); padding-top: 16px; }
-  @media (max-width: 600px) {
-    body { padding: 12px; }
-    .overview { grid-template-columns: repeat(2, 1fr); }
-    .grid-2 { grid-template-columns: 1fr; }
-  }
-</style>
-</head>
-<body>
-
-<div class="header">
-  <h1>📊 Workflow Session Report</h1>
-  <div class="header-meta">
-    <strong>${esc(m.sessionId)}</strong> &nbsp;|&nbsp;
-    ${esc(m.startedAt)} → ${esc(m.finishedAt)}
-  </div>
-</div>
-
-<div class="overview">
-  <div class="stat-card">
-    <div class="value">${dur(m.totalDurationMs)}</div>
-    <div class="label">Duration</div>
-  </div>
-  <div class="stat-card">
-    <div class="value">${m.llm.totalCalls}</div>
-    <div class="label">LLM Calls</div>
-  </div>
-  <div class="stat-card">
-    <div class="value">${tokenDisplay}</div>
-    <div class="label">Tokens</div>
-  </div>
-  <div class="stat-card">
-    <div class="value" style="color: ${m.errors.count > 0 ? 'var(--red)' : 'var(--green)'}">${m.errors.count}</div>
-    <div class="label">Errors</div>
-  </div>
-  <div class="stat-card">
-    <div class="value">${m.stages.length}</div>
-    <div class="label">Stages</div>
-  </div>
-</div>
-
-<h2>🔄 Stage Timeline</h2>
-<div class="card">
-  <table>
-    <thead><tr><th>Stage</th><th>Status</th><th>Duration</th><th>Timeline</th></tr></thead>
-    <tbody>${stageRows}</tbody>
-  </table>
-</div>
-
-<h2>🤖 LLM Usage by Role</h2>
-<div class="card">
-  <table>
-    <thead><tr><th>Role</th><th>Calls</th><th>Tokens</th><th>Distribution</th></tr></thead>
-    <tbody>${llmRoleRows}</tbody>
-  </table>
-</div>
-
-${m.errors.count > 0 ? `
-<h2>❌ Errors (${m.errors.count})</h2>
-<div class="card">
-  <table>
-    <thead><tr><th>Stage</th><th>Message</th><th>Time</th></tr></thead>
-    <tbody>${errorRows}</tbody>
-  </table>
-</div>` : ''}
-
-<h2>📋 Details</h2>
-<div class="grid-2">
-  ${testSection}
-  ${entropySection}
-  ${ciSection}
-  ${graphSection}
-  ${complexitySection}
-  ${toolSearchSection}
-  ${toolResultFilterSection}
-  ${gatingSection}
-</div>
-
-${trendSection}
-
-<div class="footer">
-  Generated by WorkFlowAgent Observability &nbsp;|&nbsp; ${new Date().toISOString()}
-</div>
-
-</body>
-</html>`;
-  }
-
-  _printTrendSummary() {
-    try {
-      const history = Observability.loadHistory(this._outputDir);
-      if (history.length < 2) return; // Need at least 2 sessions for trends
-
-      const trends = Observability.computeTrends(history);
-      if (!trends) return;
-
-      const bar = '─'.repeat(58);
-      console.log(`  📈 TREND ANALYSIS (last ${trends.sessionCount} sessions)`);
-      console.log(bar);
-
-      const trendIcon = (t) => t === 'increasing' ? '📈' : t === 'decreasing' ? '📉' : '➡️ ';
-      console.log(`  Avg Duration : ${(trends.avgDurationMs / 1000).toFixed(1)}s  ${trendIcon(trends.durationTrend)} ${trends.durationTrend}`);
-      console.log(`  Avg Tokens   : ~${trends.avgTokensEst.toLocaleString()}  ${trendIcon(trends.tokenTrend)} ${trends.tokenTrend}`);
-      console.log(`  Avg Errors   : ${trends.avgErrorCount}  ${trendIcon(trends.errorTrend)} ${trends.errorTrend}`);
-      if (trends.avgEntropyViolations != null) {
-        console.log(`  Avg Entropy  : ${trends.avgEntropyViolations} violations  ${trendIcon(trends.entropyTrend)} ${trends.entropyTrend}`);
-      }
-      if (trends.ciSuccessRate != null) {
-        console.log(`  CI Success   : ${(trends.ciSuccessRate * 100).toFixed(0)}%`);
-      }
-      console.log(`${bar}\n`);
-    } catch (err) { console.warn(`[Observability] Failed to print trends: ${err.message}`); }
-  }
 }
 
 module.exports = { Observability };

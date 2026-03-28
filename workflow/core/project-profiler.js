@@ -1,17 +1,16 @@
 /**
- * ProjectProfiler – Deep Project Architecture Inference Engine
+ * ProjectProfiler
  *
- * Analyses project structure through static file detection, config file parsing,
- * and directory/naming pattern recognition to produce a structured Project Profile.
+ * Deep project architecture inference engine.
+ * Scans project structure, dependencies, and patterns to produce a structured profile
+ * that can guide AI agents in understanding codebase architecture.
  *
- * Phase 1 (baseline): file system detection + config file content matching
- * Phase 2 (LSP-enhanced): compiler-accurate symbols, decorators, diagnostics
- *   via LSPProfileEnhancer integration (optional, graceful fallback).
+ * Refactored (ADR-41): Split into modular components for maintainability:
+ * - profiler-helpers.js: File system utilities and caching
+ * - profiler-detection.js: Detection rules and functions
+ * - profiler-renderer.js: Markdown rendering
  *
- * The output is consumed by:
- *   1. workflow.config.js → projectProfile field
- *   2. AGENTS.md → Architecture Profile section
- *   3. output/project-profile.md → ContextLoader injection
+ * @module workflow/core/project-profiler
  */
 
 'use strict';
@@ -19,1534 +18,344 @@
 const fs   = require('fs');
 const path = require('path');
 
-// ─── Framework Detection Rules ────────────────────────────────────────────────
-// Each rule: { name, category, evidence: (root, deps) => boolean }
-// deps = merged dependencies + devDependencies from package.json (or equivalent)
+// Import refactored modules
+const {
+  clearFileContentCache,
+  readDependencies,
+  gatherConfigContent,
+} = require('./profiler-helpers');
 
-const FRAMEWORK_RULES = [
-  // ── JavaScript / TypeScript Backend ──────────────────────────────────────
-  { name: 'NestJS',       category: 'backend',  lang: 'typescript', detect: (_r, d) => !!d['@nestjs/core'] },
-  { name: 'Express',      category: 'backend',  lang: 'javascript', detect: (_r, d) => !!d['express'] && !d['@nestjs/core'] },
-  { name: 'Fastify',      category: 'backend',  lang: 'javascript', detect: (_r, d) => !!d['fastify'] },
-  { name: 'Koa',          category: 'backend',  lang: 'javascript', detect: (_r, d) => !!d['koa'] },
-  { name: 'Hono',         category: 'backend',  lang: 'javascript', detect: (_r, d) => !!d['hono'] },
-  { name: 'Elysia',       category: 'backend',  lang: 'typescript', detect: (_r, d) => !!d['elysia'] },
+const {
+  detectFrameworks,
+  detectDataLayer,
+  detectDatabases,
+  detectTestFrameworks,
+  detectArchitecture,
+  detectCommunication,
+  detectInfrastructure,
+  detectMonorepo,
+  detectAPIs,
+  detectEntryPoints,
+  FRAMEWORK_RULES,
+  DATA_LAYER_RULES,
+  DATABASE_INDICATORS,
+  TEST_FRAMEWORK_RULES,
+  ARCHITECTURE_PATTERNS,
+} = require('./profiler-detection');
 
-  // ── JavaScript / TypeScript Frontend ─────────────────────────────────────
-  { name: 'Next.js',      category: 'frontend', lang: 'typescript', detect: (_r, d) => !!d['next'] },
-  { name: 'Nuxt',         category: 'frontend', lang: 'javascript', detect: (_r, d) => !!d['nuxt'] || !!d['nuxt3'] },
-  { name: 'React',        category: 'frontend', lang: 'javascript', detect: (_r, d) => !!d['react'] && !d['next'] && !d['react-native'] },
-  { name: 'Vue',          category: 'frontend', lang: 'javascript', detect: (_r, d) => !!d['vue'] && !d['nuxt'] && !d['nuxt3'] },
-  { name: 'Svelte',       category: 'frontend', lang: 'javascript', detect: (_r, d) => !!d['svelte'] },
-  { name: 'Angular',      category: 'frontend', lang: 'typescript', detect: (_r, d) => !!d['@angular/core'] },
-  { name: 'SolidJS',      category: 'frontend', lang: 'javascript', detect: (_r, d) => !!d['solid-js'] },
+const {
+  inferDirPurpose,
+  renderCompactProfileSummary,
+  renderFullProfileReport,
+} = require('./profiler-renderer');
 
-  // ── Mobile ──────────────────────────────────────────────────────────────
-  { name: 'React Native', category: 'mobile',   lang: 'javascript', detect: (_r, d) => !!d['react-native'] },
-  { name: 'Expo',         category: 'mobile',   lang: 'javascript', detect: (_r, d) => !!d['expo'] },
-  { name: 'Flutter',      category: 'mobile',   lang: 'dart',       detect: (r) => _fileExists(r, 'pubspec.yaml') },
-  { name: 'SwiftUI',      category: 'mobile',   lang: 'swift',      detect: (r) => _fileExists(r, 'Package.swift') || _hasExt(r, '.xcodeproj') },
+// Re-export for backward compatibility
+const { fileExists, dirExists, hasExt, readFileContent } = require('./profiler-helpers');
 
-  // ── Python Backend ──────────────────────────────────────────────────────
-  { name: 'Django',       category: 'backend',  lang: 'python',     detect: (r, d) => !!d['django'] || !!d['Django'] || _fileExists(r, 'manage.py') },
-  { name: 'FastAPI',      category: 'backend',  lang: 'python',     detect: (_r, d) => !!d['fastapi'] },
-  { name: 'Flask',        category: 'backend',  lang: 'python',     detect: (_r, d) => !!d['flask'] || !!d['Flask'] },
+// ─── ProjectProfiler Class ───────────────────────────────────────────────────
 
-  // ── Go Backend ──────────────────────────────────────────────────────────
-  { name: 'Gin',          category: 'backend',  lang: 'go',         detect: (r) => _goModContains(r, 'github.com/gin-gonic/gin') },
-  { name: 'Echo',         category: 'backend',  lang: 'go',         detect: (r) => _goModContains(r, 'github.com/labstack/echo') },
-  { name: 'Fiber',        category: 'backend',  lang: 'go',         detect: (r) => _goModContains(r, 'github.com/gofiber/fiber') },
+class ProjectProfiler {
+  constructor() {
+    this.name = 'ProjectProfiler';
+  }
 
-  // ── Java Backend ────────────────────────────────────────────────────────
-  { name: 'Spring Boot',  category: 'backend',  lang: 'java',       detect: (r) => _pomContains(r, 'spring-boot') || _gradleContains(r, 'spring-boot') },
-  { name: 'Quarkus',      category: 'backend',  lang: 'java',       detect: (r) => _pomContains(r, 'quarkus') || _gradleContains(r, 'quarkus') },
+  /**
+   * Analyzes a project and produces a structured profile.
+   *
+   * @param {string} rootPath - Project root path
+   * @param {object} options - Analysis options
+   * @param {boolean} options.lspEnhance - Whether to enhance with LSP data (future feature)
+   * @returns {object} Project profile
+   */
+  analyze(rootPath, options = {}) {
+    const startTime = Date.now();
 
-  // ── Rust Backend ────────────────────────────────────────────────────────
-  { name: 'Actix',        category: 'backend',  lang: 'rust',       detect: (r) => _cargoContains(r, 'actix-web') },
-  { name: 'Axum',         category: 'backend',  lang: 'rust',       detect: (r) => _cargoContains(r, 'axum') },
-  { name: 'Rocket',       category: 'backend',  lang: 'rust',       detect: (r) => _cargoContains(r, 'rocket') },
+    // Clear per-analysis cache
+    clearFileContentCache();
 
-  // ── .NET Backend ────────────────────────────────────────────────────────
-  { name: 'ASP.NET Core', category: 'backend',  lang: 'csharp',     detect: (r) => _csprojContains(r, 'Microsoft.AspNetCore') },
-  { name: 'Blazor',       category: 'frontend', lang: 'csharp',     detect: (r) => _csprojContains(r, 'Microsoft.AspNetCore.Components') },
+    // Resolve root path
+    const root = path.resolve(rootPath);
 
-  // ── Game Engines ────────────────────────────────────────────────────────
-  { name: 'Unity',        category: 'game',     lang: 'csharp',     detect: (r) => _fileExists(r, 'Assets') && _fileExists(r, 'ProjectSettings') },
-  { name: 'Unreal',       category: 'game',     lang: 'cpp',        detect: (r) => _hasExt(r, '.uproject') },
-  { name: 'Godot',        category: 'game',     lang: 'gdscript',   detect: (r) => _fileExists(r, 'project.godot') },
+    // 1. Read dependencies
+    const deps = readDependencies(root);
 
-  // ── Desktop ─────────────────────────────────────────────────────────────
-  { name: 'Electron',     category: 'desktop',  lang: 'javascript', detect: (_r, d) => !!d['electron'] },
-  { name: 'Tauri',        category: 'desktop',  lang: 'rust',       detect: (r) => _fileExists(r, 'src-tauri') },
+    // 2. Detect frameworks
+    const frameworks = detectFrameworks(root, deps);
 
-  // ── Kotlin ──────────────────────────────────────────────────────────────
-  { name: 'Ktor',         category: 'backend',  lang: 'kotlin',     detect: (r) => _gradleContains(r, 'io.ktor') },
-  { name: 'Compose Multiplatform', category: 'frontend', lang: 'kotlin', detect: (r) => _gradleContains(r, 'compose') && _gradleContains(r, 'kotlin') },
-  { name: 'Spring Boot (Kotlin)', category: 'backend', lang: 'kotlin', detect: (r) => _gradleContains(r, 'spring-boot') && (_hasExt(r, '.kt') || _gradleContains(r, 'kotlin')) },
+    // 3. Detect data layer
+    const dataLayer = detectDataLayer(root, deps);
+    dataLayer.databases = detectDatabases(root, deps);
 
-  // ── PHP ──────────────────────────────────────────────────────────────────
-  { name: 'Laravel',      category: 'backend',  lang: 'php',        detect: (r) => _composerContains(r, 'laravel/framework') },
-  { name: 'Symfony',      category: 'backend',  lang: 'php',        detect: (r) => _composerContains(r, 'symfony/framework-bundle') },
-  { name: 'WordPress',    category: 'backend',  lang: 'php',        detect: (r) => _fileExists(r, 'wp-config.php') || _fileExists(r, 'wp-content') },
-  { name: 'CodeIgniter',  category: 'backend',  lang: 'php',        detect: (r) => _composerContains(r, 'codeigniter4/framework') },
+    // 4. Detect testing
+    const testing = {
+      frameworks: detectTestFrameworks(root, deps),
+    };
 
-  // ── Ruby ─────────────────────────────────────────────────────────────────
-  { name: 'Rails',        category: 'backend',  lang: 'ruby',       detect: (r) => _gemfileContains(r, 'rails') || _fileExists(r, 'config/routes.rb') },
-  { name: 'Sinatra',      category: 'backend',  lang: 'ruby',       detect: (r) => _gemfileContains(r, 'sinatra') },
-  { name: 'Hanami',       category: 'backend',  lang: 'ruby',       detect: (r) => _gemfileContains(r, 'hanami') },
+    // 5. Detect architecture
+    const architecture = detectArchitecture(root);
 
-  // ── Swift (expanded) ────────────────────────────────────────────────────
-  { name: 'Vapor',        category: 'backend',  lang: 'swift',      detect: (r) => _readFileContent(r, 'Package.swift').includes('vapor') },
+    // 6. Detect communication patterns
+    const communication = detectCommunication(root, deps);
 
-  // ── C / C++ ─────────────────────────────────────────────────────────────
-  { name: 'Qt',           category: 'desktop',  lang: 'cpp',        detect: (r) => _fileExists(r, 'CMakeLists.txt') && _readFileContent(r, 'CMakeLists.txt').includes('Qt') },
-  { name: 'CMake Project',category: 'systems',  lang: 'cpp',        detect: (r) => _fileExists(r, 'CMakeLists.txt') && !_hasExt(r, '.uproject') },
+    // 7. Detect infrastructure
+    const infrastructure = detectInfrastructure(root);
 
-  // ── Scala ───────────────────────────────────────────────────────────────
-  { name: 'Play Framework', category: 'backend', lang: 'scala',     detect: (r) => _sbtContains(r, 'play') || _sbtContains(r, 'playframework') },
-  { name: 'Akka',         category: 'backend',  lang: 'scala',      detect: (r) => _sbtContains(r, 'akka') },
-  { name: 'Spark',        category: 'data',     lang: 'scala',      detect: (r) => _sbtContains(r, 'spark') },
+    // 8. Detect monorepo
+    const monorepo = detectMonorepo(root, deps);
 
-  // ── Elixir ──────────────────────────────────────────────────────────────
-  { name: 'Phoenix',      category: 'backend',  lang: 'elixir',     detect: (r) => _mixExsContains(r, 'phoenix') },
-  { name: 'LiveView',     category: 'frontend', lang: 'elixir',     detect: (r) => _mixExsContains(r, 'phoenix_live_view') },
-];
+    // 9. Detect APIs
+    const apis = detectAPIs(root);
 
-// ─── ORM / Data Layer Detection Rules ─────────────────────────────────────────
+    // 10. Detect entry points
+    const entryPoints = detectEntryPoints(root);
 
-const DATA_LAYER_RULES = [
-  // ── JavaScript / TypeScript ─────────────────────────────────────────────
-  { name: 'Prisma',       lang: 'javascript', detect: (_r, d) => !!d['prisma'] || !!d['@prisma/client'], configFile: 'prisma/schema.prisma' },
-  { name: 'TypeORM',      lang: 'javascript', detect: (_r, d) => !!d['typeorm'], configFile: 'ormconfig.json' },
-  { name: 'Drizzle',      lang: 'javascript', detect: (_r, d) => !!d['drizzle-orm'] },
-  { name: 'Sequelize',    lang: 'javascript', detect: (_r, d) => !!d['sequelize'] },
-  { name: 'Mongoose',     lang: 'javascript', detect: (_r, d) => !!d['mongoose'] },
-  { name: 'Knex',         lang: 'javascript', detect: (_r, d) => !!d['knex'] },
+    // 11. Determine primary language (from detected frameworks or file extensions)
+    const primaryLang = this._inferPrimaryLanguage(root, frameworks);
 
-  // ── Python ──────────────────────────────────────────────────────────────
-  { name: 'Django ORM',   lang: 'python',     detect: (r, d) => !!d['django'] || !!d['Django'] || _fileExists(r, 'manage.py') },
-  { name: 'SQLAlchemy',   lang: 'python',     detect: (_r, d) => !!d['sqlalchemy'] || !!d['SQLAlchemy'] },
-  { name: 'Tortoise ORM', lang: 'python',     detect: (_r, d) => !!d['tortoise-orm'] },
+    // Build profile
+    const profile = {
+      root,
+      primaryLanguage: primaryLang,
+      frameworks,
+      architecture,
+      dataLayer,
+      testing,
+      communication,
+      infrastructure,
+      monorepo,
+      apis,
+      entryPoints,
+      analyzedAt: new Date().toISOString(),
+      analysisMs: Date.now() - startTime,
+    };
 
-  // ── Go ──────────────────────────────────────────────────────────────────
-  { name: 'GORM',         lang: 'go',         detect: (r) => _goModContains(r, 'gorm.io/gorm') },
-  { name: 'sqlx',         lang: 'go',         detect: (r) => _goModContains(r, 'github.com/jmoiron/sqlx') },
-  { name: 'Ent',          lang: 'go',         detect: (r) => _goModContains(r, 'entgo.io/ent') },
-
-  // ── Java ────────────────────────────────────────────────────────────────
-  { name: 'JPA/Hibernate',lang: 'java',       detect: (r) => _pomContains(r, 'hibernate') || _pomContains(r, 'spring-data-jpa') },
-  { name: 'MyBatis',      lang: 'java',       detect: (r) => _pomContains(r, 'mybatis') },
-
-  // ── Rust ────────────────────────────────────────────────────────────────
-  { name: 'Diesel',       lang: 'rust',       detect: (r) => _cargoContains(r, 'diesel') },
-  { name: 'SeaORM',       lang: 'rust',       detect: (r) => _cargoContains(r, 'sea-orm') },
-
-  // ── .NET ────────────────────────────────────────────────────────────────
-  { name: 'Entity Framework', lang: 'csharp', detect: (r) => _csprojContains(r, 'Microsoft.EntityFrameworkCore') },
-  { name: 'Dapper',       lang: 'csharp',     detect: (r) => _csprojContains(r, 'Dapper') },
-
-  // ── Dart / Flutter ──────────────────────────────────────────────────────
-  { name: 'Drift',        lang: 'dart',       detect: (r) => _pubspecContains(r, 'drift') },
-  { name: 'Isar',         lang: 'dart',       detect: (r) => _pubspecContains(r, 'isar') },
-  { name: 'Hive',         lang: 'dart',       detect: (r) => _pubspecContains(r, 'hive') },
-
-  // ── Kotlin ──────────────────────────────────────────────────────────────
-  { name: 'Exposed',      lang: 'kotlin',     detect: (r) => _gradleContains(r, 'exposed') },
-  { name: 'Room',         lang: 'kotlin',     detect: (r) => _gradleContains(r, 'room') },
-  { name: 'Ktorm',        lang: 'kotlin',     detect: (r) => _gradleContains(r, 'ktorm') },
-
-  // ── PHP ──────────────────────────────────────────────────────────────────
-  { name: 'Eloquent',     lang: 'php',        detect: (r) => _composerContains(r, 'laravel/framework') || _composerContains(r, 'illuminate/database') },
-  { name: 'Doctrine',     lang: 'php',        detect: (r) => _composerContains(r, 'doctrine/orm') },
-  { name: 'RedBeanPHP',   lang: 'php',        detect: (r) => _composerContains(r, 'gabordemooij/redbean') },
-
-  // ── Ruby ─────────────────────────────────────────────────────────────────
-  { name: 'ActiveRecord', lang: 'ruby',       detect: (r) => _gemfileContains(r, 'activerecord') || _gemfileContains(r, 'rails') },
-  { name: 'Sequel',       lang: 'ruby',       detect: (r) => _gemfileContains(r, 'sequel') },
-
-  // ── Swift ───────────────────────────────────────────────────────────────
-  { name: 'CoreData',     lang: 'swift',      detect: (r) => _readFileContent(r, 'Package.swift').includes('CoreData') || _hasExt(r, '.xcdatamodeld') },
-  { name: 'GRDB',         lang: 'swift',      detect: (r) => _readFileContent(r, 'Package.swift').includes('GRDB') },
-
-  // ── C / C++ ─────────────────────────────────────────────────────────────
-  { name: 'SQLiteCpp',    lang: 'cpp',        detect: (r) => _readFileContent(r, 'CMakeLists.txt').includes('SQLiteCpp') },
-
-  // ── Scala ───────────────────────────────────────────────────────────────
-  { name: 'Slick',        lang: 'scala',      detect: (r) => _sbtContains(r, 'slick') },
-  { name: 'Doobie',       lang: 'scala',      detect: (r) => _sbtContains(r, 'doobie') },
-
-  // ── Elixir ──────────────────────────────────────────────────────────────
-  { name: 'Ecto',         lang: 'elixir',     detect: (r) => _mixExsContains(r, 'ecto') },
-];
-
-// ─── Database Detection ───────────────────────────────────────────────────────
-
-const DATABASE_INDICATORS = [
-  { name: 'PostgreSQL',  indicators: ['postgres', 'pg', 'postgresql', 'psycopg'] },
-  { name: 'MySQL',       indicators: ['mysql', 'mysql2', 'mariadb'] },
-  { name: 'SQLite',      indicators: ['sqlite', 'sqlite3', 'better-sqlite3'] },
-  { name: 'MongoDB',     indicators: ['mongodb', 'mongoose', 'mongoclient'] },
-  { name: 'Redis',       indicators: ['redis', 'ioredis', 'bull', 'bullmq'] },
-  { name: 'DynamoDB',    indicators: ['dynamodb', 'aws-sdk'] },
-  { name: 'Elasticsearch', indicators: ['elasticsearch', '@elastic/elasticsearch'] },
-  { name: 'Firebase',    indicators: ['firebase', 'firestore'] },
-  { name: 'Supabase',    indicators: ['@supabase/supabase-js', 'supabase'] },
-];
-
-// ─── Test Framework Detection Rules ───────────────────────────────────────────
-
-const TEST_FRAMEWORK_RULES = [
-  { name: 'Jest',         lang: 'javascript', detect: (_r, d) => !!d['jest'] || !!d['@jest/core'] },
-  { name: 'Vitest',       lang: 'javascript', detect: (_r, d) => !!d['vitest'] },
-  { name: 'Mocha',        lang: 'javascript', detect: (_r, d) => !!d['mocha'] },
-  { name: 'Playwright',   lang: 'javascript', detect: (_r, d) => !!d['@playwright/test'] || !!d['playwright'] },
-  { name: 'Cypress',      lang: 'javascript', detect: (_r, d) => !!d['cypress'] },
-  { name: 'Supertest',    lang: 'javascript', detect: (_r, d) => !!d['supertest'] },
-  { name: 'pytest',       lang: 'python',     detect: (_r, d) => !!d['pytest'] },
-  { name: 'unittest',     lang: 'python',     detect: (r) => _dirExists(r, 'tests') || _dirExists(r, 'test') },
-  { name: 'JUnit',        lang: 'java',       detect: (r) => _pomContains(r, 'junit') || _gradleContains(r, 'junit') },
-  { name: 'xUnit',        lang: 'csharp',     detect: (r) => _csprojContains(r, 'xunit') },
-  { name: 'NUnit',        lang: 'csharp',     detect: (r) => _csprojContains(r, 'NUnit') },
-  { name: 'flutter_test', lang: 'dart',       detect: (r) => _pubspecContains(r, 'flutter_test') },
-  { name: 'go test',      lang: 'go',         detect: (r) => _fileExists(r, 'go.mod') },
-  { name: 'cargo test',   lang: 'rust',       detect: (r) => _fileExists(r, 'Cargo.toml') },
-
-  // ── Kotlin ──────────────────────────────────────────────────────────────
-  { name: 'Kotest',       lang: 'kotlin',     detect: (r) => _gradleContains(r, 'kotest') },
-
-  // ── PHP ──────────────────────────────────────────────────────────────────
-  { name: 'PHPUnit',      lang: 'php',        detect: (r) => _composerContains(r, 'phpunit') || _fileExists(r, 'phpunit.xml') },
-  { name: 'Pest',         lang: 'php',        detect: (r) => _composerContains(r, 'pestphp/pest') },
-
-  // ── Ruby ─────────────────────────────────────────────────────────────────
-  { name: 'RSpec',        lang: 'ruby',       detect: (r) => _gemfileContains(r, 'rspec') || _dirExists(r, 'spec') },
-  { name: 'Minitest',     lang: 'ruby',       detect: (r) => _gemfileContains(r, 'minitest') },
-
-  // ── Swift ───────────────────────────────────────────────────────────────
-  { name: 'XCTest',       lang: 'swift',      detect: (r) => _readFileContent(r, 'Package.swift').includes('XCTest') || _dirExists(r, 'Tests') },
-
-  // ── C / C++ ─────────────────────────────────────────────────────────────
-  { name: 'GoogleTest',   lang: 'cpp',        detect: (r) => _readFileContent(r, 'CMakeLists.txt').includes('gtest') || _readFileContent(r, 'CMakeLists.txt').includes('GTest') },
-  { name: 'Catch2',       lang: 'cpp',        detect: (r) => _readFileContent(r, 'CMakeLists.txt').includes('Catch2') },
-
-  // ── Scala ───────────────────────────────────────────────────────────────
-  { name: 'ScalaTest',    lang: 'scala',      detect: (r) => _sbtContains(r, 'scalatest') },
-
-  // ── Elixir ──────────────────────────────────────────────────────────────
-  { name: 'ExUnit',       lang: 'elixir',     detect: (r) => _fileExists(r, 'mix.exs') },
-];
-
-// ─── Architecture Pattern Rules ───────────────────────────────────────────────
-// Inference based on directory structure + naming patterns
-
-const ARCHITECTURE_PATTERNS = [
-  {
-    name: 'Clean Architecture',
-    confidence: 0,
-    dirPatterns: ['domain', 'usecases', 'infrastructure', 'presentation', 'application'],
-    minMatch: 3,
-  },
-  {
-    name: 'MVC',
-    confidence: 0,
-    dirPatterns: ['controllers', 'models', 'views', 'controller', 'model', 'view'],
-    minMatch: 2,
-  },
-  {
-    name: 'MVVM',
-    confidence: 0,
-    dirPatterns: ['viewmodels', 'viewmodel', 'view_models', 'view_model', 'views', 'models'],
-    minMatch: 2,
-  },
-  {
-    name: 'Layered (Service-Repository)',
-    confidence: 0,
-    dirPatterns: ['services', 'repositories', 'entities', 'dtos', 'service', 'repository'],
-    minMatch: 2,
-  },
-  {
-    name: 'Feature-based Modules',
-    confidence: 0,
-    // Detected by finding multiple sibling dirs that each contain similar sub-structures
-    dirPatterns: ['modules', 'features', 'packages'],
-    minMatch: 1,
-  },
-  {
-    name: 'Hexagonal (Ports & Adapters)',
-    confidence: 0,
-    dirPatterns: ['ports', 'adapters', 'domain', 'core'],
-    minMatch: 3,
-  },
-  {
-    name: 'Component-based (Unity/Game)',
-    confidence: 0,
-    dirPatterns: ['Scripts', 'Components', 'Prefabs', 'Scenes', 'GameFramework'],
-    minMatch: 2,
-  },
-];
-
-// ─── File System Helpers ──────────────────────────────────────────────────────
-
-/**
- * Per-analysis file read cache. Prevents the same config file (pom.xml, go.mod,
- * Cargo.toml, etc.) from being read from disk multiple times when multiple
- * detection rules check the same file.
- * Key: absolute path, Value: file content string (empty string for non-existent).
- * The cache is module-scoped and cleared at the start of each analyze() call.
- */
-let _fileContentCache = new Map();
-
-/** Clears the file content cache. Called at the start of each analyze(). */
-function _clearFileContentCache() {
-  _fileContentCache = new Map();
-}
-
-function _fileExists(root, relPath) {
-  try { return fs.existsSync(path.join(root, relPath)); } catch { return false; }
-}
-
-function _dirExists(root, relPath) {
-  try {
-    const stat = fs.statSync(path.join(root, relPath));
-    return stat.isDirectory();
-  } catch { return false; }
-}
-
-function _hasExt(root, ext) {
-  try {
-    const entries = fs.readdirSync(root);
-    return entries.some(e => e.endsWith(ext));
-  } catch { return false; }
-}
-
-/**
- * Reads file content with per-analysis caching.
- * Eliminates redundant disk I/O when multiple rules check the same file
- * (e.g. pom.xml read by Spring Boot, Quarkus, Hibernate, MyBatis, JUnit rules).
- */
-function _readFileContent(root, relPath) {
-  const fullPath = path.join(root, relPath);
-  if (_fileContentCache.has(fullPath)) return _fileContentCache.get(fullPath);
-  try {
-    if (!fs.existsSync(fullPath)) {
-      _fileContentCache.set(fullPath, '');
-      return '';
+    // LSP enhancement (future feature)
+    if (options.lspEnhance) {
+      // TODO: Integrate with LSP adapter for symbol inventory
+      profile.lspEnhanced = false;
+      profile.lspMessage = 'LSP enhancement not yet implemented';
     }
-    const content = fs.readFileSync(fullPath, 'utf-8');
-    _fileContentCache.set(fullPath, content);
-    return content;
-  } catch {
-    _fileContentCache.set(fullPath, '');
-    return '';
-  }
-}
 
-function _goModContains(root, dep) {
-  return _readFileContent(root, 'go.mod').includes(dep);
-}
-
-function _pomContains(root, dep) {
-  return _readFileContent(root, 'pom.xml').toLowerCase().includes(dep.toLowerCase());
-}
-
-function _gradleContains(root, dep) {
-  const content = _readFileContent(root, 'build.gradle') + _readFileContent(root, 'build.gradle.kts');
-  return content.toLowerCase().includes(dep.toLowerCase());
-}
-
-function _cargoContains(root, dep) {
-  return _readFileContent(root, 'Cargo.toml').includes(dep);
-}
-
-function _csprojContains(root, dep) {
-  // Check all .csproj files in root and src/
-  const dirs = ['.', 'src'];
-  for (const dir of dirs) {
-    try {
-      const dirPath = path.join(root, dir);
-      if (!fs.existsSync(dirPath)) continue;
-      const entries = fs.readdirSync(dirPath);
-      for (const entry of entries) {
-        if (entry.endsWith('.csproj')) {
-          if (_readFileContent(dirPath, entry).includes(dep)) return true;
-        }
-      }
-    } catch { /* ignore */ }
-  }
-  return false;
-}
-
-function _pubspecContains(root, dep) {
-  return _readFileContent(root, 'pubspec.yaml').includes(dep);
-}
-
-function _composerContains(root, dep) {
-  return _readFileContent(root, 'composer.json').toLowerCase().includes(dep.toLowerCase());
-}
-
-function _gemfileContains(root, dep) {
-  return _readFileContent(root, 'Gemfile').toLowerCase().includes(dep.toLowerCase());
-}
-
-function _mixExsContains(root, dep) {
-  return _readFileContent(root, 'mix.exs').toLowerCase().includes(dep.toLowerCase());
-}
-
-function _sbtContains(root, dep) {
-  return _readFileContent(root, 'build.sbt').toLowerCase().includes(dep.toLowerCase());
-}
-
-// ─── Dependency Reader ────────────────────────────────────────────────────────
-
-/**
- * Reads merged dependencies from the project's package manifest.
- * Returns a flat object { packageName: version } for quick lookups.
- */
-function _readDependencies(root) {
-  const deps = {};
-
-  // JavaScript / TypeScript: package.json
-  const pkgContent = _readFileContent(root, 'package.json');
-  if (pkgContent) {
-    try {
-      const pkg = JSON.parse(pkgContent);
-      Object.assign(deps, pkg.dependencies || {}, pkg.devDependencies || {});
-    } catch { /* ignore */ }
+    return profile;
   }
 
-  // Python: requirements.txt / pyproject.toml
-  const reqContent = _readFileContent(root, 'requirements.txt');
-  if (reqContent) {
-    try {
-      const lines = reqContent.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const name = trimmed.split(/[>=<!\[]/)[0].trim().toLowerCase();
-        if (name) deps[name] = '*';
-      }
-    } catch { /* ignore */ }
-  }
+  /**
+   * Infers primary language from frameworks or file extensions.
+   * @private
+   */
+  _inferPrimaryLanguage(root, frameworks) {
+    // First, check detected frameworks
+    if (frameworks.length > 0) {
+      // Prioritize backend frameworks
+      const backend = frameworks.find(f => f.category === 'backend');
+      if (backend) return backend.lang;
 
-  const pyprojectContent = _readFileContent(root, 'pyproject.toml');
-  if (pyprojectContent) {
-    try {
-      // Simple extraction of dependency names from pyproject.toml
-      const depSection = pyprojectContent.match(/\[project\][\s\S]*?dependencies\s*=\s*\[([\s\S]*?)\]/);
-      if (depSection) {
-        const depList = depSection[1].match(/"([^"]+)"/g) || [];
-        for (const d of depList) {
-          const name = d.replace(/"/g, '').split(/[>=<!\[]/)[0].trim().toLowerCase();
-          if (name) deps[name] = '*';
-        }
-      }
-    } catch { /* ignore */ }
-  }
+      // Then frontend
+      const frontend = frameworks.find(f => f.category === 'frontend');
+      if (frontend) return frontend.lang;
 
-  // PHP: composer.json
-  const composerContent = _readFileContent(root, 'composer.json');
-  if (composerContent) {
-    try {
-      const composer = JSON.parse(composerContent);
-      const allDeps = { ...composer.require, ...composer['require-dev'] };
-      for (const name of Object.keys(allDeps)) {
-        deps[name.toLowerCase()] = '*';
-      }
-    } catch { /* ignore */ }
-  }
-
-  // Ruby: Gemfile (simple line-based extraction)
-  const gemfileContent = _readFileContent(root, 'Gemfile');
-  if (gemfileContent) {
-    try {
-      const lines = gemfileContent.split('\n');
-      for (const line of lines) {
-        const match = line.match(/^\s*gem\s+['"]([^'"]+)/);
-        if (match) deps[match[1].toLowerCase()] = '*';
-      }
-    } catch { /* ignore */ }
-  }
-
-  // Elixir: mix.exs (extract {:dep_name, "version"} patterns)
-  const mixContent = _readFileContent(root, 'mix.exs');
-  if (mixContent) {
-    try {
-      const depMatches = mixContent.match(/\{:(\w+)/g) || [];
-      for (const m of depMatches) {
-        const name = m.replace('{:', '');
-        if (name) deps[name.toLowerCase()] = '*';
-      }
-    } catch { /* ignore */ }
-  }
-
-  // Scala: build.sbt (extract "org" %% "artifact" patterns)
-  const sbtContent = _readFileContent(root, 'build.sbt');
-  if (sbtContent) {
-    try {
-      const sbtMatches = sbtContent.match(/"([^"]+)"\s*%%?\s*"([^"]+)"/g) || [];
-      for (const m of sbtMatches) {
-        const parts = m.match(/"([^"]+)"\s*%%?\s*"([^"]+)"/);
-        if (parts) deps[parts[2].toLowerCase()] = '*';
-      }
-    } catch { /* ignore */ }
-  }
-
-  return deps;
-}
-
-// ─── Directory Scanner ────────────────────────────────────────────────────────
-
-const IGNORE_DIRS = new Set([
-  'node_modules', '.git', '.dart_tool', 'build', 'dist', 'output',
-  'Library', 'Temp', 'obj', 'Packages', '.vs', '__pycache__', '.venv',
-  'venv', 'target', 'bin', '.gradle', '.idea', '.next', '.nuxt',
-  '.svelte-kit', 'coverage', '.turbo', '.cache',
-]);
-
-/**
- * Collects all directory names (depth ≤ maxDepth) in the project.
- */
-function _collectDirNames(root, maxDepth = 4) {
-  const names = new Set();
-
-  function walk(dir, depth) {
-    if (depth > maxDepth) return;
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      if (IGNORE_DIRS.has(e.name) || e.name.startsWith('.')) continue;
-      names.add(e.name.toLowerCase());
-      walk(path.join(dir, e.name), depth + 1);
+      // Then any
+      return frameworks[0].lang;
     }
-  }
 
-  walk(root, 1);
-  return names;
-}
+    // Fallback: scan file extensions
+    const langExtensions = {
+      javascript: ['.js', '.jsx', '.mjs', '.cjs'],
+      typescript: ['.ts', '.tsx'],
+      python: ['.py'],
+      java: ['.java'],
+      go: ['.go'],
+      rust: ['.rs'],
+      csharp: ['.cs'],
+      cpp: ['.cpp', '.cc', '.cxx', '.hpp', '.h'],
+      php: ['.php'],
+      ruby: ['.rb'],
+      swift: ['.swift'],
+      kotlin: ['.kt', '.kts'],
+      scala: ['.scala'],
+      elixir: ['.ex', '.exs'],
+      dart: ['.dart'],
+      gdscript: ['.gd'],
+    };
 
-// ─── Communication Pattern Detection ──────────────────────────────────────────
-
-function _detectCommunicationPatterns(root, deps) {
-  const patterns = [];
-  const seen = new Set(); // P1-5 fix: dedup communication pattern detections
-
-  function addPattern(name) {
-    if (!seen.has(name)) { seen.add(name); patterns.push(name); }
-  }
-
-  // Dependency Injection
-  if (deps['@nestjs/core'] || deps['inversify'] || deps['tsyringe'] || deps['awilix']) {
-    addPattern('Dependency Injection');
-  }
-  if (_csprojContains(root, 'Microsoft.Extensions.DependencyInjection')) {
-    addPattern('Dependency Injection (.NET)');
-  }
-  if (_pomContains(root, 'spring-context') || _pomContains(root, 'spring-boot')) {
-    addPattern('Dependency Injection (Spring)');
-  }
-
-  // Event-driven
-  if (deps['eventemitter3'] || deps['eventemitter2'] || deps['mitt'] || deps['rxjs']) {
-    addPattern('Event-driven');
-  }
-  if (deps['bull'] || deps['bullmq'] || deps['amqplib'] || deps['kafkajs']) {
-    addPattern('Message Queue');
-  }
-
-  // WebSocket
-  if (deps['socket.io'] || deps['ws'] || deps['@nestjs/websockets']) {
-    addPattern('WebSocket');
-  }
-
-  // gRPC
-  if (deps['@grpc/grpc-js'] || deps['grpc'] || _goModContains(root, 'google.golang.org/grpc')) {
-    addPattern('gRPC');
-  }
-
-  // GraphQL
-  if (deps['graphql'] || deps['apollo-server'] || deps['@apollo/server'] || deps['type-graphql']) {
-    addPattern('GraphQL');
-  }
-
-  // REST (inferred from having a web framework)
-  if (deps['express'] || deps['fastify'] || deps['koa'] || deps['@nestjs/core'] ||
-      deps['fastapi'] || deps['flask'] || deps['django'] ||
-      deps['laravel/framework'] || deps['symfony/framework-bundle'] ||
-      deps['rails'] || deps['sinatra'] || deps['phoenix'] ||
-      _goModContains(root, 'github.com/gin-gonic/gin') ||
-      _goModContains(root, 'github.com/labstack/echo') ||
-      _goModContains(root, 'github.com/gofiber/fiber')) {
-    addPattern('REST API');
-  }
-
-  return patterns;
-}
-
-// ─── Infrastructure Detection ─────────────────────────────────────────────────
-
-function _detectInfrastructure(root) {
-  const infra = {};
-
-  // Containerization
-  if (_fileExists(root, 'Dockerfile') || _fileExists(root, 'dockerfile')) {
-    infra.containerized = true;
-  }
-  if (_fileExists(root, 'docker-compose.yml') || _fileExists(root, 'docker-compose.yaml') || _fileExists(root, 'compose.yml')) {
-    infra.orchestration = 'docker-compose';
-  }
-  if (_dirExists(root, 'k8s') || _dirExists(root, 'kubernetes') || _dirExists(root, 'helm')) {
-    infra.orchestration = 'Kubernetes';
-  }
-
-  // CI/CD
-  if (_dirExists(root, '.github/workflows')) infra.ci = 'GitHub Actions';
-  else if (_fileExists(root, '.gitlab-ci.yml')) infra.ci = 'GitLab CI';
-  else if (_fileExists(root, 'Jenkinsfile')) infra.ci = 'Jenkins';
-  else if (_fileExists(root, '.circleci/config.yml')) infra.ci = 'CircleCI';
-  else if (_fileExists(root, 'azure-pipelines.yml')) infra.ci = 'Azure Pipelines';
-  else if (_fileExists(root, 'bitbucket-pipelines.yml')) infra.ci = 'Bitbucket Pipelines';
-
-  // IaC
-  if (_dirExists(root, 'terraform') || _hasExt(root, '.tf')) infra.iac = 'Terraform';
-  else if (_fileExists(root, 'serverless.yml') || _fileExists(root, 'serverless.ts')) infra.iac = 'Serverless Framework';
-  else if (_fileExists(root, 'cdk.json')) infra.iac = 'AWS CDK';
-  else if (_fileExists(root, 'pulumi.yaml')) infra.iac = 'Pulumi';
-
-  return infra;
-}
-
-// ─── Monorepo Detection ───────────────────────────────────────────────────────
-
-function _detectMonorepo(root, deps) {
-  const result = { isMonorepo: false, tool: null, packages: [] };
-
-  // Check package.json workspaces
-  const pkgPath = path.join(root, 'package.json');
-  if (fs.existsSync(pkgPath)) {
     try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-      if (pkg.workspaces) {
-        result.isMonorepo = true;
-        if (deps['lerna']) result.tool = 'Lerna';
-        else if (deps['turbo']) result.tool = 'Turborepo';
-        else if (deps['nx']) result.tool = 'Nx';
-        else result.tool = 'npm/yarn workspaces';
-      }
-    } catch { /* ignore */ }
-  }
+      const entries = fs.readdirSync(root, { withFileTypes: true });
+      const extCounts = {};
 
-  // Check for pnpm workspace
-  if (_fileExists(root, 'pnpm-workspace.yaml')) {
-    result.isMonorepo = true;
-    result.tool = result.tool || 'pnpm workspace';
-  }
-
-  // Check for Nx
-  if (_fileExists(root, 'nx.json')) {
-    result.isMonorepo = true;
-    result.tool = 'Nx';
-  }
-
-  // List package directories
-  if (result.isMonorepo) {
-    for (const dir of ['packages', 'apps', 'libs', 'services', 'modules']) {
-      const dirPath = path.join(root, dir);
-      if (_dirExists(root, dir)) {
+      function scanDir(dir, depth = 0) {
+        if (depth > 2) return;
         try {
-          const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-          for (const e of entries) {
-            if (e.isDirectory() && !e.name.startsWith('.')) {
-              result.packages.push(`${dir}/${e.name}`);
+          const items = fs.readdirSync(dir, { withFileTypes: true });
+          for (const item of items) {
+            if (item.isDirectory()) {
+              if (!item.name.startsWith('.') && item.name !== 'node_modules' && item.name !== 'vendor') {
+                scanDir(path.join(dir, item.name), depth + 1);
+              }
+            } else {
+              const ext = path.extname(item.name).toLowerCase();
+              extCounts[ext] = (extCounts[ext] || 0) + 1;
             }
           }
         } catch { /* ignore */ }
       }
-    }
-  }
 
-  return result;
-}
+      scanDir(root);
 
-// ─── API Detection ────────────────────────────────────────────────────────────
+      // Find best match
+      let bestLang = 'unknown';
+      let bestCount = 0;
 
-function _detectAPIs(root) {
-  const apis = [];
-
-  // OpenAPI / Swagger
-  for (const f of ['openapi.yaml', 'openapi.yml', 'openapi.json', 'swagger.yaml', 'swagger.yml', 'swagger.json']) {
-    if (_fileExists(root, f)) { apis.push('OpenAPI/Swagger'); break; }
-  }
-  if (_dirExists(root, 'docs/api') || _dirExists(root, 'api-docs')) {
-    if (!apis.includes('OpenAPI/Swagger')) apis.push('API docs');
-  }
-
-  // GraphQL schema
-  for (const f of ['schema.graphql', 'schema.gql']) {
-    if (_fileExists(root, f) || _fileExists(root, `src/${f}`)) { apis.push('GraphQL Schema'); break; }
-  }
-
-  // gRPC / Protobuf
-  if (_dirExists(root, 'proto') || _dirExists(root, 'protos')) {
-    apis.push('gRPC/Protobuf');
-  }
-
-  return apis;
-}
-
-// ─── Database Detection from Config Files ─────────────────────────────────────
-
-function _detectDatabases(root, deps) {
-  const databases = [];
-  const allContent = _gatherConfigContent(root);
-
-  for (const db of DATABASE_INDICATORS) {
-    for (const indicator of db.indicators) {
-      if (deps[indicator] || allContent.includes(indicator)) {
-        databases.push(db.name);
-        break;
+      for (const [lang, exts] of Object.entries(langExtensions)) {
+        let count = 0;
+        for (const ext of exts) {
+          count += extCounts[ext] || 0;
+        }
+        if (count > bestCount) {
+          bestCount = count;
+          bestLang = lang;
+        }
       }
+
+      return bestLang;
+    } catch {
+      return 'unknown';
     }
-  }
-
-  return [...new Set(databases)];
-}
-
-function _gatherConfigContent(root) {
-  // Gather content from common config files for keyword searching
-  const configFiles = [
-    '.env', '.env.example', '.env.development', '.env.local',
-    'docker-compose.yml', 'docker-compose.yaml', 'compose.yml',
-    'ormconfig.json', 'ormconfig.js',
-    'prisma/schema.prisma',
-    'knexfile.js', 'knexfile.ts',
-  ];
-  let content = '';
-  for (const f of configFiles) {
-    content += _readFileContent(root, f).toLowerCase() + '\n';
-  }
-  return content;
-}
-
-// ─── Entry Point Detection ────────────────────────────────────────────────────
-
-function _detectEntryPoints(root) {
-  const candidates = [
-    // JavaScript / TypeScript
-    'src/index.ts', 'src/index.js', 'src/main.ts', 'src/main.js',
-    'src/app.ts', 'src/app.js', 'src/server.ts', 'src/server.js',
-    'index.ts', 'index.js', 'main.ts', 'main.js',
-    'app.ts', 'app.js', 'server.ts', 'server.js',
-    // Python
-    'main.py', 'app.py', 'manage.py',
-    // Go
-    'main.go', 'cmd/main.go', 'cmd/server/main.go',
-    // Rust
-    'src/main.rs', 'src/lib.rs',
-    // Dart / Flutter
-    'lib/main.dart',
-    // C# / .NET / Unity
-    'Program.cs', 'src/Program.cs',
-    'Assets/Scripts/Main.cs', 'Assets/Scripts/GameEntry.cs',
-    // PHP
-    'public/index.php', 'index.php', 'artisan',
-    // Ruby
-    'config.ru', 'config/application.rb', 'bin/rails',
-    // Kotlin
-    'src/main/kotlin/Main.kt', 'src/main/kotlin/Application.kt',
-    // Scala
-    'src/main/scala/Main.scala', 'src/main/scala/App.scala',
-    // Elixir
-    'lib/application.ex', 'lib/app.ex',
-    // Swift
-    'Sources/main.swift', 'Sources/App/main.swift',
-    // C / C++
-    'src/main.cpp', 'src/main.c', 'main.cpp', 'main.c',
-  ];
-
-  return candidates.filter(c => _fileExists(root, c));
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ─── ProjectProfiler Class ───────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-
-class ProjectProfiler {
-  /**
-   * @param {string} projectRoot - Absolute path to the project root
-   * @param {object} [options]
-   * @param {string[]}  [options.ignoreDirs]         - Additional dirs to ignore during scanning
-   * @param {object[]}  [options.customFrameworkRules]  - P2-3: User-defined framework detection rules
-   *   Each: { name: string, category: string, lang: string, detect: (root, deps) => boolean }
-   * @param {object[]}  [options.customDataLayerRules]  - P2-3: User-defined ORM/data layer rules
-   * @param {object[]}  [options.customTestRules]       - P2-3: User-defined test framework rules
-   */
-  constructor(projectRoot, options = {}) {
-    this.projectRoot = projectRoot;
-    this.ignoreDirs = options.ignoreDirs || [];
-
-    // P2-3: Merge user-defined detection rules with built-in rules.
-    // User rules are prepended so they take priority over built-in rules.
-    this._frameworkRules  = [...(options.customFrameworkRules || []),  ...FRAMEWORK_RULES];
-    this._dataLayerRules  = [...(options.customDataLayerRules || []),  ...DATA_LAYER_RULES];
-    this._testRules       = [...(options.customTestRules || []),       ...TEST_FRAMEWORK_RULES];
   }
 
   /**
-   * Runs all detectors and produces a structured Project Profile.
-   *
-   * @returns {object} The complete project profile
-   */
-  analyze() {
-    console.log(`[ProjectProfiler] Analyzing project: ${this.projectRoot}`);
-    // P0 perf: clear per-analysis file content cache to ensure fresh reads
-    // while avoiding redundant I/O within the same analysis run.
-    _clearFileContentCache();
-    const root = this.projectRoot;
-    const deps = _readDependencies(root);
-    const dirNames = _collectDirNames(root);
-
-    // ── 1. Framework Detection ────────────────────────────────────────────
-    const frameworks = [];
-    const frameworkNamesSeen = new Set(); // P1-5 fix: dedup by name
-    for (const rule of this._frameworkRules) {
-      try {
-        if (rule.detect(root, deps)) {
-          // P1-6 fix: skip duplicate framework names (e.g. 'Spring Boot' and
-          // 'Spring Boot (Kotlin)' both matching). First match wins within
-          // same-name rules. Cross-category duplicates are also eliminated.
-          if (!frameworkNamesSeen.has(rule.name)) {
-            frameworkNamesSeen.add(rule.name);
-            frameworks.push({ name: rule.name, category: rule.category, lang: rule.lang });
-          }
-        }
-      } catch { /* ignore detection errors */ }
-    }
-    console.log(`[ProjectProfiler]   Frameworks: ${frameworks.map(f => f.name).join(', ') || 'none detected'}`);
-
-    // ── 2. Architecture Pattern Inference ─────────────────────────────────
-    const architecture = this._inferArchitecture(dirNames, frameworks);
-    console.log(`[ProjectProfiler]   Architecture: ${architecture.pattern || 'unknown'}`);
-
-    // ── 3. Data Layer Detection ───────────────────────────────────────────
-    const dataLayer = { orm: [], databases: [] };
-    const ormNamesSeen = new Set(); // P1-5 fix: dedup ORM detections
-    for (const rule of this._dataLayerRules) {
-      try {
-        if (rule.detect(root, deps)) {
-          if (!ormNamesSeen.has(rule.name)) {
-            ormNamesSeen.add(rule.name);
-            dataLayer.orm.push(rule.name);
-          }
-        }
-      } catch { /* ignore */ }
-    }
-    dataLayer.databases = _detectDatabases(root, deps);
-    console.log(`[ProjectProfiler]   Data Layer: ORM=${dataLayer.orm.join(', ') || 'none'}, DB=${dataLayer.databases.join(', ') || 'none'}`);
-
-    // ── 4. Communication Patterns ─────────────────────────────────────────
-    const communication = _detectCommunicationPatterns(root, deps);
-    console.log(`[ProjectProfiler]   Communication: ${communication.join(', ') || 'none detected'}`);
-
-    // ── 5. Test Strategy ──────────────────────────────────────────────────
-    const testing = { frameworks: [] };
-    const testNamesSeen = new Set(); // P1-5 fix: dedup test framework detections
-    for (const rule of this._testRules) {
-      try {
-        if (rule.detect(root, deps)) {
-          if (!testNamesSeen.has(rule.name)) {
-            testNamesSeen.add(rule.name);
-            testing.frameworks.push(rule.name);
-          }
-        }
-      } catch { /* ignore */ }
-    }
-    console.log(`[ProjectProfiler]   Testing: ${testing.frameworks.join(', ') || 'none detected'}`);
-
-    // ── 6. API Detection ──────────────────────────────────────────────────
-    const apis = _detectAPIs(root);
-
-    // ── 7. Infrastructure Detection ───────────────────────────────────────
-    const infrastructure = _detectInfrastructure(root);
-
-    // ── 8. Monorepo Detection ─────────────────────────────────────────────
-    const monorepo = _detectMonorepo(root, deps);
-
-    // ── 9. Entry Points ───────────────────────────────────────────────────
-    const entryPoints = _detectEntryPoints(root);
-
-    // ── Assemble Profile ──────────────────────────────────────────────────
-    const profile = {
-      frameworks,
-      architecture,
-      dataLayer,
-      communication,
-      testing,
-      apis,
-      infrastructure,
-      monorepo,
-      entryPoints,
-      analyzedAt: new Date().toISOString(),
-    };
-
-    console.log(`[ProjectProfiler] ✅ Analysis complete.`);
-    return profile;
-  }
-
-  /**
-   * P2-1: Enhance an existing profile with CodeGraph statistical evidence.
-   *
-   * This is the "graph → profiler" fusion direction. When code-graph stats
-   * are available, they provide compiler-grade evidence that can:
-   *   1. Boost architecture confidence (symbol kinds confirm layer inference)
-   *   2. Refine framework detection (symbol name patterns match frameworks)
-   *   3. Add language distribution data (actual symbol counts per extension)
-   *   4. Identify top coupling modules (highest import fan-in)
-   *
-   * Called optionally after analyze() when a CodeGraph instance is available.
-   *
+   * Generates a compact summary for injection into AGENTS.md.
    * @param {object} profile - Profile from analyze()
-   * @param {object} codeGraphStats - Stats from CodeGraph.getCodeGraphStats()
-   * @returns {object} Enhanced profile (same object, mutated)
+   * @returns {string} Markdown section
    */
-  enhanceWithCodeGraphStats(profile, codeGraphStats) {
-    if (!codeGraphStats || !profile) return profile;
-
-    console.log(`[ProjectProfiler] 🔗 P2-1 Fusion: enhancing with ${codeGraphStats.symbolCount} symbols from code graph`);
-
-    // 1. Inject code graph summary
-    profile.codeGraphSummary = {
-      symbolCount:   codeGraphStats.symbolCount,
-      fileCount:     codeGraphStats.fileCount,
-      edgeCount:     codeGraphStats.edgeCount,
-      avgImportsPerFile: codeGraphStats.avgImportsPerFile,
-      languageDistribution: codeGraphStats.languageDistribution,
-      kindBreakdown: codeGraphStats.kindBreakdown,
-    };
-
-    // 2. Boost architecture confidence with symbol-based evidence
-    if (profile.architecture && codeGraphStats.kindBreakdown) {
-      const kb = codeGraphStats.kindBreakdown;
-      const classCount    = kb['class'] || 0;
-      const interfaceCount = kb['interface'] || 0;
-      const functionCount = kb['function'] || 0;
-
-      // High class-to-function ratio suggests OOP/layered architecture
-      if (classCount > functionCount * 0.3 && classCount > 10) {
-        profile.architecture.confidence = Math.min(1, (profile.architecture.confidence || 0) + 0.15);
-        profile.architecture._evidenceBoost = 'class-heavy codebase confirms layered/OOP pattern';
-      }
-
-      // Interfaces suggest dependency-inverted architecture
-      if (interfaceCount > 5) {
-        profile.architecture._evidenceBoost =
-          (profile.architecture._evidenceBoost ? profile.architecture._evidenceBoost + '; ' : '')
-          + `${interfaceCount} interfaces suggest DI/clean architecture`;
-        profile.architecture.confidence = Math.min(1, (profile.architecture.confidence || 0) + 0.1);
-      }
-    }
-
-    // 3. Cross-validate framework detection with symbol name patterns
-    if (codeGraphStats.frameworkIndicators && codeGraphStats.frameworkIndicators.length > 0) {
-      const existingNames = new Set((profile.frameworks || []).map(f => f.name.toLowerCase()));
-      for (const indicator of codeGraphStats.frameworkIndicators) {
-        if (!existingNames.has(indicator.framework.toLowerCase())) {
-          profile.frameworks = profile.frameworks || [];
-          profile.frameworks.push({
-            name: indicator.framework,
-            category: 'detected-by-symbols',
-            lang: 'unknown',
-            _symbolMatches: indicator.matchCount,
-            _confidence: 'low (symbol-name heuristic only)',
-          });
-        }
-      }
-    }
-
-    // 4. Add top coupling modules
-    if (codeGraphStats.topModules && codeGraphStats.topModules.length > 0) {
-      profile.couplingHotspots = codeGraphStats.topModules;
-    }
-
-    console.log(`[ProjectProfiler] 🔗 Fusion complete: architecture confidence=${(profile.architecture?.confidence || 0).toFixed(2)}`);
-    return profile;
+  renderCompactSummary(profile) {
+    return renderCompactProfileSummary(profile);
   }
 
   /**
-   * Runs analyze() and writes results to output/project-profile.md and
-   * returns the profile object for injection into workflow.config.js.
-   *
-   * @param {string} [outputDir] - Output directory (default: <projectRoot>/output)
-   * @returns {{ profile: object, mdPath: string }}
+   * Generates a full Markdown report.
+   * @param {object} profile - Profile from analyze()
+   * @returns {string} Markdown report
    */
-  analyzeAndWrite(outputDir) {
-    const profile = this.analyze();
-    const outDir = outputDir || path.join(this.projectRoot, 'output');
-
-    if (!fs.existsSync(outDir)) {
-      fs.mkdirSync(outDir, { recursive: true });
-    }
-
-    const mdContent = this._renderProfileMarkdown(profile);
-    const mdPath = path.join(outDir, 'project-profile.md');
-    fs.writeFileSync(mdPath, mdContent, 'utf-8');
-    console.log(`[ProjectProfiler] 📄 Written: ${mdPath}`);
-
-    return { profile, mdPath };
-  }
-
-  /**
-   * Runs analyze() + LSP enhancement + writes results.
-   * This is the recommended entry point when LSP is available.
-   *
-   * @param {string} [outputDir] - Output directory (default: <projectRoot>/output)
-   * @param {object} [lspConfig] - LSP configuration (server, command, args, timeout, maxFiles)
-   * @returns {Promise<{ profile: object, mdPath: string }>}
-   */
-  async analyzeWithLSP(outputDir, lspConfig = {}) {
-    const profile = this.analyze();
-
-    // Phase 2: Attempt LSP enhancement
-    try {
-      const { enhanceProfileWithLSP } = require('./lsp-profile-enhancer');
-      console.log(`[ProjectProfiler] 🔬 Phase 2: Attempting LSP enhancement...`);
-      await enhanceProfileWithLSP(profile, this.projectRoot, lspConfig);
-      if (profile.lspEnhanced) {
-        console.log(`[ProjectProfiler] ✅ LSP enhancement applied (server: ${profile.lspServerName}).`);
-      }
-    } catch (err) {
-      console.log(`[ProjectProfiler] ℹ️  LSP enhancement not available: ${err.message}`);
-    }
-
-    // Write output
-    const outDir = outputDir || path.join(this.projectRoot, 'output');
-    if (!fs.existsSync(outDir)) {
-      fs.mkdirSync(outDir, { recursive: true });
-    }
-
-    const mdContent = this._renderProfileMarkdown(profile);
-    const mdPath = path.join(outDir, 'project-profile.md');
-    fs.writeFileSync(mdPath, mdContent, 'utf-8');
-    console.log(`[ProjectProfiler] 📄 Written: ${mdPath}`);
-
-    return { profile, mdPath };
-  }
-
-  // ─── Architecture Inference ─────────────────────────────────────────────
-
-  _inferArchitecture(dirNames, frameworks) {
-    const result = { pattern: null, layers: [], moduleStructure: null, confidence: 0 };
-
-    // Score each architecture pattern
-    const scored = ARCHITECTURE_PATTERNS.map(pat => {
-      const matches = pat.dirPatterns.filter(d => dirNames.has(d));
-      const score = matches.length;
-      return { ...pat, score, matchedDirs: matches };
-    }).filter(p => p.score >= p.minMatch);
-
-    // Sort by score, pick the best
-    scored.sort((a, b) => b.score - a.score);
-
-    if (scored.length > 0) {
-      const best = scored[0];
-      result.pattern = best.name;
-      result.confidence = Math.min(1, best.score / (best.dirPatterns.length * 0.7));
-    }
-
-    // Detect layers from common directory names
-    const layerMapping = {
-      controllers: 'Controller', controller: 'Controller',
-      routes: 'Router', router: 'Router',
-      services: 'Service', service: 'Service',
-      repositories: 'Repository', repository: 'Repository',
-      models: 'Model', model: 'Model', entities: 'Entity', entity: 'Entity',
-      dtos: 'DTO', dto: 'DTO',
-      views: 'View', view: 'View',
-      viewmodels: 'ViewModel', viewmodel: 'ViewModel',
-      middleware: 'Middleware', middlewares: 'Middleware',
-      guards: 'Guard', pipes: 'Pipe', interceptors: 'Interceptor',
-      utils: 'Utility', helpers: 'Helper', lib: 'Library',
-      components: 'Component', widgets: 'Widget',
-      pages: 'Page', screens: 'Screen',
-      hooks: 'Hook',
-    };
-
-    for (const [dirName, layer] of Object.entries(layerMapping)) {
-      if (dirNames.has(dirName) && !result.layers.includes(layer)) {
-        result.layers.push(layer);
-      }
-    }
-
-    // Detect module structure type
-    if (dirNames.has('modules') || dirNames.has('features')) {
-      result.moduleStructure = 'feature-based';
-    } else if (result.layers.length >= 3) {
-      result.moduleStructure = 'layer-based';
-    }
-
-    // Framework-specific overrides
-    const frameworkNames = frameworks.map(f => f.name);
-    if (frameworkNames.includes('NestJS')) {
-      result.pattern = result.pattern || 'Module-based (NestJS)';
-      if (!result.layers.includes('Controller')) result.layers.push('Controller');
-      if (!result.layers.includes('Service')) result.layers.push('Service');
-      result.moduleStructure = 'feature-based';
-    }
-    if (frameworkNames.includes('Unity')) {
-      result.pattern = result.pattern || 'Component-based (Unity/Game)';
-      result.moduleStructure = 'component-based';
-    }
-    if (frameworkNames.includes('Django')) {
-      result.pattern = result.pattern || 'MVT (Django)';
-      result.moduleStructure = 'app-based';
-    }
-    if (frameworkNames.includes('Spring Boot')) {
-      result.pattern = result.pattern || 'Layered (Spring)';
-      result.moduleStructure = result.moduleStructure || 'layer-based';
-    }
-
-    return result;
-  }
-
-  // ─── Markdown Renderer ──────────────────────────────────────────────────
-
-  _renderProfileMarkdown(profile) {
-    const lines = [
-      `# Project Architecture Profile`,
-      ``,
-      `> Auto-generated by ProjectProfiler. Last updated: ${profile.analyzedAt}`,
-      `> This file is consumed by AI agents for context. Do not edit manually.`,
-      ``,
-    ];
-
-    // Frameworks
-    if (profile.frameworks.length > 0) {
-      lines.push(`## Frameworks`);
-      lines.push(``);
-      const byCategory = {};
-      for (const f of profile.frameworks) {
-        if (!byCategory[f.category]) byCategory[f.category] = [];
-        byCategory[f.category].push(f.name);
-      }
-      for (const [cat, names] of Object.entries(byCategory)) {
-        lines.push(`- **${cat}**: ${names.join(', ')}`);
-      }
-      lines.push(``);
-    }
-
-    // Architecture
-    if (profile.architecture.pattern) {
-      lines.push(`## Architecture`);
-      lines.push(``);
-      lines.push(`- **Pattern**: ${profile.architecture.pattern}`);
-      if (profile.architecture.layers.length > 0) {
-        lines.push(`- **Layers**: ${profile.architecture.layers.join(' → ')}`);
-      }
-      if (profile.architecture.moduleStructure) {
-        lines.push(`- **Module Structure**: ${profile.architecture.moduleStructure}`);
-      }
-      lines.push(``);
-    }
-
-    // Data Layer
-    if (profile.dataLayer.orm.length > 0 || profile.dataLayer.databases.length > 0) {
-      lines.push(`## Data Layer`);
-      lines.push(``);
-      if (profile.dataLayer.orm.length > 0) {
-        lines.push(`- **ORM/Query Builder**: ${profile.dataLayer.orm.join(', ')}`);
-      }
-      if (profile.dataLayer.databases.length > 0) {
-        lines.push(`- **Databases**: ${profile.dataLayer.databases.join(', ')}`);
-      }
-      lines.push(``);
-    }
-
-    // Communication
-    if (profile.communication.length > 0) {
-      lines.push(`## Communication Patterns`);
-      lines.push(``);
-      for (const p of profile.communication) {
-        lines.push(`- ${p}`);
-      }
-      lines.push(``);
-    }
-
-    // Testing
-    if (profile.testing.frameworks.length > 0) {
-      lines.push(`## Testing`);
-      lines.push(``);
-      lines.push(`- **Frameworks**: ${profile.testing.frameworks.join(', ')}`);
-      lines.push(``);
-    }
-
-    // APIs
-    if (profile.apis.length > 0) {
-      lines.push(`## API Definitions`);
-      lines.push(``);
-      for (const a of profile.apis) {
-        lines.push(`- ${a}`);
-      }
-      lines.push(``);
-    }
-
-    // Infrastructure
-    if (Object.keys(profile.infrastructure).length > 0) {
-      lines.push(`## Infrastructure`);
-      lines.push(``);
-      if (profile.infrastructure.containerized) lines.push(`- **Container**: Docker`);
-      if (profile.infrastructure.orchestration) lines.push(`- **Orchestration**: ${profile.infrastructure.orchestration}`);
-      if (profile.infrastructure.ci)            lines.push(`- **CI/CD**: ${profile.infrastructure.ci}`);
-      if (profile.infrastructure.iac)           lines.push(`- **IaC**: ${profile.infrastructure.iac}`);
-      lines.push(``);
-    }
-
-    // Monorepo
-    if (profile.monorepo.isMonorepo) {
-      lines.push(`## Monorepo`);
-      lines.push(``);
-      lines.push(`- **Tool**: ${profile.monorepo.tool}`);
-      if (profile.monorepo.packages.length > 0) {
-        lines.push(`- **Packages**: ${profile.monorepo.packages.join(', ')}`);
-      }
-      lines.push(``);
-    }
-
-    // Entry Points
-    if (profile.entryPoints.length > 0) {
-      lines.push(`## Entry Points`);
-      lines.push(``);
-      for (const ep of profile.entryPoints) {
-        lines.push(`- \`${ep}\``);
-      }
-      lines.push(``);
-    }
-
-    // ── P1 Fallback: When all detection rules fall through ──────────────────
-    // For tool-type / zero-dependency projects where no frameworks, ORM, DB,
-    // infra, or architecture patterns are detected, generate a baseline profile
-    // from directory structure + file statistics so the profile is never empty.
-    const hasAnyContent =
-      profile.frameworks.length > 0 ||
-      (profile.architecture && profile.architecture.pattern) ||
-      profile.dataLayer.orm.length > 0 ||
-      profile.dataLayer.databases.length > 0 ||
-      profile.communication.length > 0 ||
-      profile.testing.frameworks.length > 0 ||
-      profile.apis.length > 0 ||
-      Object.keys(profile.infrastructure).length > 0 ||
-      (profile.monorepo && profile.monorepo.isMonorepo) ||
-      profile.entryPoints.length > 0;
-
-    if (!hasAnyContent) {
-      lines.push(`## Baseline Profile (auto-inferred)`);
-      lines.push(``);
-      lines.push(`> No known frameworks, ORM, or infrastructure detected.`);
-      lines.push(`> This baseline is generated from directory structure analysis.`);
-      lines.push(``);
-
-      // Directory structure summary (top-level dirs)
-      try {
-        const entries = fs.readdirSync(this.projectRoot, { withFileTypes: true });
-        const topDirs = entries
-          .filter(e => e.isDirectory() && !IGNORE_DIRS.has(e.name) && !e.name.startsWith('.'))
-          .map(e => e.name);
-        if (topDirs.length > 0) {
-          lines.push(`### Directory Structure`);
-          lines.push(``);
-          for (const d of topDirs) {
-            // Count files in each top-level dir
-            let fileCount = 0;
-            try {
-              const sub = fs.readdirSync(path.join(this.projectRoot, d), { withFileTypes: true });
-              fileCount = sub.filter(e => e.isFile()).length;
-            } catch { /* ignore */ }
-            const desc = this._inferDirPurpose(d);
-            lines.push(`- \`${d}/\` — ${desc}${fileCount > 0 ? ` (${fileCount} files)` : ''}`);
-          }
-          lines.push(``);
-        }
-      } catch { /* ignore */ }
-
-      // Language distribution from file extensions
-      try {
-        const extCounts = {};
-        const walkForExts = (dir, depth) => {
-          if (depth > 3) return;
-          let entries;
-          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-          for (const e of entries) {
-            if (e.isDirectory()) {
-              if (!IGNORE_DIRS.has(e.name) && !e.name.startsWith('.')) {
-                walkForExts(path.join(dir, e.name), depth + 1);
-              }
-            } else {
-              const ext = path.extname(e.name).toLowerCase();
-              if (ext && ['.js','.ts','.py','.go','.java','.cs','.lua','.dart','.rb','.rs','.kt','.php','.swift','.cpp','.c','.scala','.ex'].includes(ext)) {
-                extCounts[ext] = (extCounts[ext] || 0) + 1;
-              }
-            }
-          }
-        };
-        walkForExts(this.projectRoot, 0);
-        const sorted = Object.entries(extCounts).sort((a, b) => b[1] - a[1]);
-        if (sorted.length > 0) {
-          lines.push(`### Language Distribution`);
-          lines.push(``);
-          for (const [ext, count] of sorted.slice(0, 6)) {
-            lines.push(`- \`${ext}\`: ${count} files`);
-          }
-          lines.push(``);
-        }
-      } catch { /* ignore */ }
-
-      // Core module description (infer from dir names)
-      lines.push(`### Core Modules (inferred)`);
-      lines.push(``);
-      try {
-        const dirNames = _collectDirNames(this.projectRoot, 2);
-        const coreIndicators = ['core', 'src', 'lib', 'pkg', 'internal', 'app', 'main', 'engine'];
-        const foundCore = coreIndicators.filter(d => dirNames.has(d));
-        if (foundCore.length > 0) {
-          for (const d of foundCore) {
-            lines.push(`- \`${d}/\` — ${this._inferDirPurpose(d)}`);
-          }
-        } else {
-          lines.push(`- No standard module directories detected. Project may use flat structure.`);
-        }
-      } catch {
-        lines.push(`- Unable to infer module structure.`);
-      }
-      lines.push(``);
-    }
-
-    // ── LSP-Enhanced Sections ──────────────────────────────────────────────
-
-    if (profile.lspEnhanced) {
-      lines.push(`## LSP-Enhanced Analysis`);
-      lines.push(``);
-      lines.push(`> Enhanced by Language Server: **${profile.lspServerName || 'auto'}**`);
-      if (profile.lspStats) {
-        lines.push(`> ${profile.lspStats.filesAnalyzed} files analyzed, ${profile.lspStats.symbolsCollected} symbols, ${profile.lspStats.timeTakenMs}ms`);
-      }
-      lines.push(``);
-
-      // Symbol Inventory
-      if (profile.architecture.symbolInventory) {
-        const inv = profile.architecture.symbolInventory;
-        const invEntries = Object.entries(inv).sort((a, b) => b[1] - a[1]);
-        if (invEntries.length > 0) {
-          lines.push(`### Symbol Inventory`);
-          lines.push(``);
-          lines.push(`| Kind | Count |`);
-          lines.push(`|------|-------|`);
-          for (const [kind, count] of invEntries) {
-            lines.push(`| ${kind} | ${count} |`);
-          }
-          lines.push(``);
-        }
-      }
-
-      // Decorator Patterns
-      if (profile.architecture.decoratorPatterns) {
-        const decs = profile.architecture.decoratorPatterns;
-        if (Object.keys(decs).length > 0) {
-          lines.push(`### Decorator Patterns`);
-          lines.push(``);
-          for (const [layer, decorators] of Object.entries(decs)) {
-            lines.push(`- **${layer}**: ${decorators.join(', ')}`);
-          }
-          lines.push(``);
-        }
-      }
-
-      // Module Map
-      if (profile.architecture.moduleMap) {
-        const mmap = profile.architecture.moduleMap;
-        const entries = Object.entries(mmap).sort((a, b) => b[1].total - a[1].total).slice(0, 15);
-        if (entries.length > 0) {
-          lines.push(`### Module Density Map`);
-          lines.push(``);
-          lines.push(`| Directory | Classes | Functions | Interfaces | Total |`);
-          lines.push(`|-----------|---------|-----------|------------|-------|`);
-          for (const [dir, counts] of entries) {
-            lines.push(`| ${dir} | ${counts.classes} | ${counts.functions} | ${counts.interfaces} | ${counts.total} |`);
-          }
-          lines.push(``);
-        }
-      }
-
-      // Diagnostics
-      if (profile.diagnostics) {
-        lines.push(`### Compiler Diagnostics`);
-        lines.push(``);
-        lines.push(`- **Errors**: ${profile.diagnostics.errors}`);
-        lines.push(`- **Warnings**: ${profile.diagnostics.warnings}`);
-        if (profile.diagnostics.errorFiles && profile.diagnostics.errorFiles.length > 0) {
-          lines.push(`- **Error Files**:`);
-          for (const ef of profile.diagnostics.errorFiles) {
-            lines.push(`  - \`${ef.file}\` (${ef.errors} errors)`);
-          }
-        }
-        lines.push(``);
-      }
-    }
-
-    return lines.join('\n');
+  renderFullReport(profile) {
+    return renderFullProfileReport(profile);
   }
 }
 
-// ─── Utility: Compact profile summary for AGENTS.md ──────────────────────────
+// ─── Convenience Functions ───────────────────────────────────────────────────
 
 /**
- * Generates a compact Markdown summary of the project profile,
- * suitable for injection into AGENTS.md.
+ * Quick analysis - returns compact summary string.
+ * @param {string} rootPath - Project root path
+ * @returns {string} Compact Markdown summary
+ */
+function quickProfile(rootPath) {
+  const profiler = new ProjectProfiler();
+  const profile = profiler.analyze(rootPath);
+  return profiler.renderCompactSummary(profile);
+}
+
+/**
+ * Full analysis - returns complete profile object.
+ * @param {string} rootPath - Project root path
+ * @param {object} options - Analysis options
+ * @returns {object} Complete profile
+ */
+function fullProfile(rootPath, options = {}) {
+  const profiler = new ProjectProfiler();
+  return profiler.analyze(rootPath, options);
+}
+
+// ─── P1 Baseline Profile (Fallback) ──────────────────────────────────────────
+// Used when deep analysis fails or for simple projects
+
+/**
+ * Generates a baseline profile from directory structure only.
+ * Simpler and faster than full analysis.
  *
- * @param {object} profile - Output of ProjectProfiler.analyze()
- * @returns {string} Compact Markdown section
+ * @param {string} rootPath - Project root path
+ * @returns {object} Baseline profile
  */
-function renderCompactProfileSummary(profile) {
-  if (!profile) return '';
+function generateBaselineProfile(rootPath) {
+  const root = path.resolve(rootPath);
+  const dirs = [];
 
-  const lines = [`## Project Architecture Profile`, ``];
-
-  // Frameworks (one-liner)
-  if (profile.frameworks && profile.frameworks.length > 0) {
-    const fwNames = profile.frameworks.map(f => f.name);
-    lines.push(`- **Frameworks**: ${fwNames.join(', ')}`);
-  }
-
-  // Architecture
-  if (profile.architecture && profile.architecture.pattern) {
-    lines.push(`- **Architecture**: ${profile.architecture.pattern}`);
-    if (profile.architecture.layers && profile.architecture.layers.length > 0) {
-      lines.push(`- **Layers**: ${profile.architecture.layers.join(' → ')}`);
-    }
-  }
-
-  // Data Layer (one-liner)
-  if (profile.dataLayer) {
-    const parts = [];
-    if (profile.dataLayer.orm && profile.dataLayer.orm.length > 0) parts.push(profile.dataLayer.orm.join(', '));
-    if (profile.dataLayer.databases && profile.dataLayer.databases.length > 0) parts.push(profile.dataLayer.databases.join(', '));
-    if (parts.length > 0) lines.push(`- **Data Layer**: ${parts.join(' + ')}`);
-  }
-
-  // Communication (one-liner)
-  if (profile.communication && profile.communication.length > 0) {
-    lines.push(`- **Communication**: ${profile.communication.join(', ')}`);
-  }
-
-  // Testing (one-liner)
-  if (profile.testing && profile.testing.frameworks && profile.testing.frameworks.length > 0) {
-    lines.push(`- **Testing**: ${profile.testing.frameworks.join(', ')}`);
-  }
-
-  // Infrastructure (one-liner)
-  if (profile.infrastructure) {
-    const parts = [];
-    if (profile.infrastructure.containerized) parts.push('Docker');
-    if (profile.infrastructure.ci) parts.push(profile.infrastructure.ci);
-    if (profile.infrastructure.orchestration) parts.push(profile.infrastructure.orchestration);
-    if (parts.length > 0) lines.push(`- **Infrastructure**: ${parts.join(', ')}`);
-  }
-
-  // Monorepo
-  if (profile.monorepo && profile.monorepo.isMonorepo) {
-    lines.push(`- **Monorepo**: ${profile.monorepo.tool} (${profile.monorepo.packages.length} packages)`);
-  }
-
-  // Entry points
-  if (profile.entryPoints && profile.entryPoints.length > 0) {
-    lines.push(`- **Entry Points**: ${profile.entryPoints.map(e => '`' + e + '`').join(', ')}`);
-  }
-
-  // LSP enhancement marker + compact data summary
-  if (profile.lspEnhanced) {
-    const stats = profile.lspStats || {};
-    lines.push(`- **LSP Enhanced**: ${profile.lspServerName || 'auto'} (${stats.symbolsCollected || 0} symbols, ${stats.filesAnalyzed || 0} files)`);
-
-    // Symbol inventory: show top 3 symbol kinds by count
-    if (profile.architecture && profile.architecture.symbolInventory) {
-      const inv = profile.architecture.symbolInventory;
-      const top3 = Object.entries(inv).sort((a, b) => b[1] - a[1]).slice(0, 3);
-      if (top3.length > 0) {
-        lines.push(`- **Symbol Inventory (top)**: ${top3.map(([k, v]) => `${k}: ${v}`).join(', ')}`);
+  try {
+    const entries = fs.readdirSync(root, { withFileTypes: true });
+    for (const e of entries) {
+      if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules' && e.name !== 'vendor') {
+        dirs.push({
+          name: e.name,
+          purpose: inferDirPurpose(e.name),
+        });
       }
     }
+  } catch { /* ignore */ }
 
-    // Decorator patterns: one-liner summary
-    if (profile.architecture && profile.architecture.decoratorPatterns) {
-      const decs = profile.architecture.decoratorPatterns;
-      const decEntries = Object.entries(decs);
-      if (decEntries.length > 0) {
-        lines.push(`- **Decorator Patterns**: ${decEntries.map(([layer, ds]) => `${layer}(${ds.join(', ')})`).join(' | ')}`);
-      }
-    }
-
-    // Diagnostics: one-liner summary
-    if (profile.diagnostics) {
-      const diag = profile.diagnostics;
-      lines.push(`- **Compiler Diagnostics**: ${diag.errors || 0} errors, ${diag.warnings || 0} warnings`);
-    }
-  }
-
-  lines.push(``);
-  return lines.join('\n');
+  return {
+    root,
+    architecture: {
+      pattern: 'Unknown',
+      layers: dirs.map(d => d.name),
+      confidence: 0,
+    },
+    directories: dirs,
+    primaryLanguage: 'unknown',
+    frameworks: [],
+    dataLayer: { orm: [], databases: [], configFiles: [] },
+    testing: { frameworks: [] },
+    communication: [],
+    infrastructure: {},
+    monorepo: { isMonorepo: false, tool: null, packages: [] },
+    apis: [],
+    entryPoints: [],
+    baseline: true,
+    analyzedAt: new Date().toISOString(),
+  };
 }
 
-// ─── Helper: Infer directory purpose from name ─────────────────────────────
-
-/**
- * Added to ProjectProfiler prototype to infer human-readable purpose of a directory
- * from its name. Used by P1 fallback baseline profile.
- */
-ProjectProfiler.prototype._inferDirPurpose = function _inferDirPurpose(dirName) {
-  const purposes = {
-    src: 'Source code',
-    lib: 'Library / shared utilities',
-    core: 'Core business logic',
-    app: 'Application entry / main module',
-    pkg: 'Package modules',
-    internal: 'Internal / private modules',
-    cmd: 'CLI entry points',
-    api: 'API layer',
-    config: 'Configuration files',
-    configs: 'Configuration files',
-    tests: 'Test suites',
-    test: 'Test suites',
-    spec: 'Test specifications',
-    docs: 'Documentation',
-    scripts: 'Build / utility scripts',
-    tools: 'Tooling / dev tools',
-    utils: 'Utility functions',
-    helpers: 'Helper functions',
-    hooks: 'Hooks / plugins / adapters',
-    adapters: 'External integrations / adapters',
-    middleware: 'Middleware layer',
-    services: 'Service layer',
-    models: 'Data models',
-    views: 'View layer / templates',
-    components: 'UI components',
-    pages: 'Page components / routes',
-    assets: 'Static assets',
-    public: 'Public / static files',
-    output: 'Generated output / artifacts',
-    workflow: 'Workflow engine / pipeline',
-    agents: 'Agent definitions',
-    commands: 'Command handlers',
-    skills: 'Skill knowledge base',
-    stages: 'Pipeline stage implementations',
-  };
-  return purposes[dirName.toLowerCase()] || 'Project module';
-};
+// ─── Module Exports ───────────────────────────────────────────────────────────
 
 module.exports = {
+  // Main class
   ProjectProfiler,
+
+  // Convenience functions
+  quickProfile,
+  fullProfile,
+
+  // Baseline profile
+  generateBaselineProfile,
+
+  // Renderers
   renderCompactProfileSummary,
-  IGNORE_DIRS,
-  // P2-3: Export built-in rule arrays for advanced users who want to extend them
+  renderFullProfileReport,
+
+  // Detection functions (for direct use)
+  detectFrameworks,
+  detectDataLayer,
+  detectDatabases,
+  detectTestFrameworks,
+  detectArchitecture,
+  detectCommunication,
+  detectInfrastructure,
+  detectMonorepo,
+  detectAPIs,
+  detectEntryPoints,
+
+  // Rule arrays (for extension)
   FRAMEWORK_RULES,
   DATA_LAYER_RULES,
+  DATABASE_INDICATORS,
   TEST_FRAMEWORK_RULES,
   ARCHITECTURE_PATTERNS,
+
+  // Helpers (for backward compatibility)
+  fileExists,
+  dirExists,
+  hasExt,
+  readFileContent,
+  readDependencies,
+  clearFileContentCache,
+  gatherConfigContent,
+  inferDirPurpose,
 };
