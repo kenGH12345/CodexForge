@@ -62,14 +62,10 @@ async function _execArticleScout() {
 
 function _execExperienceCleanup() {
   if (!this._orch?.experienceStore) return { detail: 'ExperienceStore not available' };
-  // Remove expired experiences
-  const before = this._orch.experienceStore.experiences.length;
-  this._orch.experienceStore.experiences = this._orch.experienceStore.experiences.filter(e => {
-    if (e.expiresAt && new Date(e.expiresAt).getTime() < Date.now()) return false;
-    return true;
+  // Use public API removeByFilter() instead of direct experiences array assignment
+  const { removed } = this._orch.experienceStore.removeByFilter(e => {
+    return e.expiresAt && new Date(e.expiresAt).getTime() < Date.now();
   });
-  const removed = before - this._orch.experienceStore.experiences.length;
-  if (removed > 0) this._orch.experienceStore._save();
   return { detail: `Cleaned up ${removed} expired experience(s)` };
 }
 
@@ -360,7 +356,7 @@ function _execExperienceDistill() {
 
   try {
     const store = this._orch.experienceStore;
-    const count = store.experiences.length;
+    const count = store.getCount();
 
     if (count < 10) {
       return { detail: `Only ${count} experience(s) — too few to distill`, distilled: false };
@@ -388,6 +384,243 @@ function _execExperienceDistill() {
   }
 }
 
+// ─── P4-ext: Self-Audit Executors ────────────────────────────────────────
+
+/**
+ * P4-ext: Runs self-audit on a specific stage output.
+ * Proactively questions the stage output for quality issues.
+ * 
+ * Classification-based action routing:
+ *   - Auto-fix: severity ∈ {CRITICAL, HIGH} AND fixRisk = LOW AND costBenefit ∈ {HIGH, MEDIUM}
+ *   - User-decision: All others (need human judgment)
+ *
+ * @param {object} action — Must have action.targetStage
+ * @param {object} action.options — Optional: { autoFix: boolean }
+ * @returns {object}
+ */
+async function _execSelfAuditStage(action) {
+  try {
+    const { SelfAuditSocratic, IssuePriority, FixRisk, FixCostBenefit } = require('./self-audit-socratic');
+    const auditor = new SelfAuditSocratic({
+      selfReflection: this._orch?.selfReflection,
+      llmCall: this._llmCall,
+      outputDir: this._outputDir,
+      verbose: this._verbose,
+    });
+
+    const stage = action.targetStage || 'CODE';
+    const options = action.options || {};
+
+    const result = await auditor.auditStage(stage, {
+      requirement: this._loadRequirement(),
+    });
+
+    if (this._verbose) {
+      const icon = result.passed ? '✅' : '⚠️';
+      console.log(`[MAPE:SelfAuditStage] ${icon} Stage ${stage}: confidence ${(result.confidence * 100).toFixed(0)}%, issues: ${result.issues.length}`);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Handle result – determine next action based on issue classification
+    // ════════════════════════════════════════════════════════════════════════
+    const handling = auditor.handleAuditResult(result, {
+      autoFix: options.autoFix !== false, // Default: true
+      onIssue: (issue) => {
+        if (this._verbose) {
+          console.log(`[MAPE:SelfAuditStage] 📋 Issue: ${issue.title} [${issue.severity}]`);
+        }
+      },
+      onAutoFix: (issue) => {
+        if (this._verbose) {
+          console.log(`[MAPE:SelfAuditStage] 🔧 Auto-fix eligible: ${issue.title} in ${issue.module}`);
+        }
+      },
+      onUserDecision: (issue) => {
+        if (this._verbose) {
+          console.log(`[MAPE:SelfAuditStage] ⚠️ User decision needed: ${issue.title} in ${issue.module}`);
+        }
+      },
+    });
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Execute auto-fix for eligible issues
+    // ════════════════════════════════════════════════════════════════════════
+    let autoFixResult = null;
+    if (handling.autoFixIssues && handling.autoFixIssues.length > 0 && options.autoFix !== false) {
+      autoFixResult = await auditor.executeAutoFix(handling.autoFixIssues, {
+        applyFix: (issue) => this._applyAutoFix(issue, stage),
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Generate user decision report if needed
+    // ════════════════════════════════════════════════════════════════════════
+    let userDecisionReport = null;
+    if (handling.userDecisionIssues && handling.userDecisionIssues.length > 0) {
+      userDecisionReport = auditor.generateUserDecisionReport(handling.userDecisionIssues);
+      
+      // Write report to output directory
+      const reportPath = path.join(this._outputDir, `user-decision-report-${stage.toLowerCase()}.md`);
+      try {
+        fs.writeFileSync(reportPath, userDecisionReport, 'utf-8');
+        if (this._verbose) {
+          console.log(`[MAPE:SelfAuditStage] 📄 User decision report written to: ${reportPath}`);
+        }
+      } catch (err) {
+        console.warn(`[MAPE:SelfAuditStage] ⚠️ Failed to write user decision report: ${err.message}`);
+      }
+    }
+
+    return {
+      detail: `Self-audit ${stage}: ${handling.action} (${(result.confidence * 100).toFixed(0)}% confidence)`,
+      passed: result.passed,
+      confidence: result.confidence,
+      issues: result.issues,
+      suggestions: result.suggestions,
+      action: handling.action,
+      // New fields for classified action routing
+      autoFixIssues: handling.autoFixIssues || [],
+      userDecisionIssues: handling.userDecisionIssues || [],
+      autoFixResult,
+      userDecisionReport,
+      moduleResults: result.moduleResults?.map(m => ({
+        module: m.module,
+        passed: m.passed,
+        confidence: m.confidence,
+        issueCount: m.issues.length,
+        autoFixCount: m.autoFixIssues?.length || 0,
+        userDecisionCount: m.userDecisionIssues?.length || 0,
+      })),
+      userReviewPoints: auditor.getSummary().userReviewPointCount,
+    };
+  } catch (err) {
+    return { detail: `Self-audit stage failed: ${err.message}`, passed: false };
+  }
+}
+
+/**
+ * Applies an auto-fix for an issue.
+ * This is a hook that can be overridden for specific fix types.
+ *
+ * @param {object} issue - The issue to fix
+ * @param {string} stage - The stage where the issue was found
+ * @returns {Promise<boolean>} Whether the fix was applied successfully
+ */
+async function _applyAutoFix(issue, stage) {
+  // Default implementation: just log what would be fixed
+  // In practice, this would be implemented with specific fix logic per issue type
+  console.log(`[MAPE:AutoFix] Would apply fix for: ${issue.title} in ${issue.module}`);
+  console.log(`[MAPE:AutoFix] Suggested fix: ${issue.suggestedFix}`);
+  
+  // For now, return false to indicate we're not actually applying fixes
+  // This is a safety measure until we have robust fix implementations
+  return false;
+}
+
+/**
+ * P4-ext: Records a user review point for future audits.
+ * Call this when user points out an issue during review.
+ *
+ * @param {object} action — Must have action.reviewPoint with { title, description, category?, stage? }
+ * @returns {object}
+ */
+function _execRecordUserReview(action) {
+  try {
+    const { SelfAuditSocratic } = require('./self-audit-socratic');
+    const auditor = new SelfAuditSocratic({
+      selfReflection: this._orch?.selfReflection,
+      outputDir: this._outputDir,
+      verbose: this._verbose,
+    });
+
+    const reviewPoint = action.reviewPoint || {};
+    const result = auditor.recordUserReviewPoint({
+      title: reviewPoint.title || action.title || 'User review point',
+      description: reviewPoint.description || action.description || '',
+      category: reviewPoint.category,
+      stage: reviewPoint.stage || action.targetStage,
+      suggestedFix: reviewPoint.suggestedFix,
+    });
+
+    if (this._verbose) {
+      console.log(`[MAPE:RecordUserReview] 📝 Recorded: ${result.category} (count: ${result.count})`);
+    }
+
+    return {
+      detail: `User review point recorded: ${result.category}`,
+      category: result.category,
+      patternKey: result.patternKey,
+      count: result.count,
+    };
+  } catch (err) {
+    return { detail: `Failed to record user review: ${err.message}` };
+  }
+}
+
+/**
+ * P4-ext: Runs pipeline-wide self-audit for cross-stage integrity.
+ * Checks data flow, consistency, and end-to-end completeness.
+ *
+ * @returns {object}
+ */
+async function _execSelfAuditPipeline() {
+  try {
+    const { SelfAuditSocratic } = require('./self-audit-socratic');
+    const auditor = new SelfAuditSocratic({
+      selfReflection: this._orch?.selfReflection,
+      llmCall: this._llmCall,
+      outputDir: this._outputDir,
+      verbose: this._verbose,
+    });
+
+    const result = await auditor.auditPipeline({
+      requirement: this._loadRequirement(),
+    });
+
+    if (this._verbose) {
+      const icon = result.passed ? '✅' : '⚠️';
+      console.log(`[MAPE:SelfAuditPipeline] ${icon} Pipeline audit: confidence ${(result.confidence * 100).toFixed(0)}%, issues: ${result.issues.length}`);
+    }
+
+    // Generate audit report
+    const auditReportPath = path.join(this._outputDir, 'self-audit-report.md');
+    try {
+      const report = auditor.getMarkdownSummary();
+      const fullReport = `# Self-Audit Report\n\nGenerated: ${new Date().toISOString()}\nConfidence: ${(result.confidence * 100).toFixed(0)}%\n\n${report}\n\n## Issues\n${result.issues.map(i => `- ${i}`).join('\n')}\n\n## Suggestions\n${result.suggestions.map(s => `- ${s}`).join('\n')}`;
+      const tmpPath = auditReportPath + '.tmp';
+      fs.writeFileSync(tmpPath, fullReport, 'utf-8');
+      fs.renameSync(tmpPath, auditReportPath);
+    } catch (_) { /* non-fatal */ }
+
+    return {
+      detail: `Pipeline self-audit: ${result.passed ? 'passed' : 'found issues'} (${(result.confidence * 100).toFixed(0)}% confidence)`,
+      passed: result.passed,
+      confidence: result.confidence,
+      issues: result.issues,
+      suggestions: result.suggestions,
+      reportPath: auditReportPath,
+    };
+  } catch (err) {
+    return { detail: `Pipeline self-audit failed: ${err.message}`, passed: false };
+  }
+}
+
+// ─── Helper Methods ──────────────────────────────────────────────────────
+
+/**
+ * Loads requirement text from output directory.
+ * @returns {string|null}
+ */
+function _loadRequirement() {
+  try {
+    const reqPath = path.join(this._outputDir, 'requirement.md');
+    if (fs.existsSync(reqPath)) {
+      return fs.readFileSync(reqPath, 'utf-8');
+    }
+  } catch (_) { /* non-fatal */ }
+  return null;
+}
+
 // ─── P2b: Real Rollback ─────────────────────────────────────────────────
 
 /**
@@ -412,7 +645,11 @@ async function _rollbackAction(action, execResult) {
               .reverse();
             if (backups.length > 0) {
               fs.copyFileSync(path.join(dir, backups[0]), configPath);
-              try { delete require.cache[require.resolve(configPath)]; } catch (_) {}
+try {
+              delete require.cache[require.resolve(configPath)];
+            } catch (e) {
+              // Module cache invalidation failure is not critical
+            }
               return { rolledBack: true, detail: `Config restored from backup: ${backups[0]}` };
             }
           }
@@ -487,6 +724,15 @@ async function _rollbackAction(action, execResult) {
         return { rolledBack: false, detail: 'Experience distillation is consolidative — no rollback needed' };
       }
 
+      case ACTION_TYPE.SELF_AUDIT_STAGE:
+      case ACTION_TYPE.SELF_AUDIT_PIPELINE: {
+        return { rolledBack: false, detail: 'Self-audit is read-only — no rollback needed' };
+      }
+
+      case ACTION_TYPE.RECORD_USER_REVIEW: {
+        return { rolledBack: false, detail: 'User review recording is append-only — no rollback needed' };
+      }
+
       default:
         return { rolledBack: false, detail: `No rollback handler for action type: ${action.type}` };
     }
@@ -509,5 +755,9 @@ module.exports = {
   _execMetricCalibration,
   _execPromptEvolution,
   _execExperienceDistill,
+  _execSelfAuditStage,
+  _execSelfAuditPipeline,
+  _execRecordUserReview,
+  _applyAutoFix,
   _rollbackAction,
 };

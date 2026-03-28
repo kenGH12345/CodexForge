@@ -210,6 +210,55 @@ class LlmRouter {
   }
 
   /**
+   * P2 Enhancement: Get the tier level for a role.
+   * Returns numeric tier (1-4) based on current route configuration.
+   *
+   * P2: SmartRouterEnhancement will override this to provide bottleneck-aware routing.
+   * Integration pattern: SmartRouterEnhancement.enhanceRouter() replaces this method.
+   *
+   * @param {string} role - Agent role
+   * @param {string} stage - Stage name (optional, used by enhancement)
+   * @param {object} [opts] - Options for enhancement
+   * @returns {number} Tier level (1-4)
+   */
+  getTier(role, stage, opts = {}) {
+    // Default tier mapping based on current route
+    const fn = this._routes.get(role) || this._default;
+
+    // Map tier functions to numeric levels
+    if (this._tiers) {
+      // P2: Determine which tier this function represents
+      if (fn === this._tiers.strong) return 4;
+      if (fn === this._tiers.default) return 2;
+      if (fn === this._tiers.fast) return 1;
+    }
+
+    // Default to tier 2 (standard)
+    return 2;
+  }
+
+  /**
+   * P2 Enhancement: Enhance this router with bottleneck-aware routing.
+   * This is the integration point for SmartRouterEnhancement.
+   *
+   * @returns {LlmRouter} this
+   */
+  withSmartEnhancement() {
+    try {
+      const { SmartRouterEnhancement } = require('./smart-router-enhancement');
+      const enhancement = new SmartRouterEnhancement({
+        llmRouter: this,
+        outputDir: (typeof PATHS !== 'undefined' ? PATHS.OUTPUT : undefined) || 'output',
+      });
+      enhancement.enhanceRouter(this);
+      console.log('[LlmRouter] ✅ P2 SmartRouterEnhancement activated');
+    } catch (err) {
+      console.warn(`[LlmRouter] ⚠️  SmartRouterEnhancement not activated: ${err.message}`);
+    }
+    return this;
+  }
+
+  /**
    * Returns usage statistics for all roles.
    *
    * @returns {Object<string, { calls: number, totalChars: number }>}
@@ -264,6 +313,11 @@ class LlmRouter {
    * P1 Auto Tier Routing: dynamically assigns model tiers to roles based on
    * task complexity. Called after the ANALYSE stage produces a complexity score.
    *
+   * P2 Enhancement: Dynamic Complexity-Based tier adjustment
+   * - Uses complexity.factors for fine-grained tier tuning
+   * - Implements "critical complexity" elasticity for edge cases
+   * - Provides cost-efficiency for borderline scores
+   *
    * Tier assignment strategy (inspired by OpenCode's cost-aware routing):
    *
    *   | Complexity    | ANALYST   | ARCHITECT | DEVELOPER | TESTER  |
@@ -278,18 +332,25 @@ class LlmRouter {
    *   - Per-role explicit overrides (from constructor roleRoutes) are NEVER overwritten
    *   - If a tier function is not configured, falls back to the next lower tier
    *   - If no tier config exists at all, this is a no-op
+   *   - P2: Factors like high constraints/integrations can bump tier up/down
    *
    * @param {{ score: number, level: string, factors?: object }} complexity
    *   - From Observability.estimateTaskComplexity()
-   * @returns {{ applied: boolean, changes: string[] }} - Summary of applied changes
+   * @returns {{ applied: boolean, changes: string[], meta: object }} - Summary of applied changes
    */
   applyTierRouting(complexity) {
     if (!this._tiers || !complexity || !complexity.level) {
-      return { applied: false, changes: [] };
+      return { applied: false, changes: [], meta: { reason: 'no_tiers_or_complexity' } };
     }
 
     const level = complexity.level;
+    const score = complexity.score;
+    const factors = complexity.factors || {};
     this._appliedComplexityLevel = level;
+
+    // P2: Dynamic tier adjustment based on complexity factors
+    const adjustedLevel = this._computeDynamicLevel(level, score, factors);
+    const isAdjusted = adjustedLevel !== level;
 
     // Tier resolution: prefer exact tier, fall back to next lower, then default LLM
     const resolveTier = (tierName) => {
@@ -319,7 +380,7 @@ class LlmRouter {
       },
     };
 
-    const mapping = TIER_MAP[level] || TIER_MAP.moderate;
+    const mapping = TIER_MAP[adjustedLevel] || TIER_MAP.moderate;
     const changes = [];
 
     for (const [role, tierName] of Object.entries(mapping)) {
@@ -341,13 +402,113 @@ class LlmRouter {
       }
     }
 
+    // P2: Log with detailed factor breakdown
+    const factorSummary = factors ?
+      `[entities=${factors.entities}, constraints=${factors.constraints}, integrations=${factors.integrations}]` : '';
+
     if (changes.length > 0) {
-      console.log(`[LlmRouter] 🎯 Auto-tier routing applied (complexity=${level}, score=${complexity.score}): [${changes.join(', ')}]`);
+      const adjustmentMsg = isAdjusted ? ` (adjusted from ${level})` : '';
+      console.log(`[LlmRouter] 🎯 Auto-tier routing applied (complexity=${adjustedLevel}${adjustmentMsg}, score=${score}): [${changes.join(', ')}] ${factorSummary}`);
     } else {
-      console.log(`[LlmRouter] ℹ️  Auto-tier routing: no changes needed (complexity=${level}).`);
+      console.log(`[LlmRouter] ℹ️  Auto-tier routing: no changes needed (complexity=${adjustedLevel}${isAdjusted ? ' [adjusted]' : ''}).`);
     }
 
-    return { applied: changes.length > 0, changes };
+    return {
+      applied: changes.length > 0,
+      changes,
+      meta: {
+        originalLevel: level,
+        adjustedLevel,
+        isAdjusted,
+        factors,
+        score,
+      },
+    };
+  }
+
+  /**
+   * P2: Compute dynamic complexity level based on detailed factors.
+   * Implements "critical complexity elasticity" for edge cases.
+   *
+   * Special cases:
+   *   - High constraints + high integrations → bump up one level (security/critical)
+   *   - Low actions + low entities → bump down one level (simple CRUD)
+   *   - Near threshold (within 5 points) → factor-driven decision
+   *
+   * @param {string} baseLevel - Original level from score thresholds
+   * @param {number} score - Total complexity score
+   * @param {object} factors - Complexity factors breakdown
+   * @returns {string} Adjusted level
+   */
+  _computeDynamicLevel(baseLevel, score, factors) {
+    const LEVEL_ORDER = ['simple', 'moderate', 'complex', 'very_complex'];
+    const baseIndex = LEVEL_ORDER.indexOf(baseLevel);
+
+    // Compute factor-based adjustment signals
+    const constraintScore = factors.constraints || 0;
+    const integrationScore = factors.integrations || 0;
+    const entityScore = factors.entities || 0;
+    const actionScore = factors.actions || 0;
+
+    let adjustment = 0;
+
+    // Signal 1: High constraints + high integrations → critical system characteristics
+    if (constraintScore >= 15 && integrationScore >= 15) {
+      adjustment += 1;
+    }
+
+    // Signal 2: Very high technical complexity (entities + actions)
+    if (entityScore >= 15 && actionScore >= 15) {
+      adjustment += 1;
+    }
+
+    // Signal 3: Simple CRUD pattern (low actions, low constraints, reasonable entities)
+    if (actionScore <= 5 && constraintScore <= 5 && entityScore >= 5) {
+      adjustment -= 1;
+    }
+
+    // Signal 4: Near threshold elasticity (within 5 points of threshold)
+    const nearThresholdUp = this._isNearThreshold(score, 'up');
+    const nearThresholdDown = this._isNearThreshold(score, 'down');
+
+    if (nearThresholdUp && adjustment > 0) {
+      // Already biased toward upgrading, near threshold confirms it
+      adjustment += 0; // No change, already accounted
+    } else if (nearThresholdDown && adjustment < 0) {
+      // Already biased toward downgrading, near threshold confirms it
+      adjustment += 0; // No change, already accounted
+    } else if (nearThresholdUp && adjustment < 0) {
+      // Conflict: near upper threshold but factors suggest simple
+      // Trust factors, but reduce downgrade strength
+      adjustment = Math.min(adjustment + 1, 0);
+    } else if (nearThresholdDown && adjustment > 0) {
+      // Conflict: near lower threshold but factors suggest complex
+      // Trust factors, but reduce upgrade strength
+      adjustment = Math.max(adjustment - 1, 0);
+    }
+
+    // Apply adjustment with bounds checking
+    const newIndex = Math.max(0, Math.min(LEVEL_ORDER.length - 1, baseIndex + adjustment));
+    return LEVEL_ORDER[newIndex];
+  }
+
+  /**
+   * Check if score is near a complexity threshold (within 5 points).
+   * @param {number} score - Complexity score
+   * @param {string} direction - 'up' or 'down'
+   * @returns {boolean}
+   */
+  _isNearThreshold(score, direction) {
+    const THRESHOLDS = [26, 51, 76]; // simple→moderate→complex→very_complex
+    const MARGIN = 5;
+
+    if (direction === 'up') {
+      // Check if near upper threshold (could upgrade)
+      return THRESHOLDS.some(t => score >= t - MARGIN && score < t);
+    } else {
+      // Check if near lower threshold (could downgrade)
+      return THRESHOLDS.some(t => score > t && score <= t + MARGIN);
+    }
   }
 
   // ─── Private ──────────────────────────────────────────────────────────────────

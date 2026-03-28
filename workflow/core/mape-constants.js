@@ -42,6 +42,10 @@ const ACTION_TYPE = {
   PROMPT_EVOLUTION:    'prompt-evolution',
   // P3-ext: Trigger experience distillation when store is bloated + low hit-rate
   EXPERIENCE_DISTILL:  'experience-distill',
+  // P4-ext: Self-audit via Socratic questioning (proactive issue detection)
+  SELF_AUDIT_STAGE:    'self-audit-stage',
+  SELF_AUDIT_PIPELINE: 'self-audit-pipeline',
+  RECORD_USER_REVIEW:  'record-user-review', // Record a user review point for future audits
 };
 
 module.exports = { MAPE_PHASE, ACTION_PRIORITY, ACTION_TYPE };

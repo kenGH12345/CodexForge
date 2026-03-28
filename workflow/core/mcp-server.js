@@ -366,6 +366,29 @@ class MCPServer {
       // Suggest IDE for simple tasks
       if (!triageResult.shouldProceed) {
         const displayText = triage.formatTriageResult(triageResult);
+
+        // ── ADR-43 Extension: Lightweight Experience Hook for IDE-First mode ────
+        // Even though we're routing to IDE, we still want to capture valuable signals.
+        if (triageResult.experienceHook && triageResult.experienceHook.enabled) {
+          setImmediate(async () => {
+            try {
+              const { runIdeExperienceHook } = require('./ide-experience-hook');
+              // Note: MCP server may not have orchestrator, so experienceStore may be null
+              const hookResult = await runIdeExperienceHook({
+                requirement: triageResult.experienceHook.sessionContext.requirement,
+                score: triageResult.score,
+                matchedTags: triageResult.experienceHook.sessionContext.matchedTags,
+                experienceStore: this._orchestratorFactory?.({ projectRoot: this._projectRoot })?.experienceStore,
+              });
+              if (hookResult.captured) {
+                this._log(`IDE Experience Hook: captured experience ${hookResult.expId}`);
+              }
+            } catch (hookErr) {
+              this._log(`IDE Experience Hook failed (non-fatal): ${hookErr.message}`);
+            }
+          });
+        }
+
         return this._toolResponse(
           `${displayText}\n\n` +
           `To force workflow execution, call \`workflow_run\` with \`force: true\`.`

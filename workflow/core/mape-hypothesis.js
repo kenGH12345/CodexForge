@@ -113,7 +113,10 @@ class HypothesisGenerator {
           // Larger gap = higher confidence that action is needed
           score += Math.min(0.3, gap.gapPct / 200);
         }
-      } catch (_) { /* non-fatal */ }
+      } catch (err) {
+        // Non-fatal: gap computation failed, continue with base score
+        if (process.env.DEBUG) console.warn(`[MAPE] Gap computation failed: ${err.message}`);
+      }
     }
 
     // Boost: action priority is CRITICAL or HIGH
@@ -203,7 +206,9 @@ function _checkConvergence(opts = {}) {
         reason: `All metrics within ${targetGapThreshold}% of target — optimization complete`,
       };
     }
-  } catch (_) { /* non-fatal */ }
+  } catch (err) {
+    if (process.env.DEBUG) console.warn(`[MAPE] Metric gap check failed: ${err.message}`);
+  }
 
   // Condition 2: Plateau detection
   const recentKept = iterations.filter(it => it.status === 'kept').slice(-2);
@@ -267,7 +272,9 @@ function _persistExperimentHistory(iteration, context = {}) {
       fs.mkdirSync(this._outputDir, { recursive: true });
     }
     fs.appendFileSync(this._experimentHistoryPath, JSON.stringify(record) + '\n', 'utf-8');
-  } catch (_) { /* non-fatal */ }
+  } catch (err) {
+    if (process.env.DEBUG) console.warn(`[MAPE] Failed to persist experiment history: ${err.message}`);
+  }
 }
 
 // ─── P3b: Failure Experience Feedback ───────────────────────────────────
@@ -304,7 +311,9 @@ function _recordFailureExperience(iteration) {
     if (this._verbose) {
       console.log(`[MAPE:Feedback] 📝 Recorded failure experience: ${title}`);
     }
-  } catch (_) { /* non-fatal */ }
+  } catch (err) {
+    if (process.env.DEBUG) console.warn(`[MAPE] Failed to record failure experience: ${err.message}`);
+  }
 }
 
 /**
