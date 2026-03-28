@@ -226,7 +226,7 @@ function registerAgentFlowCommands(registerCommand) {
         const { extractKeywords } = require('../core/experience-store');
         const baseKeywords = extractKeywords(searchKeyword, 10);
         if (baseKeywords.length > 0) {
-          const expanded = await context.orchestrator.experienceStore._expandKeywordsWithLlm(
+          const expanded = await context.orchestrator.experienceStore.expandKeywords(
             baseKeywords, skillMatch ? skillMatch[1] : null
           );
           expandedTerms = expanded.filter(t => !baseKeywords.includes(t));

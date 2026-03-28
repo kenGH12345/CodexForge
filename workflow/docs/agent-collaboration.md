@@ -118,6 +118,30 @@ You must execute the full multi-agent pipeline: ANALYSE → ARCHITECT → PLAN �
 - Do NOT just read code and provide verbal analysis — that is NOT a workflow
 - Do NOT skip the pipeline and write code directly — each phase must run in order
 - Do NOT treat `/wf <text>` as a chat question
+- Do NOT run the Session Start Checklist when executing `/wf <requirement>` — go directly into the pipeline
+- Do NOT use Bash/Terminal for file reading or code exploration — use IDE-native tools (read_file, codebase_search, grep_search)
+- The ONLY acceptable Bash usage during `/wf <requirement>` is: running `node workflow/init-project.js` (if not yet initialized) and running test commands in the TEST stage
+
+---
+
+## ⚡ Bash/Terminal Safety Rules
+
+When using Bash/Terminal in any mode, follow these rules to prevent hanging:
+
+1. **Never start foreground servers** — commands like `npm run dev`, `python manage.py runserver` block forever
+2. **Always add timeout** — for network commands, add `--max-time 10` or equivalent
+3. **Prefer IDE tools over Bash** — use `read_file` instead of `cat`, `list_dir` instead of `ls`/`find`, `grep_search` instead of `grep`
+4. **Never run interactive commands** — avoid anything that prompts for input
+5. **Keep commands short** — if a command might take >30 seconds, warn the user first
+6. **Verification MUST use IDE tools, NOT Bash** — when verifying file content (JSON validity,
+   config correctness, file existence), ALWAYS use `read_file` to read the file and validate
+   in-context. NEVER spawn a Bash command for verification. Bash verification commands can
+   hang silently with no visible feedback to the user.
+7. **Announce before Bash** — before ANY Bash tool call, output a brief message explaining
+   what the command does and how long it should take (e.g. "Running tests, ~10s...").
+   If the command hangs, the user can see what went wrong.
+8. **One command per call** — never chain multiple commands with `&&` or `;` in a single
+   Bash call. If one hangs, the user cannot tell which one.
 
 ---
 
@@ -191,6 +215,12 @@ During work, output brief phase markers:
 
 5. **Never skip the remaining list**: When completing one sub-task, always explicitly
    acknowledge how many tasks remain and what they are.
+
+6. **Verify inline, not in batch**: After each Write/Edit operation, immediately verify
+   the result using `read_file` (NOT Bash). Never defer verification to a batch step
+   at the end — batch Bash verification is the #1 cause of task hanging. Example:
+   - ✅ Write file A → `read_file` A → confirm OK → Write file B → `read_file` B → confirm OK
+   - ❌ Write file A → Write file B → Write file C → Bash "verify all 3 files" → 💀 hangs
 
 ### Interactive Mode Progress Format
 
@@ -342,3 +372,100 @@ when the issue is a minor design choice that could be resolved via clarification
 - Negotiation log persisted to `output/negotiation-log.json`
 - Max negotiation rounds per stage: 2 (prevent infinite loops)
 - Falls back to rollback if negotiation fails after max rounds
+
+---
+
+## Anti-Truncation Protocol (ADR-42)
+
+> Prevents output truncation during interactive `/wf` sessions and automated workflow
+> execution. Output truncation is a **P0 production reliability issue** — if the agent's
+> response is silently cut off, the user receives incomplete results with no indication
+> of what was lost.
+
+### Root Cause Analysis
+
+Output truncation occurs at three independent layers:
+
+| Layer | Cause | Signal |
+|-------|-------|--------|
+| **L1: max_output_tokens** | Model's per-response output token limit (e.g. 32K/64K) | `stop_reason = "max_tokens"` |
+| **L2: Context Window** | `input + output` exceeds model context window; as conversation grows, output budget shrinks | Longer conversations truncate more often |
+| **L3: Platform/IDE** | IDE or streaming layer imposes its own timeout or size limit | Random truncation, no API signal |
+
+### Prevention Rules (Interactive `/wf` Mode)
+
+When operating in interactive `/wf` dialogue mode, agents MUST follow these rules:
+
+#### Rule 1: Context Budget Awareness
+
+After **5+ conversation turns**, assume context pressure is HIGH. Proactively:
+- Use **concise output format** (bullet points, not detailed tables)
+- Split multi-item analysis into **batches of 3–5 items per turn**
+- Offer `"Shall I continue with the next batch?"` checkpoints
+
+#### Rule 2: Chunked Output Pattern
+
+For any analysis covering **5+ items** (modules, files, features, etc.):
+1. **First turn**: Output a **summary table** (1 line per item) + detailed analysis of the **top 3**
+2. **Ask user** which items to expand next
+3. **Never** attempt to output all detailed analyses in a single turn
+
+Example:
+```
+| # | Module | Verdict | Reason (1-line) |
+|---|--------|---------|-----------------|
+| 1 | auth   | ✅ Keep  | Core, well-tested |
+| 2 | cache  | ❌ Remove | Dead code, 0 refs |
+| ... | ... | ... | ... |
+
+Detailed analysis for top 3 below. Say "continue 4-6" for the next batch.
+```
+
+#### Rule 3: Self-Monitoring Checkpoint
+
+If the agent's output is getting long (estimated **>2000 words** or **>30 lines of table**),
+it MUST stop and checkpoint:
+
+```
+📍 I've covered items 1–5 so far. Shall I continue with items 6–10?
+```
+
+#### Rule 4: Prefer Depth-on-Demand over Breadth-First
+
+Instead of outputting everything at once:
+- ✅ Output a concise overview, then let the user drill into specific items
+- ❌ Output a massive detailed report covering all items in one response
+
+### Detection (Automated Workflow Mode)
+
+In automated workflow mode (`orchestrator.run()` / `runTaskBased()`), the system
+detects output truncation via two mechanisms:
+
+#### Mechanism 1: API Signal Detection
+
+After every LLM call, check the response's `stop_reason` / `finish_reason`:
+- `"end_turn"` or `"stop"` → Normal completion ✅
+- `"max_tokens"` or `"length"` → **Truncated** ⚠️
+
+#### Mechanism 2: Heuristic Detection
+
+If the API signal is unavailable (e.g. response is a plain string), apply heuristics:
+- Response ends mid-sentence (no terminal punctuation: `.!?。！？`)
+- Response ends with an unclosed code block (odd number of `` ``` ``)
+- Response is suspiciously short for the task complexity
+
+### Recovery: Auto-Continuation (Automated Mode)
+
+When truncation is detected in automated mode, the system automatically:
+
+1. **Log** the truncation event (Observability + SelfReflection)
+2. **Retry** with a continuation prompt: _"Your previous response was truncated. Continue from where you left off."_
+3. **Merge** the continuation with the original response
+4. **Limit** to 3 continuation attempts (prevent infinite loops)
+
+### Implementation
+
+- `HOOK_EVENTS.OUTPUT_TRUNCATED` — emitted when truncation is detected
+- `wrappedLlm()` in `index.js` — checks `stop_reason` after every LLM call
+- `_executeTask()` in `orchestrator-task.js` — auto-continuation loop
+- Truncation events recorded in Observability for cross-session pattern detection

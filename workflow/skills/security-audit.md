@@ -205,8 +205,44 @@ Design systems assuming the attacker is already inside:
 
 ---
 
+## Quick Checklist (Code Review Focus)
+
+For fast security checks during code reviews (when time is limited):
+
+### 🔒 Secrets (MUST CHECK)
+- [ ] No hardcoded API keys, tokens, passwords in code
+- [ ] No secrets in logs or error messages
+- [ ] `.env` files in `.gitignore`
+- [ ] Secrets loaded from environment variables or secure stores
+
+### 📝 Input Validation (MUST CHECK)
+- [ ] All external inputs validated (API params, headers, file uploads, form data)
+- [ ] Whitelist validation (allow known good) not blacklist
+- [ ] File uploads: validate content type, size, extension
+- [ ] URL validations: protocol whitelist (http/https)
+
+### 💉 Injection Prevention (MUST CHECK)
+- [ ] Database queries use parameterized queries/prepared statements
+- [ ] No string concatenation in SQL/NoSQL queries
+- [ ] User content escaped before rendering (XSS prevention)
+- [ ] No `eval()` or equivalent with user input
+
+### 🔐 Authentication & Authorization (MUST CHECK)
+- [ ] Auth checks on all sensitive endpoints
+- [ ] Authorization before privileged operations
+- [ ] Principle of least privilege followed
+- [ ] Session/tokens have proper expiration
+
+### ⚠️ Error Handling (MUST CHECK)
+- [ ] No stack traces or internal paths exposed to users
+- [ ] Generic error messages to users, detailed logs internally
+- [ ] Sensitive data not logged
+
+---
+
 ## Evolution History
 
 | Version | Date | Change |
 |---------|------|--------|
 | v1.0.0 | 2026-03-19 | Initial creation. Comprehensive security audit skill covering OWASP Top 10, language-specific patterns, supply chain security, secrets management, and threat modeling. Inspired by ECC security-reviewer patterns, adapted for WorkFlowAgent framework. |
+| v1.1.0 | 2026-03-26 | Merged security-review skill content. Added Quick Checklist chapter for fast code review scenarios. Consolidated duplicates for streamlined security guidance. |

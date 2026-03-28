@@ -53,7 +53,7 @@ description: "Code development patterns, coding standards and best practices"
 ## Best Practices
 <!-- PURPOSE: Recommended patterns that SHOULD be followed. Unlike Rules (which are mandatory), Best Practices are advisory — they can be overridden with justification. Each entry explains WHAT to do and WHY it helps. -->
 
-1. **Test-Driven Development (TDD) for complex logic** — Write the test first for any function with branching logic. The test defines the contract; the implementation fulfills it. TDD naturally produces smaller, more focused functions.
+1. **Test-Driven Development (TDD) for complex logic** — Write the test first for any function with branching logic. Follow the Red-Green-Refactor cycle: write failing test (Red), minimal implementation to pass (Green), then refactor while keeping tests green. See `test-report#TDD Workflow Integration` for detailed protocol. TDD naturally produces smaller, more focused functions.
 
 2. **Boy Scout Rule** — Leave code cleaner than you found it. Every PR should include one small improvement (rename a variable, extract a function, add a missing test) beyond the ticket scope. Compound improvements over time.
 
@@ -95,3 +95,4 @@ description: "Code development patterns, coding standards and best practices"
 |---------|------|--------|
 | v1.0.0 | 2026-03-13 | Initial creation |
 | v1.1.0 | 2026-03-19 | External knowledge enrichment: added Rules, SOP, Checklist, Best Practices, Anti-Patterns, Context Hints |
+| v1.2.0 | 2026-03-26 | Enhanced TDD best practice and cross-referenced test-report for unified testing workflow |

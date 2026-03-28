@@ -117,7 +117,7 @@ All inter-agent communication uses **file path references only** (never raw cont
 ---
 
 ### Step 3.5 → PLAN
-**Actor**: PlannerAgent (Kent Beck — XP creator, TDD pioneer)  
+**Actor**: PlannerAgent (Frederick Brooks — Turing Award laureate, author of "The Mythical Man-Month")
 **Input**: `output/architecture.md` (via FileRefBus)  
 **Action**:
 1. Orchestrator calls `FileRefBus.consume('planner')` → gets `architectureMdPath`

@@ -4,12 +4,22 @@
  * Thick tools offload computation to code, returning only distilled summaries.
  * They produce minimal tokens, high signal-to-noise ratio output.
  *
- * Use thick tools when:
- *  - Project is large (Monorepo, > 500 files)
- *  - You need a summary, not raw content
- *  - Token budget is a concern
+ * ✅ USE THIS WHEN:
+ *   - Project is large (Monorepo, > 500 files)
+ *   - You need a summary, not raw content
+ *   - Token budget is a concern
+ *   - Working with unfamiliar codebases
+ *   - Need high-level architectural understanding
+ *
+ * 🚫 DO NOT USE FOR:
+ *   - Getting specific file contents (use read_file or view_code_item)
+ *   - Real-time debugging (use thin-tools for direct access)
+ *   - One-off file reads on small projects (< 100 files)
+ *   - Precise symbol lookups (use codebase_search or grep_search)
  *
  * ✅  Thick tools: Token-minimal, high signal-to-noise, low hallucination risk.
+ *
+ * @module thick-tools
  */
 
 'use strict';
@@ -26,10 +36,23 @@ const { estimateTokens } = require('./thin-tools');
  * Returns a compact summary instead of raw file contents.
  * Equivalent to: cli.js --func getUnfinishedChanges
  *
+ * 👍 USE THIS WHEN:
+ *   - Resuming work after interruption (check what changed since last session)
+ *   - Detecting recent modifications in the project
+ *   - Finding files that may need review or commit
+ *   - Recovering from crashes or unexpected shutdowns
+ *
+ * 🚫 DO NOT USE FOR:
+ *   - Getting specific file contents (use read_file or view_code_item)
+ *   - Comparing file versions with detailed diffs (use git diff)
+ *   - Finding files by name pattern (use search_files)
+ *   - Real-time file watching (use fs.watch or IDE features)
+ *
  * @param {string} dirPath
  * @param {Date}   [since]   - Only include files modified after this date
  * @param {string[]} [extensions] - File extensions to include
  * @returns {{ summary: string, files: Array, meta: object }}
+ * @estimatedCost low (~50-200 tokens output)
  */
 function getUnfinishedChanges(dirPath, since = null, extensions = ['.js', '.ts', '.json', '.md']) {
   if (!fs.existsSync(dirPath)) {
@@ -92,9 +115,24 @@ function _buildChangesSummary(files) {
  * Returns a compact tree-style summary of the project structure.
  * Limits depth to avoid token explosion on large Monorepos.
  *
+ * 👍 USE THIS WHEN:
+ *   - Starting work on an unfamiliar codebase
+ *   - Need to understand high-level project organization
+ *   - Looking for where specific modules or features are located
+ *   - Planning refactoring or architectural changes
+ *   - Creating documentation or onboarding guides
+ *
+ * 🚫 DO NOT USE FOR:
+ *   - Getting specific file contents (use read_file)
+ *   - Analyzing code dependencies between files (use codebase_search)
+ *   - Large monorepos with >1000 files at maxDepth > 3 (will be truncated)
+ *   - Finding specific functions or classes (use view_code_item)
+ *   - Projects where directory structure doesn't reflect architecture
+ *
  * @param {string} dirPath
- * @param {number} [maxDepth=3]
+ * @param {number} [maxDepth=3] - Maximum depth to traverse (default 3, increase only if token budget allows)
  * @returns {{ summary: string, meta: object }}
+ * @estimatedCost low (~100-500 tokens output, depends on maxDepth)
  */
 function getProjectStructure(dirPath, maxDepth = 3) {
   if (!fs.existsSync(dirPath)) {
@@ -144,8 +182,20 @@ function _buildTree(dirPath, prefix, depth, maxDepth, lines) {
  * Automatically selects thin or thick tools based on project scale.
  * Implements Requirement 4.4: prefer thick tools for large Monorepos.
  *
+ * 👍 USE THIS WHEN:
+ *   - Starting work on a new project (first action to determine tool strategy)
+ *   - Unsure whether to use thick or thin tools
+ *   - Token budget is a major concern and you need guidance
+ *   - Project size is unknown and you need to assess it
+ *
+ * 🚫 DO NOT USE FOR:
+ *   - Already decided on tool strategy (just use the tools directly)
+ *   - Quick one-off file reads where overhead isn't justified
+ *   - When IDE tools are available (IDE detection handles this automatically)
+ *
  * @param {string} dirPath
  * @returns {{ strategy: 'thin'|'thick', reason: string }}
+ * @estimatedCost negligible (~10-50 tokens output)
  */
 function selectToolStrategy(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -197,12 +247,26 @@ function _countFiles(dirPath, count) {
  * classes, public methods, enums, global functions, etc.
  * Returns a compact markdown summary grouped by file type.
  *
+ * 👍 USE THIS WHEN:
+ *   - Need to understand the API surface of a module
+ *   - Looking for specific function or class definitions
+ *   - Generating documentation or README files
+ *   - Planning to use view_code_item and need symbol names first
+ *   - Understanding the public interface of unfamiliar code
+ *
+ * 🚫 DO NOT USE FOR:
+ *   - Full text search within file contents (use grep_search)
+ *   - Reading implementation details of found symbols (use view_code_item)
+ *   - Projects without .cs or .lua files (only scans these extensions)
+ *   - Deep dependency analysis between symbols
+ *
  * @param {string} dirPath - Root directory to scan
  * @param {object} [options]
  * @param {string[]} [options.extensions]  - File extensions to scan (default: ['.cs', '.lua'])
  * @param {string[]} [options.ignoreDirs]  - Directories to skip
  * @param {number}   [options.maxFiles]    - Max files per extension to avoid token explosion
  * @returns {{ summary: string, meta: object }}
+ * @estimatedCost medium (~200-1000 tokens output, depends on maxFiles)
  */
 function scanCodeSymbols(dirPath, options = {}) {
   const {
@@ -358,4 +422,86 @@ function _extractLuaSymbols(content) {
   return symbols;
 }
 
-module.exports = { getUnfinishedChanges, getProjectStructure, selectToolStrategy, scanCodeSymbols };
+// ─── Module Exports (with Tool Hooks Redirection) ─────────────────────────────
+//
+// ZERO-COST ABSTRACTION: When toolHooks.enabled is true in workflow.config.js,
+// automatically redirect all exports to the hooked version (thick-tools-hooked.js).
+//
+// This allows existing code paths (memory-manager.js, gen-agents.js, etc.) to
+// immediately benefit from hook injection WITHOUT any code changes.
+//
+(function setupToolHooksRedirection() {
+  const fs = require('fs');
+  const path = require('path');
+  const configPath = path.join(__dirname, '..', 'workflow.config.js');
+
+  let hookedTools = null;
+  let redirectionActive = false;
+
+  // Check if we should enable tool hooks
+  if (fs.existsSync(configPath)) {
+    try {
+      const config = require(configPath);
+
+      if (config.toolHooks?.enabled) {
+        console.log('[ToolHooks] Auto-activated: Loading thick-tools-hooked.js');
+
+        // Load factory from hooked module
+        const { createHookedTools, TOOL_METADATA } = require('./thick-tools-hooked');
+
+        // Create original tools object
+        const originalTools = {
+          getUnfinishedChanges,
+          getProjectStructure,
+          selectToolStrategy,
+          scanCodeSymbols,
+        };
+
+        // Create hooked versions
+        hookedTools = createHookedTools(originalTools);
+        redirectionActive = true;
+
+        console.log('[ToolHooks] Integration complete. All thick-tools now trigger BEFORE/AFTER hooks.');
+        console.log('[ToolHooks] Metrics logging:', config.toolHooks.logMetrics ? 'enabled' : 'disabled');
+      }
+    } catch (err) {
+      console.warn('[ToolHooks] Activation failed:', err.message);
+    }
+  }
+
+  if (!redirectionActive) {
+    console.log('[ToolHooks] Not enabled. Using raw thick-tools (set toolHooks.enabled: true to activate).');
+  }
+
+  // Export raw tools wrapped in a Proxy that redirects to hooked versions when active
+  const rawExports = { getUnfinishedChanges, getProjectStructure, selectToolStrategy, scanCodeSymbols };
+
+  module.exports = new Proxy(rawExports, {
+    get(target, prop) {
+      // If redirection is active and hookedTools has this property, return hooked version
+      if (redirectionActive && hookedTools && prop in hookedTools) {
+        return hookedTools[prop];
+      }
+      // Otherwise return raw version
+      return target[prop];
+    },
+    ownKeys(target) {
+      if (redirectionActive && hookedTools) {
+        return Object.keys(hookedTools);
+      }
+      return Object.keys(target);
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      if (redirectionActive && hookedTools && prop in hookedTools) {
+        return Object.getOwnPropertyDescriptor(hookedTools, prop);
+      }
+      return Object.getOwnPropertyDescriptor(target, prop);
+    },
+    has(target, prop) {
+      if (redirectionActive && hookedTools) {
+        return prop in hookedTools;
+      }
+      return prop in target;
+    }
+  });
+})();

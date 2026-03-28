@@ -90,9 +90,35 @@ description: "Test report writing standards and quality assurance patterns"
 
 5. **Regression test from production bugs** — Every production bug must result in a regression test that would have caught it. This builds an ever-growing safety net specific to YOUR system's failure modes.
 
+## TDD Workflow Integration
+
+When working with Test-Driven Development methodology, follow the Red-Green-Refactor cycle:
+
+### Red Phase (Write Failing Test)
+1. Understand requirement from task description
+2. Define test cases for happy path, edge cases, error cases
+3. Write test with clear, descriptive name following the naming rules above
+4. Run test - it MUST FAIL (if it passes, test is wrong or feature exists)
+
+### Green Phase (Make Test Pass)
+1. Write simplest code to make the test pass
+2. Don't worry about perfection - just get to green
+3. Run tests to confirm pass
+4. If tests fail, fix implementation, not tests
+
+### Refactor Phase (Keep Green)
+1. Improve code quality while keeping tests green
+2. Remove duplication, improve naming, simplify structure
+3. Run tests after EACH change to ensure still green
+
+### Bug Fix TDD Protocol
+- **When fixing bugs**: First write a test that reproduces the bug, then fix it
+- This creates regression proof for future changes
+
 ## Evolution History
 
 | Version | Date | Change |
 |---------|------|--------|
 | v1.0.0 | 2026-03-13 | Initial creation |
 | v1.1.0 | 2026-03-19 | External knowledge enrichment: added Rules, SOP, Checklist, Best Practices, Anti-Patterns, Context Hints |
+| v1.2.0 | 2026-03-26 | Integrated TDD workflow content from tdd-workflow.md for unified testing guidance |

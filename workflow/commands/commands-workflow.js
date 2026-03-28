@@ -194,6 +194,29 @@ function registerWorkflowCommands(registerCommand) {
           if (!triageResult.shouldProceed) {
             console.log(`[wf] RequestTriage: score=${triageResult.score}, suggestion=${triageResult.suggestion}`);
             const displayMsg = triage.formatTriageResult(triageResult);
+
+            // ── ADR-43 Extension: Lightweight Experience Hook for IDE-First mode ────
+            // Even though we're routing to IDE, we still want to capture valuable signals.
+            // This hook runs asynchronously (fire-and-forget) so it doesn't block the user.
+            if (triageResult.experienceHook && triageResult.experienceHook.enabled) {
+              setImmediate(async () => {
+                try {
+                  const { runIdeExperienceHook } = require('../core/ide-experience-hook');
+                  const hookResult = await runIdeExperienceHook({
+                    requirement: triageResult.experienceHook.sessionContext.requirement,
+                    score: triageResult.score,
+                    matchedTags: triageResult.experienceHook.sessionContext.matchedTags,
+                    experienceStore: context.orchestrator?.experienceStore,
+                  });
+                  if (hookResult.captured) {
+                    console.log(`[wf] IDE Experience Hook: captured experience ${hookResult.expId}`);
+                  }
+                } catch (hookErr) {
+                  console.warn(`[wf] IDE Experience Hook failed (non-fatal): ${hookErr.message}`);
+                }
+              });
+            }
+
             return [
               displayMsg,
               ``,

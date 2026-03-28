@@ -5,13 +5,31 @@
 
 ## File Size Limits
 
-| File Type | Max Lines | Action if Exceeded |
-|-----------|-----------|-------------------|
-| `index.js` (orchestrator) | 600 lines | Extract to core/ module |
-| `core/*.js` | 400 lines | Split by responsibility |
-| `agents/*.js` | 300 lines | Extract helper functions |
-| `commands/command-router.js` | 100 lines | Hub only; delegate to sub-routers |
-| `commands/commands-*.js` | 500 lines | Split by command domain |
+> **⚠️ Smart Mode (Default)**: Limits apply to **effective lines** (code only, excluding comments and blank lines).
+> This reduces false alarms on well-documented files and enforces limits on actual complexity.
+> 
+> **Tiered Limits**: Files are classified into tiers based on their role:
+> - **Entry-Point** (index.js, main.js): 500 effective lines
+> - **Core-Critical** (orchestrators, engines): 400 effective lines  
+> - **Core-Standard** (core/*.js): 350 effective lines
+> - **Agent** (agents/*.js): 250 effective lines
+> - **Command** (commands/*.js): 400 effective lines
+>
+> Files with >50% comment ratio receive a warning (consider simplifying documentation).
+> See `core/effective-lines-counter.js` for implementation details.
+
+### Legacy Limits (Simple Line Counting — Fallback Mode)
+
+| File Type | Max Lines | Effective Lines | Action if Exceeded |
+|-----------|-----------|-----------------|-------------------|
+| `index.js` (orchestrator) | 600 lines | **500 lines** | Extract to core/ module |
+| `core/*.js` | 400 lines | **350 lines** | Split by responsibility |
+| `agents/*.js` | 300 lines | **250 lines** | Extract helper functions |
+| `commands/command-router.js` | 100 lines | **80 lines** | Hub only; delegate to sub-routers |
+| `commands/commands-*.js` | 500 lines | **400 lines** | Split by command domain |
+
+**Example**: A file with 600 total lines but 40% comments has only ~360 effective lines
+→ Would violate legacy limit (600 > 400) but PASS effective limit (360 < 350).
 
 ## IDE-First Principle (Foundational Constraint, ADR-37)
 

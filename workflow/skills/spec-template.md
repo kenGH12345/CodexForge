@@ -1,3 +1,17 @@
+---
+name: spec-template
+version: 1.0.0
+type: template
+domains: [general]
+dependencies: []
+load_level: task
+max_tokens: 400
+triggers:
+  keywords: [spec, template, design doc, feature, requirement]
+  roles: [analyst, architect, planner, developer]
+description: "Feature specification template for design document creation"
+---
+
 # Feature: XXX
 
 **作者**: xxx  
