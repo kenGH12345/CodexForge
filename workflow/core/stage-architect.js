@@ -29,6 +29,7 @@ const {
   securityCVEHelper,
 } = require('./orchestrator-stage-helpers');
 const { runModuleAwareArchitect } = require('./module-architect-runner');
+const { buildRetryContext, compareOutputFingerprint } = require('./retry-divergence-guard');
 
 // Forward reference: _runAnalyst is needed for rollback. Lazy-loaded to avoid circular deps.
 let _runAnalyst = null;
@@ -48,8 +49,12 @@ function _getRunAnalyst() {
  * @returns {Promise<string>} Path to the generated architecture.md
  */
 async function _runArchitect() {
-  console.log(`\n[Orchestrator] Stage: ARCHITECT (ArchitectAgent)`);
-  const inputPath = this.bus.consume(AgentRole.ARCHITECT);
+  // Print stage header via handoffLog if available
+  if (this.handoffLog) {
+    this.handoffLog.printStageHeader('ARCHITECT', 'ArchitectAgent');
+  } else {
+    console.log(`\n[Orchestrator] Stage: ARCHITECT (ArchitectAgent)`);
+  }  const inputPath = this.bus.consume(AgentRole.ARCHITECT);
 
   // ── Inject upstream cross-stage context ───────────────────────────────────
   const upstreamCtxForArch = buildArchitectUpstreamCtx(this);
@@ -154,7 +159,7 @@ async function _runArchitect() {
 
   // Standard single-pass fallback (or if module-split was not applicable)
   if (!outputPath) {
-    outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExpContext);
+outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExpContext, this.handoffLog);
   }
 
   // ── Adapter Telemetry ─────────────────────────────────────────────────────
@@ -311,6 +316,9 @@ async function _runArchitect() {
   const archGate = new QualityGate({ experienceStore: this.experienceStore, maxRollbacks: 1 });
   const archCtxMeta = this.stageCtx?.get(WorkflowState.ARCHITECT)?.meta || {};
   const rollbackCount = archCtxMeta._archRollbackCount || 0;
+  // Plan-A: Use LoopGuard for centralized retry limit management
+  const loopGuard = this._loopGuard;
+  const loopGuardCanRetry = loopGuard ? loopGuard.canRetry('ARCHITECT', 'ANALYSE') : true;
   const archDecision = archGate.evaluate(archReviewResult, WorkflowState.ARCHITECT, rollbackCount);
   archGate.recordExperience(archDecision, WorkflowState.ARCHITECT, archReviewResult, {
     skill: 'architecture-design',
@@ -320,8 +328,15 @@ async function _runArchitect() {
   _recordPromptABOutcome('architect', archDecision.pass, archReviewResult.rounds ?? 0);
 
   if (!archDecision.pass && archDecision.rollback) {
+    // Plan-A: Check LoopGuard before allowing rollback
+    if (loopGuard && !loopGuardCanRetry) {
+      console.warn(`[Orchestrator] ⚠️  LoopGuard: ARCHITECT→ANALYSE retry blocked (max retries reached: ${loopGuard.getRetryCount('ARCHITECT', 'ANALYSE')}/${loopGuard.getMaxRetries('ARCHITECT', 'ANALYSE')}). Proceeding with risks recorded.`);
+      this.stateMachine.recordRisk('medium', `[LoopGuard] ARCHITECT→ANALYSE rollback blocked after ${loopGuard.getRetryCount('ARCHITECT', 'ANALYSE')} retries. Unresolved issues: ${archReviewResult.riskNotes?.slice(0, 3).join('; ').slice(0, 200)}`);
+    } else {
     const failedNotes = archReviewResult.riskNotes.slice(0, 3).join('; ');
     console.warn(`[Orchestrator] ⚠️  ${archDecision.reason}`);
+    // Plan-A: Record retry in LoopGuard
+    if (loopGuard) loopGuard.recordRetry('ARCHITECT', 'ANALYSE');
 
     if (this.stageCtx) {
       const existing = this.stageCtx.get(WorkflowState.ARCHITECT) || {};
@@ -390,8 +405,28 @@ async function _runArchitect() {
 
       // ── Full-stage rollback ──────────────────────────────────────────────
       await coordinator.rollback(WorkflowState.ARCHITECT, `Architecture review failed: ${failedNotes.slice(0, 200)}`);
+      
+      // Record rollback in handoff log
+      if (this.handoffLog) {
+        this.handoffLog.recordRollback('ARCHITECT', 'ANALYSE', `Architecture review failed: ${failedNotes.slice(0, 200)}`);
+      }
 
-      const failureContext = `[ARCHITECTURE REVIEW FAILED – RETRY ${rollbackCount + 1}]\n\nThe previous architecture attempt failed review with these issues:\n${failedNotes}\n\nPlease re-analyse the requirements with these constraints in mind.`;
+      // ── RetryDivergenceGuard: build enhanced retry context ──────────────
+      // Strategy 1 (Negative Prompt) + Strategy 2 (Creativity Directive)
+      // extracts key decisions from previous output and injects "DO NOT REPEAT"
+      // constraints + escalating creativity instructions.
+      let previousArchOutput = '';
+      try {
+        const archPath = path.join(PATHS.OUTPUT_DIR, 'architecture.md');
+        if (fs.existsSync(archPath)) previousArchOutput = fs.readFileSync(archPath, 'utf-8');
+      } catch (_) { /* non-fatal */ }
+
+      const failureContext = buildRetryContext({
+        previousOutput: previousArchOutput,
+        failureReason: failedNotes,
+        retryCount: rollbackCount + 1,
+        stageName: 'ARCHITECTURE',
+      });
       const reanalysedPath = await _getRunAnalyst().call(this, failureContext);
       await this.stateMachine.transition(reanalysedPath, `ANALYSE → ARCHITECT (post-rollback retry ${rollbackCount + 1})`);
       console.log(`[Orchestrator] ✅ State machine advanced to ARCHITECT after post-rollback re-analysis.`);
@@ -412,6 +447,7 @@ async function _runArchitect() {
     } catch (rollbackErr) {
       console.warn(`[Orchestrator] Rollback failed (non-fatal): ${rollbackErr.message}. Proceeding with risks recorded.`);
     }
+    } // end Plan-A LoopGuard else block
   } else if (!archDecision.pass && archDecision.needsHumanReview) {
     console.warn(`[Orchestrator] ⚠️  Rollback limit reached. Proceeding to CODE stage with ${archReviewResult.failed} unresolved issue(s).`);
   } else if (archDecision.pass && archReviewResult.failed > 0) {
@@ -447,6 +483,39 @@ async function _runArchitect() {
   });
 
   translateMdFile(outputPath, this._rawLlmCall).catch(() => {});
+
+  // ── RetryDivergenceGuard: Strategy 3 – Output Fingerprint comparison ──
+  // When this is a retry (rollbackCount > 0), compare the new output with
+  // the previous output to detect if the LLM produced near-identical content.
+  // Uses EmbeddingService cosine similarity (zero LLM cost, ~50ms).
+  const archRollbackCount = (this.stageCtx?.get(WorkflowState.ARCHITECT)?.meta?._archRollbackCount) || 0;
+  if (archRollbackCount > 0 && this._embeddingService) {
+    try {
+      const currentOutput = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : '';
+      const prevSummary = this.stageCtx?.get(WorkflowState.ARCHITECT)?.meta?._previousOutputDigest || '';
+      if (prevSummary && currentOutput) {
+        const fpResult = await compareOutputFingerprint({
+          embeddingService: this._embeddingService,
+          previousOutput: prevSummary,
+          currentOutput: currentOutput.slice(0, 500),
+        });
+        if (fpResult.isDuplicate) {
+          this.stateMachine.recordRisk('medium', `[RetryDivergenceGuard] ${fpResult.message}`);
+        } else if (fpResult.isWarning) {
+          this.stateMachine.recordRisk('low', `[RetryDivergenceGuard] ${fpResult.message}`);
+        }
+      }
+    } catch (_) { /* non-fatal: fingerprint comparison is supplementary */ }
+  }
+  // Store current output digest for next retry comparison
+  if (this.stageCtx) {
+    const existingMeta = this.stageCtx.get(WorkflowState.ARCHITECT)?.meta || {};
+    const currentDigest = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8').slice(0, 500) : '';
+    this.stageCtx.set(WorkflowState.ARCHITECT, {
+      ...this.stageCtx.get(WorkflowState.ARCHITECT),
+      meta: { ...existingMeta, _previousOutputDigest: currentDigest },
+    });
+  }
 
   return outputPath;
 }

@@ -86,14 +86,46 @@ class StageContextStore {
    *   preventing them from re-introducing issues that were already fixed.
    */
   set(stageName, context) {
+    // P0-FIX: Validate inputs to prevent downstream consumers from receiving
+    // malformed data. Without this guard, passing null/undefined/string would
+    // cause silent failures or cryptic "Cannot read property" errors in
+    // downstream stages that call get() and destructure the result.
+    if (!stageName || typeof stageName !== 'string') {
+      throw new Error(
+        `[StageContextStore.set] Invalid stageName: expected non-empty string, got ${typeof stageName} (${JSON.stringify(stageName)})`
+      );
+    }
+    if (!context || typeof context !== 'object' || Array.isArray(context)) {
+      throw new Error(
+        `[StageContextStore.set] Invalid context for stage "${stageName}": expected plain object, got ${Array.isArray(context) ? 'Array' : typeof context}`
+      );
+    }
+
+    // Validate field types when present (defensive, not exhaustive)
+    if (context.keyDecisions != null && !Array.isArray(context.keyDecisions)) {
+      console.warn(
+        `[StageContextStore] ⚠️  stage "${stageName}": keyDecisions should be an array, got ${typeof context.keyDecisions}. Coercing to [].`
+      );
+    }
+    if (context.artifacts != null && !Array.isArray(context.artifacts)) {
+      console.warn(
+        `[StageContextStore] ⚠️  stage "${stageName}": artifacts should be an array, got ${typeof context.artifacts}. Coercing to [].`
+      );
+    }
+    if (context.risks != null && !Array.isArray(context.risks)) {
+      console.warn(
+        `[StageContextStore] ⚠️  stage "${stageName}": risks should be an array, got ${typeof context.risks}. Coercing to [].`
+      );
+    }
+
     const entry = {
       stageName,
-      summary:           (context.summary           || '').slice(0, 600),
-      keyDecisions:      context.keyDecisions       || [],
-      artifacts:         context.artifacts          || [],
-      risks:             context.risks              || [],
-      correctionHistory: context.correctionHistory  || [],
-      meta:              context.meta               || {},
+      summary:           (typeof context.summary === 'string' ? context.summary : '').slice(0, 600),
+      keyDecisions:      Array.isArray(context.keyDecisions)      ? context.keyDecisions       : [],
+      artifacts:         Array.isArray(context.artifacts)         ? context.artifacts          : [],
+      risks:             Array.isArray(context.risks)             ? context.risks              : [],
+      correctionHistory: Array.isArray(context.correctionHistory) ? context.correctionHistory  : [],
+      meta:              (context.meta && typeof context.meta === 'object' && !Array.isArray(context.meta)) ? context.meta : {},
       timestamp:         new Date().toISOString(),
     };
     this._store.set(stageName, entry);

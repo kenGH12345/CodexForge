@@ -17,6 +17,8 @@ const { Observability } = require('./observability');
 const { translateMdFile } = require('./i18n-translator');
 const { getPromptSlotManager } = require('./prompt-builder');
 const { runEvoMapFeedback } = require('./stage-runner-utils');
+const { ContractViolationError } = require('./file-ref-bus');
+const { RequestTriage } = require('./request-triage');
 const {
   storeAnalyseContext,
   webSearchHelper,
@@ -58,8 +60,12 @@ function _recordPromptABOutcome(agentRole, gatePassed, correctionRounds, tokensU
  * @returns {Promise<string>} Path to the generated requirements.md
  */
 async function _runAnalyst(rawRequirement) {
-  console.log(`\n[Orchestrator] Stage: ANALYSE (AnalystAgent)`);
-
+  // Print stage header via handoffLog if available
+  if (this.handoffLog) {
+    this.handoffLog.printStageHeader('ANALYSE', 'AnalystAgent');
+  } else {
+    console.log(`\n[Orchestrator] Stage: ANALYSE (AnalystAgent)`);
+  }
   if (!this.stageCtx) {
     throw new Error('[Orchestrator] stageCtx is not initialised. This is a bug – StageContextStore should be created in the Orchestrator constructor.');
   }
@@ -124,7 +130,8 @@ async function _runAnalyst(rawRequirement) {
             title: 'Technical Feasibility Research',
             guidance: 'The following web search results provide latest technical constraints, API changes, and compatibility info. Use these to enrich the Open Questions and Risk sections of the requirement.',
           });
-          clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n${feasibilityBlock}`;
+          // Optimization B: structured section header for LLM clarity
+          clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n## Context: Technical Feasibility Research\n${feasibilityBlock}`;
           console.log(`[Orchestrator] 🌐 Tech feasibility: ${searchResult.results.length} result(s) appended to enriched requirement.`);
 
           // ── ADR-30 P3: Persist ANALYSE search results to project knowledge base ──
@@ -178,7 +185,8 @@ async function _runAnalyst(rawRequirement) {
     if (this.codeGraph && typeof this.codeGraph.getModuleSummaryMarkdown === 'function') {
       const moduleSeedInfo = this.codeGraph.getModuleSummaryMarkdown({ maxDirs: 15 });
       if (moduleSeedInfo && moduleSeedInfo.length > 0) {
-        clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n${moduleSeedInfo}`;
+        // Optimization B: structured section header for LLM clarity
+        clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n## Context: Codebase Module Structure\n${moduleSeedInfo}`;
         console.log(`[Orchestrator] 🗺️  Code Graph seed info injected into AnalystAgent (${moduleSeedInfo.length} chars). Module Map will be grounded in real codebase structure.`);
       } else {
         console.log(`[Orchestrator] 🗺️  Code Graph has no module summary (new project or single-directory). Module Map will be generated from scratch.`);
@@ -193,31 +201,87 @@ async function _runAnalyst(rawRequirement) {
   // enabling better clarification questions and risk identification over time.
   let analystInjectedExpIds = [];
   try {
-    if (this.experienceStore && typeof this.experienceStore.query === 'function') {
-      const analystExp = this.experienceStore.query({
-        skill: 'requirement-analysis',
-        limit: this._adaptiveStrategy?.maxExpInjected ?? 5,
-        currentRequirement: rawRequirement || '',
-      });
-      if (analystExp.length > 0) {
-        let expBlock = '\n\n## Requirement Analysis Experience (from ExperienceStore)\n';
-        expBlock += '> The following experiences are from past successful requirement analyses. Use them to improve clarification questions and risk identification.\n\n';
-        for (const exp of analystExp) {
-          expBlock += `- [${exp.type || 'general'}] **${exp.title || 'Untitled'}**: ${(exp.content || '').slice(0, 200)}\n`;
-          if (exp.id) analystInjectedExpIds.push(exp.id);
-        }
-        clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}${expBlock}`;
+    if (this.experienceStore && typeof this.experienceStore.getContextBlockWithIds === 'function') {
+      const maxExpInjected = this._adaptiveStrategy?.maxExpInjected ?? 5;
+      const { block: expBlock, ids: expIds } = await this.experienceStore.getContextBlockWithIds(
+        'requirement-analysis',
+        rawRequirement || '',
+        maxExpInjected,
+      );
+      analystInjectedExpIds = expIds || [];
+      if (expBlock && expBlock.trim().length > 0) {
+        // Optimization B: structured section header for LLM clarity
+        clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n## Context: Past Experience\n${expBlock}`;
         this.obs.recordExpUsage({ injected: analystInjectedExpIds.length });
-        console.log(`[Orchestrator] 📚 ANALYSE experience injection: ${analystInjectedExpIds.length} experience(s) from ExperienceStore`);
+        console.log(`[Orchestrator] 📚 ANALYSE experience injection: ${analystInjectedExpIds.length} experience(s) from ExperienceStore (keyword-scored + LLM-expanded)`);
       }
     }
   } catch (expErr) {
     console.warn(`[Orchestrator] ⚠️  ANALYSE experience injection failed (non-fatal): ${expErr.message}`);
   }
 
-  const outputPath = await this.agents[AgentRole.ANALYST].run(null, clarResult.enrichedRequirement);
+  // ── Optimization F: Pre-assess complexity for conditional prompt injection ──
+  // Use RequestTriage's rule engine (zero LLM calls, <1ms) to estimate complexity
+  // BEFORE calling AnalystAgent.run(). This allows buildPrompt() to conditionally
+  // skip verbose output format sections for simple tasks, saving ~500-800 tokens.
+  let preComplexityLevel = 'moderate'; // safe default
+  try {
+    const triage = new RequestTriage();
+    const triageResult = triage.triage(rawRequirement, { projectRoot: this._projectRoot });
+    if (triageResult.score < 15) preComplexityLevel = 'simple';
+    else if (triageResult.score < 40) preComplexityLevel = 'moderate';
+    else preComplexityLevel = 'complex';
+    console.log(`[Orchestrator] ⚡ Pre-complexity assessment: ${preComplexityLevel} (score=${triageResult.score})`);
+  } catch (triageErr) {
+    console.warn(`[Orchestrator] ⚠️  Pre-complexity assessment failed (non-fatal): ${triageErr.message}`);
+  }
 
-  // ── Store ANALYSE stage context for downstream stages ─────────────────────
+  // Pass pre-assessed complexity to AnalystAgent so buildPrompt() can conditionally
+  // trim verbose output format sections for simple tasks.
+  this.agents[AgentRole.ANALYST]._preComplexityLevel = preComplexityLevel;
+
+  const outputPath = await this.agents[AgentRole.ANALYST].run(null, clarResult.enrichedRequirement, null, this.handoffLog);
+
+  // ── P0-FIX: Validate ANALYST output is not empty ─────────────────────────
+  // If the LLM wrote an empty file (0 bytes or only whitespace), the downstream
+  // ARCHITECT Agent will receive garbage input. Detect this early and retry once
+  // with an explicit "your output was empty" hint before giving up.
+  if (outputPath && fs.existsSync(outputPath)) {
+    const outputContent = fs.readFileSync(outputPath, 'utf-8').trim();
+    if (outputContent.length === 0) {
+      console.warn(`[Orchestrator] ⚠️  ANALYST produced an empty file. Retrying once with explicit hint...`);
+      this.stateMachine.recordRisk('medium', '[ANALYST] First attempt produced empty output. Retrying.');
+      const retryHint = `[IMPORTANT: Your previous output was EMPTY. You MUST produce a complete requirements analysis document. Do not output an empty file.]\n\n${clarResult.enrichedRequirement}`;
+      const retryOutputPath = await this.agents[AgentRole.ANALYST].run(null, retryHint, null, this.handoffLog);
+      if (retryOutputPath && fs.existsSync(retryOutputPath)) {
+        const retryContent = fs.readFileSync(retryOutputPath, 'utf-8').trim();
+        if (retryContent.length > 0) {
+          console.log(`[Orchestrator] ✅ ANALYST retry succeeded (${retryContent.length} chars).`);
+          // Use the retry output path for the rest of the stage
+          return await _finalizeAnalyst.call(this, retryOutputPath, clarResult, analystInjectedExpIds);
+        }
+      }
+      throw new Error('[ANALYST] Agent produced empty output on both attempts. Cannot proceed.');
+    }
+  }
+
+  // ── Finalize ANALYST stage (extracted for retry reuse) ──────────────────
+  return await _finalizeAnalyst.call(this, outputPath, clarResult, analystInjectedExpIds);
+}
+
+/**
+ * Extracted finalization logic for the ANALYST stage.
+ * Called from _runAnalyst after Agent.run() succeeds (or after a retry).
+ * Handles: storeAnalyseContext, EvoMap feedback, Prompt A/B, complexity estimation,
+ * bus.publish (with ContractViolationError retry), and i18n translation.
+ *
+ * @this {import('./orchestrator').Orchestrator}
+ * @param {string} outputPath - Path to the generated requirements.md
+ * @param {object} clarResult - Result from RequirementClarifier
+ * @param {string[]} analystInjectedExpIds - Experience IDs injected into the prompt
+ * @returns {Promise<string>} outputPath
+ */
+async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
   const analyseCtx = storeAnalyseContext(this, outputPath, clarResult);
 
   // ── P1 fix: EvoMap feedback loop for ANALYSE stage (was completely missing) ───
@@ -297,13 +361,37 @@ async function _runAnalyst(rawRequirement) {
     }
   }
 
-  this.bus.publish(AgentRole.ANALYST, AgentRole.ARCHITECT, outputPath, {
-    clarificationRounds: clarResult.rounds ?? 0,
-    signalCount:         clarResult.allSignals?.length ?? 0,
-    riskNotes:           clarResult.riskNotes ?? [],
-    skipped:             clarResult.skipped ?? false,
-    contextSummary:      analyseCtx.summary,
-  });
+  // ── Publish with ContractViolationError retry ─────────────────────────────
+  // If the ANALYST output fails the ARCHITECT's content contract (e.g. too short,
+  // missing required sections), catch the error and retry the Agent once.
+  try {
+    this.bus.publish(AgentRole.ANALYST, AgentRole.ARCHITECT, outputPath, {
+      clarificationRounds: clarResult.rounds ?? 0,
+      signalCount:         clarResult.allSignals?.length ?? 0,
+      riskNotes:           clarResult.riskNotes ?? [],
+      skipped:             clarResult.skipped ?? false,
+      contextSummary:      analyseCtx.summary,
+    });
+  } catch (pubErr) {
+    if (pubErr instanceof ContractViolationError) {
+      console.warn(`[Orchestrator] ⚠️  ANALYST output failed contract: ${pubErr.contractReason}. Retrying Agent once...`);
+      this.stateMachine.recordRisk('medium', `[ANALYST] Output failed contract validation: ${pubErr.contractReason}. Retrying.`);
+      const retryHint = `[IMPORTANT: Your previous output failed quality validation: ${pubErr.contractReason}. Please produce a COMPLETE requirements analysis document with all required sections.]\n\n${clarResult.enrichedRequirement}`;
+      const retryPath = await this.agents[AgentRole.ANALYST].run(null, retryHint, null, this.handoffLog);
+      // Retry publish – if this also throws, let it propagate to the orchestrator
+      this.bus.publish(AgentRole.ANALYST, AgentRole.ARCHITECT, retryPath, {
+        clarificationRounds: clarResult.rounds ?? 0,
+        signalCount:         clarResult.allSignals?.length ?? 0,
+        riskNotes:           clarResult.riskNotes ?? [],
+        skipped:             clarResult.skipped ?? false,
+        contextSummary:      analyseCtx.summary,
+        contractRetry:       true,
+      });
+      console.log(`[Orchestrator] ✅ ANALYST contract retry succeeded.`);
+    } else {
+      throw pubErr;
+    }
+  }
 
   // Generate Chinese companion file for developers (non-blocking)
   translateMdFile(outputPath, this._rawLlmCall).catch(() => {});
@@ -311,4 +399,4 @@ async function _runAnalyst(rawRequirement) {
   return outputPath;
 }
 
-module.exports = { _runAnalyst, _recordPromptABOutcome };
+module.exports = { _runAnalyst, _recordPromptABOutcome, _finalizeAnalyst };

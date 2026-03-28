@@ -53,6 +53,19 @@ async function consumeAndPrepareStage(orch, {
 }) {
   const inputPath = orch.bus.consume(agentRole);
 
+  // P0-FIX: Validate inputPath is not null/undefined before proceeding.
+  // If upstream stage did not publish to the bus, consuming returns null.
+  // Failing early here with a clear message prevents a confusing downstream
+  // error inside Agent.run() → _readInput() where the null path would either
+  // silently fall through to rawInput or throw a generic "No input provided" error.
+  if (!inputPath) {
+    throw new Error(
+      `[consumeAndPrepareStage] Bus returned no input for role "${agentRole}". ` +
+      `The upstream stage did not publish its output to FileRefBus. ` +
+      `This usually means the previous stage failed silently or was skipped.`
+    );
+  }
+
   // Build upstream cross-stage context
   const upstreamCtx = buildUpstreamCtx(orch);
 
@@ -210,7 +223,12 @@ async function runEvoMapFeedback(orch, { injectedExpIds, errorContext, stageLabe
   const evolutionTriggers = orch.experienceStore.markUsedBatch(matchedIds);
 
   // Report only confirmed matched hits to Observability
-  orch.obs.recordExpUsage({ hits: matchedCount });
+  // P2 Enhancement: pass matchedIds and stageResult for fine-grained attribution
+  orch.obs.recordExpUsage({
+    hits: matchedCount,
+    matchedExpIds: matchedIds,
+    stageResult: { passed: true, stageLabel },
+  });
   console.log(`[Orchestrator] 🎯 Experience hit-rate (${stageLabel}): ${matchedCount}/${injectedExpIds.length} matched`);
 
   // Centralized evolution trigger via ExperienceStore.triggerEvolutions()

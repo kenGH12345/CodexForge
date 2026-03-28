@@ -67,6 +67,48 @@ class StageRunner {
   }
 
   /**
+   * Called by Orchestrator before stage execution.
+   * Subclasses can override to setup logging/hooks.
+   *
+   * @param {StageContext} context
+   */
+  async onStageStart(context) {
+    // Print stage header via handoffLog if available
+    const orchestrator = context.orchestrator;
+    if (orchestrator && orchestrator.handoffLog) {
+      const agentName = this._getAgentName();
+      orchestrator.handoffLog.printStageHeader(this._stageName, agentName);
+    }
+  }
+
+  /**
+   * Called by Orchestrator after stage execution.
+   *
+   * @param {StageContext} context
+   * @param {string|object} result
+   */
+  async onStageComplete(context, result) {
+    // Handoff completion is tracked via FileRefBus.publish() which is
+    // automatically logged by the wrapped bus.
+  }
+
+  /**
+   * Returns the Agent name for this stage (for display purposes).
+   * Subclasses should override.
+   * @returns {string}
+   */
+  _getAgentName() {
+    const agentNames = {
+      'ANALYSE': 'AnalystAgent',
+      'ARCHITECT': 'ArchitectAgent',
+      'PLAN': 'PlannerAgent',
+      'CODE': 'DeveloperAgent',
+      'TEST': 'TesterAgent',
+    };
+    return agentNames[this._stageName] || `${this._stageName}Agent`;
+  }
+
+  /**
    * Stage-prefixed log.
    * @param {string} msg
    */

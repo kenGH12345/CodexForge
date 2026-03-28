@@ -23,12 +23,20 @@ const { translateMdFile } = require('./i18n-translator');
 const { runEvoMapFeedback } = require('./stage-runner-utils');
 const { scanSourceFiles } = require('./file-scanner');
 const { _recordPromptABOutcome } = require('./stage-analyst');
+const { TestFailureExperienceRecorder } = require('./test-failure-recorder');
 const {
   buildTesterUpstreamCtx,
   buildTesterContextBlock,
   storeTestContext,
   webSearchHelper,
 } = require('./orchestrator-stage-helpers');
+const {
+  buildFixAgentPrompt,
+  buildPreviousFixesBlock,
+  buildFailureContext,
+  buildWebSearchContext,
+} = require('./stage-tester-prompts');
+const { buildRetryContext, compareOutputFingerprint } = require('./retry-divergence-guard');
 
 // Forward reference: _runDeveloper is needed for rollback. Lazy-loaded to avoid circular deps.
 let _runDeveloper = null;
@@ -86,8 +94,16 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
   // block-scoped — storeTestContext() always received null via the ?? fallback.
   let corrResult = null;
 
-  console.log(`\n[Orchestrator] Stage: TEST (TesterAgent)${testIteration > 1 ? ` [iteration ${testIteration}/${maxIterations}]` : ''}`);
-  const inputPath = this.bus.consume(AgentRole.TESTER);
+  // Print stage header via handoffLog if available
+  const iterationSuffix = testIteration > 1 ? ` [iteration ${testIteration}/${maxIterations}]` : '';
+  if (this.handoffLog) {
+    this.handoffLog.printStageHeader('TEST', 'TesterAgent');
+    if (testIteration > 1) {
+      console.log(`  🔄 Retry iteration ${testIteration}/${maxIterations}`);
+    }
+  } else {
+    console.log(`\n[Orchestrator] Stage: TEST (TesterAgent)${iterationSuffix}`);
+  }  const inputPath = this.bus.consume(AgentRole.TESTER);
 
   const upstreamCtxForTest = buildTesterUpstreamCtx(this);
 
@@ -99,15 +115,38 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
   // ── Step 0: Pre-generate test cases ──────────────────────────────────────
   console.log(`\n[Orchestrator] 📋 Pre-generating test cases (test-first planning)...`);
   let tcGenResult = { skipped: true, caseCount: 0 };
+  let isDetailedMode = false;
+  
+  // Check if detailed test generation mode is enabled
+  const useDetailedTestGen = this._config?.testGeneration?.mode === 'advanced';
+  
   try {
     const tcGen = new TestCaseGenerator(this._rawLlmCall, {
       verbose: true,
       outputDir: PATHS.OUTPUT_DIR,
     });
-    tcGenResult = await tcGen.generate();
-    if (!tcGenResult.skipped) {
-      console.log(`[Orchestrator] ✅ Test cases generated: ${tcGenResult.caseCount} case(s) → output/test-cases.md`);
+    
+    if (useDetailedTestGen && fs.existsSync(PATHS.CODE_DIFF_FILE)) {
+      // Advanced mode: generate detailed test document from code.diff
+      console.log(`[Orchestrator] 🔬 Using ADVANCED test generation mode (from code.diff)`);
+      tcGenResult = await tcGen.generateAdvanced();
+      isDetailedMode = true;
+      
+      if (!tcGenResult.skipped) {
+        console.log(`[Orchestrator] ✅ Detailed test plan generated: ${tcGenResult.caseCount} case(s) for ${tcGenResult.features?.length || 0} feature(s) → output/test-cases-detailed.md`);
+      } else {
+        console.log(`[Orchestrator] ⏭️  Advanced generation skipped, falling back to basic mode...`);
+        tcGenResult = await tcGen.generate();
+        isDetailedMode = false;
+      }
     } else {
+      // Basic mode: generate from requirements
+      tcGenResult = await tcGen.generate();
+    }
+    
+    if (!tcGenResult.skipped && !isDetailedMode) {
+      console.log(`[Orchestrator] ✅ Test cases generated: ${tcGenResult.caseCount} case(s) → output/test-cases.md`);
+    } else if (tcGenResult.skipped && !useDetailedTestGen) {
       console.log(`[Orchestrator] ⏭️  Test case generation skipped (no requirements.md found).`);
     }
   } catch (err) {
@@ -157,7 +196,7 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
   const testExpContext = testContextResult.content;
   const testInjectedExpIds = testContextResult.injectedExpIds || [];
   this.obs.recordExpUsage({ injected: testInjectedExpIds.length });
-  const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, testExpContext);
+const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, testExpContext, this.handoffLog);
 
   // ── Adapter Telemetry ─────────────────────────────────────────────────────
   if (this._adapterTelemetry && outputPath && fs.existsSync(outputPath)) {
@@ -210,6 +249,9 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
 
       const testGate = new QualityGate({ experienceStore: this.experienceStore, maxRollbacks: 1 });
       const testRollbackCountForGate = this._rollbackCounters?.get(WorkflowState.TEST) ?? 0;
+      // Plan-A: Use LoopGuard for centralized retry limit management
+      const loopGuard = this._loopGuard;
+      const loopGuardCanRetry = loopGuard ? loopGuard.canRetry('TEST', 'CODE') : true;
       const testGateInput = {
         failed: corrResult.signals.filter(s => s.severity === 'high').length,
         needsHumanReview: corrResult.needsHumanReview,
@@ -224,16 +266,41 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
       _recordPromptABOutcome('tester', !testDecision.rollback, corrResult.rounds ?? 0);
 
       if (testDecision.rollback) {
+        // Plan-A: Check LoopGuard before allowing rollback
+        if (loopGuard && !loopGuardCanRetry) {
+          console.warn(`[Orchestrator] ⚠️  LoopGuard: TEST→CODE retry blocked (max retries reached: ${loopGuard.getRetryCount('TEST', 'CODE')}/${loopGuard.getMaxRetries('TEST', 'CODE')}). Proceeding with risks recorded.`);
+          this.stateMachine.recordRisk('medium', `[LoopGuard] TEST→CODE rollback blocked after ${loopGuard.getRetryCount('TEST', 'CODE')} retries. Unresolved issues: ${riskMsg.slice(0, 200)}`);
+        } else {
         const testRollbackCount = this._rollbackCounters?.get(WorkflowState.TEST) ?? 0;
         if (this._rollbackCounters) this._rollbackCounters.set(WorkflowState.TEST, testRollbackCount + 1);
+        // Plan-A: Record retry in LoopGuard
+        if (loopGuard) loopGuard.recordRetry('TEST', 'CODE');
         if (!this._pendingTestMeta) this._pendingTestMeta = {};
         this._pendingTestMeta._testRollbackCount = testRollbackCount + 1;
         try {
           const coordinator = new RollbackCoordinator(this);
           await coordinator.rollback(WorkflowState.TEST, `Test report failed: ${riskMsg.slice(0, 200)}`);
+          
+          // Record rollback in handoff log
+          if (this.handoffLog) {
+            this.handoffLog.recordRollback('TEST', 'CODE', `Test report failed: ${riskMsg.slice(0, 200)}`);
+          }
 
           const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
-          const failureNote = `\n\n---\n## ⚠️ Test Report Failure (Retry ${testRollbackCount + 1})\n\nThe previous implementation failed test report review with these issues:\n${riskMsg}\n\nPlease fix the implementation to address these test failures before the tester retries.`;
+          // RetryDivergenceGuard: build enhanced failure note with Negative Prompt + Creativity Directive
+          let previousTestOutput = '';
+          try {
+            const testReportPath = path.join(PATHS.OUTPUT_DIR, 'test-report.md');
+            if (fs.existsSync(testReportPath)) previousTestOutput = fs.readFileSync(testReportPath, 'utf-8');
+          } catch (_) { /* non-fatal */ }
+
+          const retryContext = buildRetryContext({
+            previousOutput: previousTestOutput,
+            failureReason: riskMsg,
+            retryCount: testRollbackCount + 1,
+            stageName: 'TEST',
+          });
+          const failureNote = `\n\n---\n${retryContext}\n\nPlease fix the implementation to address these test failures before the tester retries.`;
           if (fs.existsSync(codeDiffPath)) {
             fs.appendFileSync(codeDiffPath, failureNote, 'utf-8');
           }
@@ -283,6 +350,7 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
         } catch (rollbackErr) {
           console.warn(`[Orchestrator] Test rollback failed (non-fatal): ${rollbackErr.message}. Proceeding with risks recorded.`);
         }
+        } // end Plan-A LoopGuard else block
       } else {
         console.warn(`[Orchestrator] ⚠️  Test rollback limit reached (max 1). Proceeding with ${corrResult.signals.filter(s => s.severity === 'high').length} unresolved high-severity issue(s).`);
       }
@@ -425,7 +493,8 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
       errorContext: '',
       stageLabel: 'TEST (first-run pass)',
     });
-    this.experienceStore.record({
+    // P1: Use recordWithContentCheck to avoid duplicate experience entries
+    this.experienceStore.recordWithContentCheck({
       type: ExperienceType.POSITIVE,
       category: ExperienceCategory.STABLE_PATTERN,
       title: `Real tests passed: ${testCommand}`,
@@ -558,69 +627,14 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
       console.warn(`[Orchestrator] 🌐 Auto-fix web search failed (non-fatal): ${wsErr.message}`);
     }
 
-    const fixPrompt = [
-      `You are **David Thomas and Andrew Hunt** \u2013 The Pragmatic Programmers, authors of *The Pragmatic Programmer: From Journeyman to Master* and the engineers who gave the industry the DRY principle, tracer bullets, and the broken windows theory of software quality.`,
-      `Your hallmark: you fix the ROOT CAUSE, not the symptom. You never apply a patch that makes the tests pass by coincidence. You leave the code in a better state than you found it.`,
-      `You are acting as the **Code Fix Agent** for this workflow. The project's test suite has failed.`,
-      `Your task: produce fix blocks that fix ALL failing tests.`,
-      ``,
-      `## Architecture Design`,
-      `> **[MANDATORY]** Before writing any fix, document your diagnosis:`,
-      `> - Root cause of each failing test (what is broken and why)`,
-      `> - Which files/functions need to change`,
-      `> - Why your proposed fix is correct (not just a workaround)`,
-      ``,
-      `## Execution Plan`,
-      `> **[MANDATORY]** List the fix steps in order:`,
-      `> 1. Fix #1: <file> lines <start>–<end> – <what you're changing and why>`,
-      `> 2. Fix #2: <file> lines <start>–<end> – <what you're changing and why>`,
-      `> (continue for each fix block below)`,
-      ``,
-      `## Previous Diff (for reference)`,
-      `\`\`\`diff`,
-      existingDiff.slice(0, 2000),
-      `\`\`\``,
-      ``,
+const fixPrompt = buildFixAgentPrompt({
+      existingDiff,
       previousFixesBlock,
-      ``,
       sourceFilesContext,
-      ``,
       failureContext,
-      ``,
       webSearchContext,
-      ``,
-      `## Fix Block Formats`,
-      ``,
-      `### PREFERRED: [LINE_RANGE] – line-number replacement (use this whenever you know the line numbers)`,
-      ``,
-      `[LINE_RANGE]`,
-      `file: relative/path/to/file.js`,
-      `start_line: 42`,
-      `end_line: 47`,
-      `replace: |`,
-      `  <new code that replaces lines 42–47, preserving surrounding indentation>`,
-      `[/LINE_RANGE]`,
-      ``,
-      `### FALLBACK: [REPLACE_IN_FILE] – string-match replacement (use only when line numbers are unknown)`,
-      ``,
-      `[REPLACE_IN_FILE]`,
-      `file: relative/path/to/file.js`,
-      `find: |`,
-      `  <exact code to find – MUST be copy-pasted verbatim from the source above, including all spaces and indentation>`,
-      `replace: |`,
-      `  <new code to replace it with>`,
-      `[/REPLACE_IN_FILE]`,
-      ``,
-      `## Rules`,
-      `1. Analyse the failure output above and identify the root cause of each failing test.`,
-      `2. Fill in the Architecture Design and Execution Plan sections FIRST, then output fix blocks.`,
-      `3. **PREFER [LINE_RANGE]**: The source files above include line numbers. Use start_line/end_line whenever possible.`,
-      `   [LINE_RANGE] is immune to whitespace/indent mismatches that cause [REPLACE_IN_FILE] to fail silently.`,
-      `4. If you use [REPLACE_IN_FILE], the "find:" block MUST be copy-pasted verbatim from the source (no paraphrasing).`,
-      `5. Only change what is necessary to fix the failures.`,
-      `6. Do NOT change test files unless the test itself is clearly wrong.`,
-      `7. File paths are relative to the project root: ${this.projectRoot}`,
-    ].join('\n');
+      projectRoot: this.projectRoot,
+    });
 
     console.log(`[Orchestrator] 🤖 Invoking Code Fix Agent for fix round ${fixRound}...`);
     let fixResponse;
@@ -709,7 +723,8 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
         errorContext: (result.failureSummary || []).join(' ') || (result.output || ''),
         stageLabel: `TEST (auto-fix round ${fixRound})`,
       });
-      this.experienceStore.record({
+      // P1: Use recordWithContentCheck to avoid duplicate experience entries
+      this.experienceStore.recordWithContentCheck({
         type: ExperienceType.POSITIVE,
         category: ExperienceCategory.STABLE_PATTERN,
         title: `Real tests passed after ${fixRound} auto-fix round(s)`,
@@ -771,7 +786,24 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
   const failMsg = `[RealTest] Tests still failing after ${fixRound} auto-fix round(s). Exit code: ${result.exitCode}. Failures: ${(result.failureSummary || []).slice(0, 3).join('; ')}`;
   this.stateMachine.recordRisk('high', failMsg);
   this.obs.recordTestResult({ passed: 0, failed: (result.failureSummary || []).length || 1, skipped: 0, rounds: fixRound });
-  this.experienceStore.record({
+  
+  // Enhanced test failure experience recording (ADR-XX)
+  try {
+    const failureRecorder = new TestFailureExperienceRecorder(this.experienceStore, { verbose: this._verbose });
+    failureRecorder.recordFailure({
+      error: new Error(failMsg),
+      testFile: 'multiple',
+      testCommand,
+      attempt: fixRound,
+      fixHistory: fixConversationHistory || [],
+      projectContext: 'workflow-agent',
+    });
+  } catch (recErr) {
+    console.warn(`[Orchestrator] ⚠️  Failed to record test failure experience (non-fatal): ${recErr.message}`);
+  }
+  
+  // Legacy recording (P1: use recordWithContentCheck to avoid duplicates)
+  this.experienceStore.recordWithContentCheck({
     type: ExperienceType.NEGATIVE,
     category: ExperienceCategory.PITFALL,
     title: `Real tests failed after ${fixRound} auto-fix rounds`,
@@ -779,6 +811,7 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
     skill: 'test-report',
     tags: ['real-test', 'auto-fix', 'failed'],
   });
+  
   console.warn(`[Orchestrator] ⚠️  Tests still failing after all fix rounds. Recorded as high-risk.`);
   if (failOnUnfixed) {
     throw new Error(failMsg);

@@ -24,6 +24,8 @@ const {
   storeCodeContext,
   codeQualityHelper,
 } = require('./orchestrator-stage-helpers');
+const { ContractViolationError } = require('./file-ref-bus');
+const { buildRetryContext } = require('./retry-divergence-guard');
 
 // Forward reference: _runArchitect is needed for rollback. Lazy-loaded to avoid circular deps.
 let _runArchitect = null;
@@ -43,8 +45,12 @@ function _getRunArchitect() {
  * @returns {Promise<string>} Path to the generated code.diff
  */
 async function _runDeveloper() {
-  console.log(`\n[Orchestrator] Stage: CODE (DeveloperAgent)`);
-  const inputPath = this.bus.consume(AgentRole.DEVELOPER);
+  // Print stage header via handoffLog if available
+  if (this.handoffLog) {
+    this.handoffLog.printStageHeader('CODE', 'DeveloperAgent');
+  } else {
+    console.log(`\n[Orchestrator] Stage: CODE (DeveloperAgent)`);
+  }  const inputPath = this.bus.consume(AgentRole.DEVELOPER);
 
   // ── Read execution plan from PLAN stage ────────────────────────────────
   // The PLAN stage publishes the architecture.md path as the main artifact
@@ -83,7 +89,32 @@ async function _runDeveloper() {
   const devInjectedExpIds = devContextResult.injectedExpIds || [];
   this.obs.recordExpUsage({ injected: devInjectedExpIds.length });
 
-  const outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, devExpContext);
+let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, devExpContext, this.handoffLog);
+
+  // ── P0-FIX: Validate DEVELOPER output is not empty ───────────────────────
+  // If the LLM wrote an empty file (0 bytes or only whitespace), the downstream
+  // TESTER Agent will receive garbage input. Detect this early and retry once.
+  if (outputPath && fs.existsSync(outputPath)) {
+    const devOutputContent = fs.readFileSync(outputPath, 'utf-8').trim();
+    if (devOutputContent.length === 0) {
+      console.warn(`[Orchestrator] ⚠️  DEVELOPER produced an empty file. Retrying once with explicit hint...`);
+      this.stateMachine.recordRisk('medium', '[DEVELOPER] First attempt produced empty output. Retrying.');
+      const retryHint = `[IMPORTANT: Your previous code output was EMPTY. You MUST produce a complete code diff. Do not output an empty file.]`;
+      const retryDevContext = devExpContext + '\n\n' + retryHint;
+      const retryOutputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, retryDevContext, this.handoffLog);
+      if (retryOutputPath && fs.existsSync(retryOutputPath)) {
+        const retryContent = fs.readFileSync(retryOutputPath, 'utf-8').trim();
+        if (retryContent.length > 0) {
+          console.log(`[Orchestrator] ✅ DEVELOPER retry succeeded (${retryContent.length} chars).`);
+          outputPath = retryOutputPath;
+        } else {
+          throw new Error('[DEVELOPER] Agent produced empty output on both attempts. Cannot proceed.');
+        }
+      } else {
+        throw new Error('[DEVELOPER] Agent produced no output on retry. Cannot proceed.');
+      }
+    }
+  }
 
   // ── Adapter Telemetry ─────────────────────────────────────────────────────
   if (this._adapterTelemetry && outputPath && fs.existsSync(outputPath)) {
@@ -226,16 +257,15 @@ async function _runDeveloper() {
     console.warn(`[Orchestrator] ⚠️  ${reviewResult.failed} high-severity code issue(s) remain. Attempting rollback to ARCHITECT stage.`);
     const failedNotes = reviewResult.riskNotes.slice(0, 3).join('; ');
     const failContent = `After ${reviewResult.rounds ?? 'N/A'} self-correction round(s), ${reviewResult.failed} high-severity issue(s) remained. Issues: ${failedNotes}`;
-    if (!this.experienceStore.appendByTitle('Code review: high-severity issues unresolved after self-correction', failContent)) {
-      this.experienceStore.record({
-        type: ExperienceType.NEGATIVE,
-        category: ExperienceCategory.PITFALL,
-        title: 'Code review: high-severity issues unresolved after self-correction',
-        content: failContent,
-        skill: 'code-development',
-        tags: ['code-review', 'failed', 'pitfall'],
-      });
-    }
+    // P1: Use recordWithContentCheck to avoid duplicate experience entries
+    this.experienceStore.recordWithContentCheck({
+      type: ExperienceType.NEGATIVE,
+      category: ExperienceCategory.PITFALL,
+      title: 'Code review: high-severity issues unresolved after self-correction',
+      content: failContent,
+      skill: 'code-development',
+      tags: ['code-review', 'failed', 'pitfall'],
+    });
 
     const codeRollbackCount = this._rollbackCounters?.get(WorkflowState.CODE) ?? 0;
     if (this._rollbackCounters) this._rollbackCounters.set(WorkflowState.CODE, codeRollbackCount + 1);
@@ -294,10 +324,28 @@ async function _runDeveloper() {
 
       // ── Full-stage rollback ──────────────────────────────────────────────
       await coordinator.rollback(WorkflowState.CODE, `Code review failed: ${failedNotes.slice(0, 200)}`);
+      
+      // Record rollback in handoff log
+      if (this.handoffLog) {
+        this.handoffLog.recordRollback('CODE', 'ARCHITECT', `Code review failed: ${failedNotes.slice(0, 200)}`);
+      }
 
       const archOutputPath = path.join(PATHS.OUTPUT_DIR, 'architecture.md');
       if (fs.existsSync(archOutputPath)) {
-        const failureNote = `\n\n---\n## ⚠️ Code Review Failure (Retry ${codeRollbackCount + 1})\n\nThe previous code implementation failed review with these issues:\n${failedNotes}\n\nPlease revise the architecture to address these code-level concerns before the developer retries.`;
+        // RetryDivergenceGuard: build enhanced failure note with Negative Prompt + Creativity Directive
+        let previousCodeOutput = '';
+        try {
+          const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
+          if (fs.existsSync(codeDiffPath)) previousCodeOutput = fs.readFileSync(codeDiffPath, 'utf-8');
+        } catch (_) { /* non-fatal */ }
+
+        const retryContext = buildRetryContext({
+          previousOutput: previousCodeOutput,
+          failureReason: failedNotes,
+          retryCount: codeRollbackCount + 1,
+          stageName: 'CODE',
+        });
+        const failureNote = `\n\n---\n${retryContext}\n\nPlease revise the architecture to address these code-level concerns before the developer retries.`;
         fs.appendFileSync(archOutputPath, failureNote, 'utf-8');
         this.bus.publish(AgentRole.ANALYST, AgentRole.ARCHITECT, archOutputPath, {
           codeReviewFailed: true,
@@ -369,12 +417,36 @@ async function _runDeveloper() {
 
   const codeOutputCtx = storeCodeContext(this, outputPath, reviewResult);
 
-  this.bus.publish(AgentRole.DEVELOPER, AgentRole.TESTER, outputPath, {
-    reviewRounds:   reviewResult.rounds ?? 0,
-    failedItems:    reviewResult.failed ?? 0,
-    riskNotes:      reviewResult.riskNotes ?? [],
-    contextSummary: codeOutputCtx.summary,
-  });
+  // ── Publish with ContractViolationError retry ─────────────────────────────
+  // If the DEVELOPER output fails the TESTER's content contract (e.g. too short,
+  // not a valid diff), catch the error and retry the Agent once.
+  try {
+    this.bus.publish(AgentRole.DEVELOPER, AgentRole.TESTER, outputPath, {
+      reviewRounds:   reviewResult.rounds ?? 0,
+      failedItems:    reviewResult.failed ?? 0,
+      riskNotes:      reviewResult.riskNotes ?? [],
+      contextSummary: codeOutputCtx.summary,
+    });
+  } catch (pubErr) {
+    if (pubErr instanceof ContractViolationError) {
+      console.warn(`[Orchestrator] ⚠️  DEVELOPER output failed contract: ${pubErr.contractReason}. Retrying Agent once...`);
+      this.stateMachine.recordRisk('medium', `[DEVELOPER] Output failed contract validation: ${pubErr.contractReason}. Retrying.`);
+      const retryHint = `[IMPORTANT: Your previous code output failed quality validation: ${pubErr.contractReason}. Please produce a COMPLETE code diff with all required changes.]`;
+      const retryDevCtx = devExpContext + '\n\n' + retryHint;
+      const retryPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, retryDevCtx, this.handoffLog);
+      // Retry publish – if this also throws, let it propagate to the orchestrator
+      this.bus.publish(AgentRole.DEVELOPER, AgentRole.TESTER, retryPath, {
+        reviewRounds:   reviewResult.rounds ?? 0,
+        failedItems:    reviewResult.failed ?? 0,
+        riskNotes:      reviewResult.riskNotes ?? [],
+        contextSummary: codeOutputCtx.summary,
+        contractRetry:  true,
+      });
+      console.log(`[Orchestrator] ✅ DEVELOPER contract retry succeeded.`);
+    } else {
+      throw pubErr;
+    }
+  }
 
   translateMdFile(outputPath, this._rawLlmCall).catch(() => {});
 

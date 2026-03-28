@@ -95,19 +95,21 @@ async function buildPlannerContextBlock(orch, upstreamCtx) {
   const _injectedExpIds = [];
 
   // Inject relevant experiences from ExperienceStore
-  if (orch.experienceStore) {
+  // P1 fix: Use getContextBlockWithIds() for keyword-scored + LLM-expanded retrieval,
+  // consistent with architect/developer/tester context builders.
+  if (orch.experienceStore && typeof orch.experienceStore.getContextBlockWithIds === 'function') {
     try {
-      const planExp = orch.experienceStore.query({
-        skill: 'execution-planning',
-        limit: orch._adaptiveStrategy?.maxExpInjected ?? 5,
-        currentRequirement: orch._currentRequirement || '',
-      });
-      if (planExp.length > 0) {
-        expContext += `## Execution Planning Experience (${planExp.length} items)\n`;
-        for (const exp of planExp) {
-          expContext += `- [${exp.type}] ${exp.title}: ${exp.content.slice(0, 200)}\n`;
-          if (exp.id) _injectedExpIds.push(exp.id);
-        }
+      const maxExpInjected = orch._adaptiveStrategy?.maxExpInjected ?? 5;
+      const { block: expBlock, ids: expIds } = await orch.experienceStore.getContextBlockWithIds(
+        'execution-planning',
+        orch._currentRequirement || '',
+        maxExpInjected,
+      );
+      if (expBlock && expBlock.trim().length > 0) {
+        expContext += expBlock;
+      }
+      if (expIds && expIds.length > 0) {
+        _injectedExpIds.push(...expIds);
       }
     } catch (_) { /* non-fatal */ }
   }
@@ -118,9 +120,11 @@ async function buildPlannerContextBlock(orch, upstreamCtx) {
   }
 
   // Inject complaint context
-  if (orch.complaintWall) {
+  // Fix: ComplaintWall has no .query() method. Use getOpenComplaints() and filter by targetType.
+  if (orch.complaintWall && typeof orch.complaintWall.getOpenComplaints === 'function') {
     try {
-      const planComplaints = orch.complaintWall.query({ target: 'workflow', status: 'open' });
+      const allOpen = orch.complaintWall.getOpenComplaints();
+      const planComplaints = allOpen.filter(c => c.targetType === 'workflow');
       if (planComplaints.length > 0) {
         expContext += `\n## ⚠️ Open Complaints (from ComplaintWall)\n`;
         for (const c of planComplaints.slice(0, 3)) {
@@ -146,7 +150,13 @@ async function buildPlannerContextBlock(orch, upstreamCtx) {
  */
 async function _runPlanner() {
   const planStageStartTime = Date.now();
-  console.log(`\n[Orchestrator] Stage: PLAN (PlannerAgent — Kent Beck XP Planning)`);
+  
+  // Print stage header via handoffLog if available
+  if (this.handoffLog) {
+    this.handoffLog.printStageHeader('PLAN', 'PlannerAgent');
+  } else {
+console.log(`\n[Orchestrator] Stage: PLAN (PlannerAgent — Frederick Brooks Project Management)`);
+  }
   const inputPath = this.bus.consume(AgentRole.PLANNER);
   console.log(`[Orchestrator] 📥 PLAN upstream input: ${inputPath ? path.basename(inputPath) : '(none)'}`);
 
@@ -178,7 +188,7 @@ async function _runPlanner() {
   // ── Execute PlannerAgent ───────────────────────────────────────────────
   console.log(`[Orchestrator] 🚀 Executing PlannerAgent (generating execution-plan.md)...`);
   const plannerStartTime = Date.now();
-  const outputPath = await this.agents[AgentRole.PLANNER].run(inputPath, null, planExpContent);
+const outputPath = await this.agents[AgentRole.PLANNER].run(inputPath, null, planExpContent, this.handoffLog);
   const plannerDuration = ((Date.now() - plannerStartTime) / 1000).toFixed(1);
   console.log(`[Orchestrator] ✅ PlannerAgent completed in ${plannerDuration}s → ${outputPath ? path.basename(outputPath) : '(no output)'}`);
 
