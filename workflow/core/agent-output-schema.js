@@ -150,22 +150,40 @@ function extractJsonBlock(content) {
  *
  * @param {object} jsonBlock - Parsed JSON from extractJsonBlock()
  * @param {string} role      - Agent role: 'analyst' | 'architect' | 'developer' | 'tester'
- * @returns {{ valid: boolean, reason: string, missingFields: string[] }}
+ * @returns {{ valid: boolean, reason: string, missingFields: string[], warnings: string[] }}
  */
 function validateJsonBlock(jsonBlock, role) {
   if (!jsonBlock) {
-    return { valid: false, reason: 'No JSON block found', missingFields: [] };
+    return { valid: false, reason: 'No JSON block found', missingFields: [], warnings: [] };
   }
 
   const schema = SCHEMAS[role.toLowerCase()];
   if (!schema) {
-    return { valid: true, reason: `No schema defined for role "${role}"`, missingFields: [] };
+    return { valid: true, reason: `No schema defined for role "${role}"`, missingFields: [], warnings: [] };
   }
 
   const missingFields = [];
+  const warnings = [];
+
   for (const [field, spec] of Object.entries(schema.fields)) {
+    // Check required field existence
     if (spec.required && !(field in jsonBlock)) {
       missingFields.push(field);
+      continue;
+    }
+
+    // P1 fix: Deep validation for present fields
+    if (field in jsonBlock) {
+      const value = jsonBlock[field];
+      const typeError = _validateFieldType(field, value, spec);
+      if (typeError) {
+        warnings.push(typeError);
+      }
+
+      // Check array non-empty for required array fields
+      if (spec.required && spec.type === 'array' && Array.isArray(value) && value.length === 0) {
+        warnings.push(`Field "${field}" is required but empty array`);
+      }
     }
   }
 
@@ -174,10 +192,53 @@ function validateJsonBlock(jsonBlock, role) {
       valid: false,
       reason: `Missing required fields: ${missingFields.join(', ')}`,
       missingFields,
+      warnings,
     };
   }
 
-  return { valid: true, reason: 'ok', missingFields: [] };
+  return { valid: true, reason: 'ok', missingFields: [], warnings };
+}
+
+/**
+ * P1 fix: Validates field type matches schema specification.
+ *
+ * @param {string} field - Field name
+ * @param {any} value - Field value
+ * @param {object} spec - Schema field spec
+ * @returns {string|null} Warning message if type mismatch, null if OK
+ */
+function _validateFieldType(field, value, spec) {
+  const expectedType = spec.type;
+
+  if (expectedType === 'array') {
+    if (!Array.isArray(value)) {
+      return `Field "${field}" should be array, got ${typeof value}`;
+    }
+    return null;
+  }
+
+  if (expectedType === 'object') {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return `Field "${field}" should be object, got ${Array.isArray(value) ? 'array' : typeof value}`;
+    }
+    return null;
+  }
+
+  if (expectedType === 'string') {
+    if (typeof value !== 'string') {
+      return `Field "${field}" should be string, got ${typeof value}`;
+    }
+    return null;
+  }
+
+  if (expectedType === 'number') {
+    if (typeof value !== 'number' || isNaN(value)) {
+      return `Field "${field}" should be number, got ${typeof value}`;
+    }
+    return null;
+  }
+
+  return null;
 }
 
 /**

@@ -1,6 +1,9 @@
 /**
  * TesterAgent – Quality Testing Agent
  *
+ * Domain Expert: Gerald Weinberg (author of "The Psychology of Computer Programming", pioneer of software testing as a human activity)
+ * Philosophy: "Testing is not just about finding bugs—it's about understanding systems, managing risk, and improving the human processes that create software."
+ *
  * Role: Independent auditor.
  * Input:  output/code.diff  (file path passed by orchestrator)
  * Output: output/test-report.md
@@ -24,6 +27,8 @@ const { buildJsonBlockInstruction, extractJsonBlock, validateJsonBlock } = requi
 class TesterAgent extends BaseAgent {
   constructor(llmCall, hookEmitter, opts = {}) {
     super(AgentRole.TESTER, llmCall, hookEmitter, opts);
+    // P2 fix: Load coverage threshold from config
+    this._coverageThreshold = opts.coverageThreshold ?? 80;
   }
 
   /**
@@ -65,15 +70,32 @@ class TesterAgent extends BaseAgent {
     // Inject pre-generated test cases if available
     // Cap at 12000 chars to avoid token overflow (large test suites can be very long)
     const TEST_CASES_TOKEN_CAP = 12000;
-    const testCasesPath = path.join(this._outputDir, 'test-cases.md');
-    const testCasesRaw = fs.existsSync(testCasesPath)
-      ? fs.readFileSync(testCasesPath, 'utf-8')
-      : null;
+    
+    // P1-ENHANCEMENT: Try detailed test cases first, fallback to basic
+    const detailedTestCasesPath = path.join(this._outputDir, 'test-cases-detailed.md');
+    const basicTestCasesPath = path.join(this._outputDir, 'test-cases.md');
+    
+    let testCasesPath = null;
+    let testCasesRaw = null;
+    let isDetailedDoc = false;
+    
+    if (fs.existsSync(detailedTestCasesPath)) {
+      testCasesPath = detailedTestCasesPath;
+      testCasesRaw = fs.readFileSync(detailedTestCasesPath, 'utf-8');
+      isDetailedDoc = true;
+    } else if (fs.existsSync(basicTestCasesPath)) {
+      testCasesPath = basicTestCasesPath;
+      testCasesRaw = fs.readFileSync(basicTestCasesPath, 'utf-8');
+    }
+    
     const testCasesContent = testCasesRaw && testCasesRaw.length > TEST_CASES_TOKEN_CAP
-      ? testCasesRaw.slice(0, TEST_CASES_TOKEN_CAP) + `\n\n> ⚠️ [Truncated at ${TEST_CASES_TOKEN_CAP} chars to fit context window. Full file: output/test-cases.md]`
+      ? testCasesRaw.slice(0, TEST_CASES_TOKEN_CAP) + `\n\n> ⚠️ [Truncated at ${TEST_CASES_TOKEN_CAP} chars to fit context window. Full file: output/${path.basename(testCasesPath)}]`
       : testCasesRaw;
+    
     const testCasesSection = testCasesContent
-      ? `\n## Pre-Planned Test Cases (Execute ALL of these)\n> These test cases were designed from the requirements BEFORE testing began.\n> The JSON array below contains automation-ready test cases with concrete test data.\n> You MUST execute every test case and report its result using the same \`case_id\`.\n\n${testCasesContent}\n`
+      ? (isDetailedDoc
+        ? `\n## Detailed Test Plan (Execute ALL test cases per this document)\n> This is a comprehensive test document generated from code.diff analysis.\n> It contains: Feature Scope, Detailed Test Cases, Boundary/Edge Analysis, Test Data Sets.\n> \n> **CRITICAL**: Execute EVERY test case listed in Section 2.\n> For each test case, verify against the exact \`test_data\` provided in Section 4.\n> Report results using the \`case_id\` format (TC_XXXX_XXX).\n>\n> Sections included:\n> - Section 1: Feature Scope Analysis\n> - Section 2: Detailed Test Cases (with steps, expected results, test data)\n> - Section 3: Boundary & Edge Case Analysis\n> - Section 4: Test Data Sets\n> - Section 5: Coverage Matrix\n> - Section 6: Execution Instructions\n> - Section 7: Machine-Readable JSON\n\n${testCasesContent}\n`
+        : `\n## Pre-Planned Test Cases (Execute ALL of these)\n> These test cases were designed from the requirements BEFORE testing began.\n> The JSON array below contains automation-ready test cases with concrete test data.\n> You MUST execute every test case and report its result using the same \`case_id\`.\n\n${testCasesContent}\n`)
       : '';
 
     // Check if real execution results are already available in the experience context
@@ -89,12 +111,23 @@ class TesterAgent extends BaseAgent {
           `3. For BLOCKED cases (could not determine status), perform your own code-diff analysis.\n` +
           `4. Add any additional test cases you discover beyond the pre-planned ones (use IDs like TC_EXTRA_001).\n` +
           `5. The Coverage Analysis must reference the pre-planned \`case_id\` values.\n`
-        : `\n**IMPORTANT**: A pre-planned test suite (JSON format) is provided in the "Pre-Planned Test Cases" section. You MUST:\n1. Execute EVERY test case in the JSON array – use the \`case_id\` as the ID column in your report table.\n2. For each case: verify the \`steps\` against the code diff, check if \`expected\` result is satisfied.\n3. Report results in the "Test Cases Executed" table with columns: case_id | title | expected | actual | status (PASS/FAIL/BLOCKED).\n4. Add any additional test cases you discover beyond the pre-planned ones (use IDs like TC_EXTRA_001).\n5. The Coverage Analysis must reference the pre-planned \`case_id\` values.\n`
+        : (isDetailedDoc
+          ? `\n**DETAILED TEST PLAN PROVIDED**\nA comprehensive test document was generated from code.diff analysis. You MUST:\n` +
+            `1. **Execute ALL test cases from Section 2** – Each test case includes step-by-step instructions and exact test data.\n` +
+            `2. **Verify boundary conditions from Section 3** – Test min/max boundaries, empty values, null inputs as specified.\n` +
+            `3. **Use exact test data from Section 4** – Do NOT invent test data; use the concrete JSON values provided.\n` +
+            `4. **Reference code locations from \`code_reference\`** – Verify the actual implementation matches expectations.\n` +
+            `5. **Report format** – ID must be \`case_id\` | Title: \`title\` | Expected: \`expected\` | Status: PASS/FAIL/BLOCKED\n` +
+            `6. **Add exploratory tests** – Beyond Section 2, use your expertise to find additional edge cases (ID: TC_EXTRA_001, etc.)\n` +
+            `7. **Coverage Analysis** – Map each feature from Section 1 to your test results\n\n` +
+            `If a pre-planned case FAILS but the code looks correct, investigate: Is the expected result outdated?\n` +
+            `If a pre-planned case PASSES but you suspect issues, perform deeper analysis (it's your job to investigate).\n`
+          : `\n**IMPORT:ANT**: A pre-planned test suite (JSON format) is provided in the "Pre-Planned Test Cases" section. You MUST:\n1. Execute EVERY test case in the JSON array – use the \`case_id\` as the ID column in your report table.\n2. For each case: verify the \`steps\` against the code diff, check if \`expected\` result is satisfied.\n3. Report results in the "Test Cases Executed" table with columns: case_id | title | expected | actual | status (PASS/FAIL/BLOCKED).\n4. Add any additional test cases you discover beyond the pre-planned ones (use IDs like TC_EXTRA_001).\n5. The Coverage Analysis must reference the pre-planned \`case_id\` values.\n`)
       : '';
 
-    return `You are **Michael Bolton** – co-developer of Rapid Software Testing (RST), one of the world's most respected exploratory testing practitioners, and a relentless critic of shallow, checkbox-driven QA.
-You believe testing is an investigation, not a confirmation. You look for what the developer did not think to test.
-Your hallmark: you cite specific evidence from the code diff for every defect, you never accept "it looks fine" as a verdict, and you treat every acceptance criterion as a falsifiable hypothesis.
+    return `You are **Gerald Weinberg** – author of *The Psychology of Computer Programming* (the first book to treat software testing as a human activity), *An Introduction to General Systems Thinking*, and *Quality Software Management* series.
+You have spent five decades teaching that testing is not just about finding bugs—it's about understanding systems, managing risk, and improving the human processes that create software.
+Your hallmark: you look beyond the code to the systemic context, you treat every test as an experiment with a hypothesis, and you understand that "quality" is value to some person.
 You are acting as the **Quality Testing Agent** for this workflow.
 
 ## Your Role
@@ -182,9 +215,11 @@ Pay special attention to Coverage Analysis – every acceptance criterion must b
     }
 
     // ── Mandatory section compliance check (P1-4: bilingual support) ─────────
+    // TesterAgent's mandatory sections are test-report specific
     const mandatorySections = [
-      { en: 'Architecture Design', zh: '架构设计' },
-      { en: 'Execution Plan', zh: '执行计划' },
+      { en: 'Test Summary', zh: '测试总结' },
+      { en: 'Defects Found', zh: '发现的缺陷' },
+      { en: 'Recommendations', zh: '建议' },
     ];
     const missingMandatory = mandatorySections.filter(s => !llmResponse.includes(s.en) && !llmResponse.includes(s.zh));
     if (missingMandatory.length > 0) {
@@ -204,10 +239,11 @@ Pay special attention to Coverage Analysis – every acceptance criterion must b
       if (plannedIds.length > 0) {
         const coveredIds = plannedIds.filter(id => llmResponse.includes(id));
         const coverageRate = Math.round((coveredIds.length / plannedIds.length) * 100);
-        if (coverageRate < 80) {
-          console.warn(`[TesterAgent] WARNING: Only ${coveredIds.length}/${plannedIds.length} pre-planned test case IDs (${coverageRate}%) appear in the report. The tester may have ignored the test checklist.`);
+        // P2 fix: Use configurable threshold
+        if (coverageRate < this._coverageThreshold) {
+          console.warn(`[TesterAgent] WARNING: Only ${coveredIds.length}/${plannedIds.length} pre-planned test case IDs (${coverageRate}%) appear in the report. Threshold: ${this._coverageThreshold}%. The tester may have ignored the test checklist.`);
         } else {
-          console.log(`[TesterAgent] ✅ Test case coverage: ${coveredIds.length}/${plannedIds.length} IDs referenced in report (${coverageRate}%).`);
+          console.log(`[TesterAgent] ✅ Test case coverage: ${coveredIds.length}/${plannedIds.length} IDs referenced in report (${coverageRate}%). Threshold: ${this._coverageThreshold}%.`);
         }
       }
     }

@@ -51,6 +51,31 @@ You are acting as the **Code Development Agent** for this workflow.
 - Strictly follow the architecture: do not introduce components or patterns not described.
 - If accumulated experience is provided below, apply proven patterns and avoid known pitfalls.
 
+## File Size & Complexity Guidelines (CRITICAL)
+Follow these file organization principles to maintain code quality:
+
+### Effective Line Limits (Excluding comments and blank lines)
+| File Type | Maximum Effective Lines | Rationale |
+|-----------|------------------------|-----------|
+| **Library/Util** | 100 lines | Simple utilities should be focused |
+| **Core/Business** | 300 lines | Core logic requires more space but not monoliths |
+| **API/Service** | 300 lines | Service layer should be cohesive |
+| **Agent/Orchestrator** | 500 lines | Complex agents need room but watch complexity |
+
+### When Approaching Limits
+**DO:**
+- Split large files by responsibility (e.g., \`parser.js\` → \`parser-core.js\` + \`parser-util.js\`)
+- Extract reusable utilities into separate modules
+- Use composition over large monolithic classes
+- Monitor effective lines (actual code) vs total lines (includes comments)
+
+**DON'T:**
+- Artificially inflate files with excessive whitespace
+- Hide complexity in comments instead of refactoring
+- Create circular dependencies when splitting files
+
+> **Tip:** If a file exceeds its tier limit, the workflow will flag it for refactoring. It's always better to split proactively than to retrofit later.
+
 ## Output Format
 Produce a unified diff in standard git diff format:
 \`\`\`diff

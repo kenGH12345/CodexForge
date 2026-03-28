@@ -133,30 +133,63 @@ INIT → ANALYSE → ARCHITECT → PLAN → CODE → TEST → FINISHED
 - Decompose the requirement into structured spec
 - Produce \`output/requirement.md\` with user stories, acceptance criteria, module map
 - **Actor boundary**: ONLY write requirements, NOT architecture or code
+- **Output**: Display \`✅ ANALYSE done: <brief summary of requirements>\`
 
 ### Stage 3: ARCHITECT
 - Design the technical architecture based on requirements
 - Produce \`output/architecture.md\` with component design, API contracts
 - **Human review checkpoint**: pause and ask user to confirm architecture
 - **Actor boundary**: ONLY write architecture, NOT code
+- **Output**: Display \`✅ ARCHITECT done: <key design decisions>\`
 
 ### Stage 4: PLAN
 - Break architecture into vertical-slice implementation tasks
 - Produce \`output/execution-plan.md\` with ordered task list, dependencies
 - **Actor boundary**: ONLY write plan, NOT code
+- **Output**: Display \`✅ PLAN done: <N tasks planned>\` + task list
 
 ### Stage 5: CODE
 - Implement following the execution plan task by task
 - Follow coding principles: no over-engineering, minimal change, reuse over reinvention
 - Each change must compile and pass tests independently
+- **Output**: After each file change, display \`📝 Modified: <file path>\`
+- **Output**: When done, display \`✅ CODE done: <N files modified>\`
 
 ### Stage 6: TEST
 - Verify all acceptance criteria from Stage 2
 - Run test commands, check coverage
 - Gate on zero Critical/High defects
+- **Output**: Display \`✅ TEST done: <pass/fail summary>\`
 
-### Stage 7: FINISHED
-- Summarize all changes and artifacts
+### Stage 7: FINISHED (Completion Summary — MANDATORY)
+
+You MUST output a structured completion summary. This is NOT optional:
+
+\`\`\`
+🎉 Workflow Complete!
+
+## Summary
+- **Requirement**: <one-line description of what was requested>
+- **Stages completed**: ANALYSE → ARCHITECT → PLAN → CODE → TEST → FINISHED
+- **Duration**: <approximate time>
+
+## Modified Files
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | \`path/to/file.js\` | Modified | <what changed> |
+| 2 | \`path/to/new-file.js\` | Created | <what it does> |
+| 3 | \`path/to/old-file.js\` | Deleted | <why removed> |
+
+## Key Decisions
+- <decision 1 and rationale>
+- <decision 2 and rationale>
+
+## Acceptance Criteria Status
+- ✅ <criteria 1> — verified
+- ✅ <criteria 2> — verified
+\`\`\`
+
+> ⚠️ The **Modified Files** table is CRITICAL. Users must see exactly which files were changed.
 
 ## Coding Principles
 
@@ -188,20 +221,57 @@ INIT → ANALYSE → ARCHITECT → PLAN → CODE → TEST → FINISHED
 - Don't ignore test reports — gate on zero Critical/High defects
 - Don't manually replicate what \`init-project.js\` does — run it via terminal
 
-## Progress Display
+## ⚡ Bash/Terminal Safety Rules (CRITICAL)
 
-Always show progress during multi-step work:
-- \`🔍 Analyzing...\` — starting analysis
-- \`📝 Writing...\` — generating artifacts
-- \`✅ Phase N done: <summary>\` — phase complete
-- \`⚠️ Issue found: <description>\` — problem detected
+When using Bash/Terminal, follow these rules to prevent hanging:
 
-For 3+ sub-tasks, display a progress dashboard:
+1. **Never start foreground servers** — commands like \`npm run dev\`, \`python manage.py runserver\` block forever. Use \`&\` suffix or skip.
+2. **Always add timeout** — for network commands (curl, wget), add \`--max-time 10\` or equivalent.
+3. **Prefer IDE tools over Bash** — use \`read_file\` instead of \`cat\`, \`list_dir\` instead of \`ls\`/\`find\`, \`grep_search\` instead of \`grep\`.
+4. **Never run interactive commands** — avoid anything that prompts for input (ssh, sudo, npm login).
+5. **Keep commands short** — if a command might take >30 seconds, warn the user first or find an alternative.
+6. **Verification MUST use IDE tools, NOT Bash** — when verifying file content (JSON validity, config correctness, file existence), ALWAYS use \`read_file\` to read the file and validate in-context. NEVER spawn a Bash command for verification — it can hang silently with no visible feedback.
+7. **Announce before Bash** — before ANY Bash tool call, output a brief message explaining what the command does and how long it should take (e.g. "Running tests, ~10s..."). If the command hangs, the user can see what went wrong.
+8. **One command per call** — never chain multiple commands with \`&&\` or \`;\` in a single Bash call. If one hangs, the user cannot tell which one.
+
+## Progress Display (MANDATORY)
+
+> Users MUST always see the current workflow status. This is a UX contract.
+
+### Phase Markers (every stage transition)
+At the START of each stage, output:
 \`\`\`
-📍 Progress: N/Total completed
-✅ 1. <done task> — <result>
-🔄 K. <current task> — In Progress
-⬜ M. <pending task>
+🔍 Stage 2/7: ANALYSE — Analyzing requirements...
+\`\`\`
+At the END of each stage, output:
+\`\`\`
+✅ Stage 2/7: ANALYSE done — 3 user stories, 5 acceptance criteria identified
+\`\`\`
+
+### Progress Dashboard (after each stage)
+\`\`\`
+📍 Workflow Progress: 3/7 stages completed
+✅ 1. INIT — Project initialized
+✅ 2. ANALYSE — Requirements decomposed (3 user stories)
+✅ 3. ARCHITECT — Architecture designed (2 new modules)
+🔄 4. PLAN — In Progress
+⬜ 5. CODE
+⬜ 6. TEST
+⬜ 7. FINISHED
+\`\`\`
+
+### File Change Tracking (during CODE stage)
+During the CODE stage, after each file modification, output:
+\`\`\`
+📝 [1/5] Modified: src/auth/login.js — Added JWT validation
+📝 [2/5] Created: src/auth/token-utils.js — Token helper functions
+📝 [3/5] Modified: src/routes/api.js — Added auth middleware
+\`\`\`
+
+### Error/Block Visibility
+\`\`\`
+❌ Stage 6 TEST FAILED: 2 test cases failing
+⚠️ Action needed: fix failing tests before proceeding
 \`\`\`
 
 ## Key Files Reference

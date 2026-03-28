@@ -145,24 +145,33 @@ class AnalystAgent extends BaseAgent {
       }
     }
 
-    return `You are **Alistair Cockburn** – the world's foremost authority on use cases and requirements engineering.
-You invented the use-case methodology, co-authored the Agile Manifesto, and wrote *Writing Effective Use Cases* (Addison-Wesley, 2000).
-Your hallmark: you translate messy human intent into crystal-clear, testable requirements that leave no room for misinterpretation.
-You are acting as the **Requirement Analysis Agent** for this workflow.
+    // NOTE: Role identity, thinking process, analysis principles, negative examples,
+    // complexity assessment, module map construction, and output language are all
+    // defined in AGENT_FIXED_PREFIXES.analyst (prompt-agent-prefixes.js).
+    // This buildPrompt() only defines the OUTPUT FORMAT and injects dynamic content
+    // (anchor files, experience, JSON instruction). See Optimization A (token dedup).
 
-## Your Role
-- Translate the user's raw requirement into a structured, unambiguous requirement document.
-- Focus ONLY on WHAT the user wants, not HOW to implement it.
-- Do NOT include any technical implementation details, code snippets, or architecture decisions.
-- Do NOT suggest frameworks, libraries, or design patterns.
+    // Optimization F: Conditional prompt injection based on pre-assessed complexity.
+    // For simple tasks, skip verbose section descriptions (5-8) and Module Map example.
+    // The Fixed Prefix already instructs: "Simple tasks: streamline to minimal spec,
+    // skip chapters 5-8. Still produce Module Map (even if just 1 module)."
+    const isSimple = this._preComplexityLevel === 'simple';
 
-## Output Format
+    // Sections 1-4 are always included (core requirement structure)
+    const coreSections = `## Output Format
 Produce a Markdown document with the following sections:
 1. **Overview** – One-paragraph summary of the business goal
 2. **User Stories** – Bullet list of "As a [role], I want [goal], so that [benefit]"
 3. **Acceptance Criteria** – Numbered list of verifiable conditions (WHEN/THEN/IF format)
-4. **Out of Scope** – Explicit list of things NOT included in this requirement
-5. **Open Questions** – Any ambiguities that need clarification before implementation
+4. **Out of Scope** – Explicit list of things NOT included in this requirement`;
+
+    // Sections 5-8: verbose for complex tasks, compact for simple tasks
+    const extendedSections = isSimple
+      ? `5. **Open Questions** – List any ambiguities (keep brief for simple tasks)
+6. **Architecture Design** *(mandatory)* – Key entities, functional boundaries, constraints. ⚠️ REQUIRED.
+7. **Execution Plan** *(mandatory)* – Clarifications applied, assumptions made, remaining risks. ⚠️ REQUIRED.
+8. **Functional Module Map** *(mandatory)* – Module ID, name, boundaries, dependencies, complexity, isolatable. ⚠️ REQUIRED. Even for 1-module changes, include the map.`
+      : `5. **Open Questions** – Any ambiguities that need clarification before implementation
 6. **Architecture Design** *(mandatory)* – High-level analysis of the problem domain:
    - Key entities and their relationships
    - Major functional boundaries (what subsystems are implied by the requirements)
@@ -187,9 +196,14 @@ Produce a Markdown document with the following sections:
      |-----------|------|-------------|------------|--------------|------------|------------|
      | mod-auth  | Authentication | User login, registration, token management | src/auth/*, src/middleware/auth* | mod-db, mod-config | medium | yes |
      \`\`\`
-     Cross-cutting concerns: logging, error-handling, configuration
+     Cross-cutting concerns: logging, error-handling, configuration`;
 
-${jsonInstruction}
+    // JSON block instruction: compact for simple tasks
+    const jsonSection = isSimple
+      ? `${jsonInstruction}
+
+**IMPORTANT**: JSON block MUST include "moduleMap" with modules array (id, name, description, boundaries, dependencies, complexity, isolatable) and crossCuttingConcerns array.`
+      : `${jsonInstruction}
 
 **IMPORTANT for JSON block**: The JSON metadata block MUST include a "moduleMap" field with this structure:
 \`\`\`
@@ -207,21 +221,16 @@ ${jsonInstruction}
   ],
   "crossCuttingConcerns": ["logging", "error-handling"]
 }
-\`\`\`
+\`\`\``;
+
+    return `${coreSections}
+${extendedSections}
+
+${jsonSection}
 
 ## User Requirement
 ${inputContent}
 ${anchorSection}${expSection}
-## Codebase Research Rules (CRITICAL)
-- If Anchor Files are listed above: read ONLY those files and their direct imports/callers. Do NOT search for other files.
-- If Inferred Entities are listed above: search for ONLY those entity names. Do NOT broaden the search.
-- **Search budget**: at most 6 file searches and 4 file reads. Stop once you have enough context to write the requirement.
-- **Relevance gate**: before reading any file, ask: "Is this directly needed to understand the user's requirement?" If no, skip it.
-- Do NOT perform broad pattern searches like "Show.*Food" or "Close.*Menu" that match unrelated files.
-
-## Output Language
-**You MUST write the entire requirement document in Chinese (简体中文).** All section headings, descriptions, user stories, acceptance criteria, and explanations must be in Chinese. Only keep technical terms, proper nouns, file names, and code identifiers in English.
-
 ## Instructions
 First output the JSON metadata block (as instructed above), then write the full Markdown document.
 Remember: NO technical details, NO code, NO architecture.
@@ -274,6 +283,8 @@ Remember: NO technical details, NO code, NO architecture.
 
     // ── Module Map validation ──────────────────────────────────────────────
     // Verify that the JSON block contains a valid moduleMap structure.
+    // Enhanced validation: checks id/name, boundaries, dependencies cross-ref,
+    // complexity enum, and isolatable type to prevent invalid data reaching ARCHITECT.
     if (jsonBlock && jsonBlock.moduleMap) {
       const mm = jsonBlock.moduleMap;
       if (Array.isArray(mm.modules) && mm.modules.length > 0) {
@@ -282,6 +293,55 @@ Remember: NO technical details, NO code, NO architecture.
         console.log(`[AnalystAgent] 🗺️  Module Map: ${validModules.length} module(s), ${isolatableCount} isolatable, ${(mm.crossCuttingConcerns || []).length} cross-cutting concern(s).`);
         if (validModules.length < mm.modules.length) {
           console.warn(`[AnalystAgent] ⚠️  Module Map: ${mm.modules.length - validModules.length} module(s) missing required 'id' or 'name' field.`);
+        }
+
+        // ── Enhanced validation (P2): structural integrity checks ──────────
+        const moduleIds = new Set(mm.modules.map(m => m.id).filter(Boolean));
+        const VALID_COMPLEXITY = new Set(['low', 'medium', 'high']);
+        const warnings = [];
+
+        for (const mod of mm.modules) {
+          if (!mod.id) continue; // Already reported above
+
+          // Check boundaries: must be non-empty array of non-empty strings
+          if (!Array.isArray(mod.boundaries) || mod.boundaries.length === 0) {
+            warnings.push(`Module "${mod.id}": missing or empty 'boundaries' array`);
+          } else {
+            const emptyBoundaries = mod.boundaries.filter(b => typeof b !== 'string' || !b.trim());
+            if (emptyBoundaries.length > 0) {
+              warnings.push(`Module "${mod.id}": ${emptyBoundaries.length} invalid boundary value(s)`);
+            }
+          }
+
+          // Check dependencies: must reference existing module IDs
+          if (Array.isArray(mod.dependencies)) {
+            const unknownDeps = mod.dependencies.filter(dep => !moduleIds.has(dep));
+            if (unknownDeps.length > 0) {
+              warnings.push(`Module "${mod.id}": unknown dependency ID(s): [${unknownDeps.join(', ')}]`);
+            }
+          }
+
+          // Check complexity: must be one of low/medium/high
+          if (mod.complexity && !VALID_COMPLEXITY.has(mod.complexity)) {
+            warnings.push(`Module "${mod.id}": invalid complexity "${mod.complexity}" (expected: low/medium/high)`);
+          }
+
+          // Check isolatable: must be boolean
+          if (mod.isolatable !== undefined && typeof mod.isolatable !== 'boolean') {
+            warnings.push(`Module "${mod.id}": 'isolatable' should be boolean, got ${typeof mod.isolatable}`);
+          }
+        }
+
+        if (warnings.length > 0) {
+          console.warn(`[AnalystAgent] ⚠️  Module Map structural issues (${warnings.length}):`);
+          for (const w of warnings.slice(0, 8)) {
+            console.warn(`[AnalystAgent]    - ${w}`);
+          }
+          if (warnings.length > 8) {
+            console.warn(`[AnalystAgent]    ... and ${warnings.length - 8} more`);
+          }
+        } else {
+          console.log(`[AnalystAgent] ✅ Module Map structural validation passed (${validModules.length} module(s), all fields valid).`);
         }
       } else {
         console.warn(`[AnalystAgent] ⚠️  Module Map: 'modules' array is empty or missing. Downstream ARCHITECT may not benefit from parallel design.`);

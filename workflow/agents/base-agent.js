@@ -52,8 +52,19 @@ class BaseAgent {
    * @param {string|null} expContext    - Experience context block from ExperienceStore (optional).
    * @returns {string} outputFilePath   - Path to the produced artifact file.
    */
-  async run(inputFilePath = null, rawInput = null, expContext = null) {
+  async run(inputFilePath = null, rawInput = null, expContext = null, handoffLog = null) {
     console.log(`[${this.role}] Starting...`);
+
+    // 0. Record prompt activity start if handoffLog is available
+    let activityId = null;
+    if (handoffLog) {
+      activityId = handoffLog.startActivity(
+        this.role,
+        'prompt',
+        `${this.role.toLowerCase()}-analysis`,
+        { inputFile: inputFilePath || 'raw-input' }
+      );
+    }
 
     // 1. Read input content
     const inputContent = this._readInput(inputFilePath, rawInput);
@@ -80,7 +91,26 @@ class BaseAgent {
 
     // 3. Build prompt and call LLM
     const prompt = this.buildPrompt(inputContent, expContext);
-    const llmResponse = await this.llmCall(prompt);
+    const startTime = Date.now();
+    let llmResponse;
+    let promptSuccess = true;
+    
+    try {
+      llmResponse = await this.llmCall(prompt);
+    } catch (err) {
+      promptSuccess = false;
+      throw err;
+    } finally {
+      // Record prompt activity end
+      if (handoffLog && activityId) {
+        const durationMs = Date.now() - startTime;
+        handoffLog.endActivity(activityId, {
+          durationMs,
+          inputTokens: this._estimateTokens(prompt),
+          outputTokens: llmResponse ? this._estimateTokens(llmResponse) : 0,
+        }, promptSuccess);
+      }
+    }
 
     // 4. Parse response into output content
     const outputContent = this.parseResponse(llmResponse);
@@ -193,6 +223,20 @@ class BaseAgent {
     }
     
     return outputFilePath;
+  }
+
+  /**
+   * Roughly estimates token count for a string.
+   * Used for activity logging (not precise, just for observability).
+   * 
+   * @param {string} text 
+   * @returns {number}
+   */
+  _estimateTokens(text) {
+    if (!text) return 0;
+    // Rough estimate: 1 token ≈ 4 characters for English text
+    // This is a simplification - actual tokenization depends on the model
+    return Math.ceil(text.length / 4);
   }
 
 }
