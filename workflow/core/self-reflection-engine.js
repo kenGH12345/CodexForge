@@ -41,6 +41,9 @@ class SelfReflectionEngine {
    * @param {object}   [options.experienceStore] - ExperienceStore instance
    * @param {object}   [options.complaintWall]   - ComplaintWall instance
    * @param {object}   [options.qualityGates]    - Override default quality gate thresholds
+   * @param {Function} [options.cheapLlmCall]     - Cheap LLM call function (GPT-4o-mini / Gemini Flash tier)
+   *                                               Passed to HealthAuditor and QualityGate for LLM-enhanced
+   *                                               reports and root-cause analysis.
    */
   constructor(options = {}) {
     this._outputDir = options.outputDir || path.join(process.cwd(), 'output');
@@ -57,14 +60,19 @@ class SelfReflectionEngine {
     // A-1 architecture fix: delegate health audit and quality gating to focused classes.
     // Both receive a bound recordIssue callback so findings flow back into reflections.
     const boundRecordIssue = this.recordIssue.bind(this);
+    const cheapLlm = typeof options.cheapLlmCall === 'function' ? options.cheapLlmCall : null;
     this._healthAuditor = new HealthAuditor({
       outputDir: this._outputDir,
       recordIssue: boundRecordIssue,
       skillEvolution: options.skillEvolution || null,
+      cheapLlmCall: cheapLlm,
     });
     this._qualityGate = new QualityGate({
       qualityGates: options.qualityGates,
       recordIssue: boundRecordIssue,
+      cheapLlmCall: cheapLlm,
+      gateMode: options.gateMode || 'default',
+      minDiagnosticSamples: options.minDiagnosticSamples || 20,
     });
 
     this._load();
@@ -196,9 +204,9 @@ class SelfReflectionEngine {
    * Analyses cross-session metrics history to proactively identify anomalies.
    * Delegates to HealthAuditor which encapsulates all 9 health checks.
    *
-   * @returns {{ findings: ReflectionEntry[], summary: string }}
+   * @returns {Promise<{ findings: ReflectionEntry[], summary: string, llmSummary: string|null }>}
    */
-  auditHealth() {
+  async auditHealth() {
     return this._healthAuditor.audit();
   }
 

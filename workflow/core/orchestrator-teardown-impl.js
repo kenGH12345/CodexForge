@@ -32,7 +32,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS, HOOK_EVENTS } = require('./constants');
-const { KnowledgeLayer, getLayerForCategory } = require('./experience-types');
+const { ExperienceType, ExperienceCategory, KnowledgeLayer, getLayerForCategory } = require('./experience-types');
 const { ComplaintStatus } = require('./complaint-wall');
 const { SessionSignalDetector } = require('./session-signal-detector');
 const { SessionQualityScorer } = require('./session-quality-scorer');
@@ -233,7 +233,7 @@ const OrchestratorTeardownMixin = {
           }
         }
 
-        const auditResult = this._selfReflection.auditHealth();
+        const auditResult = await this._selfReflection.auditHealth();
         if (auditResult.findings.length > 0) {
           console.log(`[Orchestrator] 🔍 Self-Reflection health audit: ${auditResult.findings.length} finding(s)`);
         }
@@ -254,6 +254,19 @@ const OrchestratorTeardownMixin = {
       }
     } catch (ptErr) {
       console.warn(`[Orchestrator] ⚠️  Prompt trace flush failed (non-fatal): ${ptErr.message}`);
+    }
+
+    // ── Agent Self-Report: flush collected self-reports ──
+    if (this._selfReportCollector) {
+      try {
+        const reportsWritten = this._selfReportCollector.flush();
+        if (reportsWritten > 0) {
+          const stats = this._selfReportCollector.getStats();
+          console.log(`[Orchestrator] 📊 Agent Self-Reports: ${reportsWritten} report(s) persisted (compliance: ${stats.complianceRate}, avg confidence: ${stats.avgConfidence.toFixed(1)}/5).`);
+        }
+      } catch (srErr) {
+        console.warn(`[Orchestrator] ⚠️  Agent Self-Report flush failed (non-fatal): ${srErr.message}`);
+      }
     }
 
     // ── RunGuard summary ──
@@ -304,7 +317,52 @@ const OrchestratorTeardownMixin = {
         for (const skillName of this.obs._skillEffectiveSet) {
           this.skillEvolution.recordEffective(skillName);
         }
+
+        // P2: sync quality-gate effectiveness signals (pass/fail + false-positive proxies)
+        const skillSnapshot = this.obs.getSkillEffectivenessSnapshot
+          ? this.obs.getSkillEffectivenessSnapshot()
+          : null;
+        if (skillSnapshot) {
+          const gatePass = skillSnapshot.gatePass || {};
+          const gateFail = skillSnapshot.gateFail || {};
+          const fpSignals = skillSnapshot.falsePositiveSignals || {};
+          const allNames = new Set([
+            ...Object.keys(gatePass),
+            ...Object.keys(gateFail),
+            ...Object.keys(fpSignals),
+          ]);
+          for (const skillName of allNames) {
+            const passCount = Number(gatePass[skillName] || 0);
+            const failCount = Number(gateFail[skillName] || 0);
+            const fpCount = Number(fpSignals[skillName] || 0);
+
+            for (let i = 0; i < passCount; i++) {
+              this.skillEvolution.recordGateOutcome(skillName, { passed: true, falsePositiveSignals: 0 });
+            }
+            for (let i = 0; i < failCount; i++) {
+              this.skillEvolution.recordGateOutcome(skillName, { passed: false, falsePositiveSignals: 0 });
+            }
+            if (fpCount > 0) {
+              this.skillEvolution.recordGateOutcome(skillName, { passed: true, falsePositiveSignals: fpCount });
+            }
+          }
+        }
+
         this.skillEvolution.flushLifecycleStats();
+
+        // P2: auto downweight/retire low-adoption high-noise skills
+        const policyResult = this.skillEvolution.applyEffectivenessPolicy
+          ? this.skillEvolution.applyEffectivenessPolicy()
+          : { downweighted: [], retired: [] };
+        if (policyResult.downweighted.length > 0 || policyResult.retired.length > 0) {
+          console.log(`[Orchestrator] 🧪 Skill effectiveness policy: ${policyResult.downweighted.length} downweighted, ${policyResult.retired.length} retired.`);
+          for (const s of policyResult.downweighted.slice(0, 5)) {
+            console.log(`[Orchestrator]   ↓ ${s.name}: weight ${s.oldWeight} → ${s.newWeight} (adoption=${s.adoptionRate}, fpRate=${s.falsePositiveRate})`);
+          }
+          for (const s of policyResult.retired.slice(0, 5)) {
+            console.log(`[Orchestrator]   📦 retired ${s.name} (gateFail=${s.gateFailCount}, fpRate=${s.falsePositiveRate})`);
+          }
+        }
 
         const { stale } = this.skillEvolution.retireStaleSkills({ dryRun: true });
         if (stale.length > 0) {
@@ -569,6 +627,20 @@ const OrchestratorTeardownMixin = {
       }
     }
 
+    // ── P0: refresh metrics cache + mark workflow end checkpoint ──
+    if (this.p0RuntimeLoop) {
+      try {
+        const cacheResult = this.p0RuntimeLoop.refreshMetricsCache();
+        this.p0RuntimeLoop.markWorkflowEnd({
+          mode,
+          metricsCacheHit: cacheResult.hit,
+        });
+        this.p0RuntimeLoop.detachEventJournal();
+      } catch (p0Err) {
+        console.warn(`[Orchestrator] ⚠️  P0 runtime loop finalization failed (non-fatal): ${p0Err.message}`);
+      }
+    }
+
     // ── P1-4: Structured Logger flush and close ──
     if (this.logger) {
       try {
@@ -624,7 +696,7 @@ const OrchestratorTeardownMixin = {
     if (shouldEvolve.sleeptime) {
       try {
         const { sleeptime } = require('./sleeptime');
-        const sleeptimeResult = sleeptime({
+        const sleeptimeResult = await sleeptime({
           experienceStore: this.experienceStore,
           skillEvolution: this.skillEvolution,
           selfReflection: this._selfReflection,
@@ -643,7 +715,8 @@ const OrchestratorTeardownMixin = {
       console.log(`[Orchestrator] ⏭️  Sleeptime skipped (low experience/skill count)`);
     }
 
-    // ── Recall Memory: record task history ──
+    // ── Recall Memory + Session Memory: record task history (L3) ──
+    // ── Long-term Memory Extraction: capture stable lessons (L5) ──
     try {
       const { TaskHistory } = require('./task-history');
       const taskHistory = new TaskHistory();
@@ -654,6 +727,50 @@ const OrchestratorTeardownMixin = {
       const outcome = failedTasks.length === 0 ? 'success'
                     : doneTasks.length > 0 ? 'partial'
                     : 'failed';
+
+      const changedFiles = (() => {
+        try {
+          const entries = this.handoffLog && typeof this.handoffLog.getEntries === 'function'
+            ? this.handoffLog.getEntries()
+            : [];
+          const out = [];
+          for (const e of entries || []) {
+            const filePath = e?.path || e?.file || e?.artifact || e?.ref || null;
+            if (typeof filePath === 'string' && filePath.trim()) out.push(filePath.trim());
+          }
+          return [...new Set(out)].slice(0, 20);
+        } catch (_) {
+          return [];
+        }
+      })();
+
+      const riskList = (() => {
+        try {
+          const rs = this.stateMachine && typeof this.stateMachine.getRisks === 'function'
+            ? this.stateMachine.getRisks()
+            : [];
+          return (rs || []).map(r => r?.description || '').filter(Boolean).slice(0, 8);
+        } catch (_) {
+          return [];
+        }
+      })();
+
+      const decisionList = (() => {
+        try {
+          const timeline = this.decisionTrail && typeof this.decisionTrail.getTimeline === 'function'
+            ? this.decisionTrail.getTimeline()
+            : [];
+          return (timeline || [])
+            .map(t => t?.decision || t?.summary || '')
+            .filter(Boolean)
+            .slice(-8);
+        } catch (_) {
+          return [];
+        }
+      })();
+
+      const openItems = failedTasks.map(t => t.title || '').filter(Boolean).slice(0, 8);
+
       taskHistory.record({
         mode,
         goal: extra.goal || this._currentRequirement || '',
@@ -666,8 +783,59 @@ const OrchestratorTeardownMixin = {
           errorCount: (metrics.errors && metrics.errors.count) || 0,
           expRecorded: this.experienceStore ? this.experienceStore.getStats().total : 0,
         },
+        sessionMemory: {
+          decisions: decisionList,
+          changedFiles,
+          openItems,
+          risks: riskList,
+        },
       });
-      console.log(`[Orchestrator] 📖 Task history recorded for recall memory (${taskHistory.getStats().totalEntries} total entries).`);
+      console.log(`[Orchestrator] 📖 Task history recorded for recall/session memory (${taskHistory.getStats().totalEntries} total entries).`);
+
+      // L5: extract stable long-term memory into ExperienceStore
+      if (this.experienceStore && typeof this.experienceStore.recordIfAbsent === 'function') {
+        const stablePatternTitle = `Workflow completion pattern: ${mode} outcome=${outcome}`;
+        this.experienceStore.recordIfAbsent(stablePatternTitle, {
+          type: outcome === 'failed' ? ExperienceType.NEGATIVE : ExperienceType.POSITIVE,
+          category: ExperienceCategory.STABLE_PATTERN,
+          title: stablePatternTitle,
+          content: [
+            `Mode: ${mode}`,
+            `Outcome: ${outcome}`,
+            `Done tasks: ${doneTasks.length}/${allTasks.length}`,
+            `Top decisions: ${(decisionList || []).slice(0, 3).join(' | ') || 'N/A'}`,
+            `Top risks: ${(riskList || []).slice(0, 3).join(' | ') || 'N/A'}`,
+          ].join('\n'),
+          tags: ['long-term-memory', 'workflow-completion', `mode:${mode}`, `outcome:${outcome}`],
+          ttlDays: 180,
+        });
+
+        if (changedFiles.length > 0) {
+          const projectConventionsTitle = `Project convention signal: changed files pattern (${mode})`;
+          this.experienceStore.recordIfAbsent(projectConventionsTitle, {
+            type: ExperienceType.POSITIVE,
+            category: ExperienceCategory.WORKFLOW_PROCESS,
+            title: projectConventionsTitle,
+            content: `Frequent changed files in this session:\n${changedFiles.slice(0, 12).map(f => `- ${f}`).join('\n')}`,
+            tags: ['long-term-memory', 'project-convention', 'file-pattern'],
+            ttlDays: 180,
+          });
+        }
+
+        if (outcome !== 'success' && riskList.length > 0) {
+          const pitfallTitle = `Recurring pitfall candidate: ${mode} ${riskList[0].slice(0, 80)}`;
+          this.experienceStore.recordIfAbsent(pitfallTitle, {
+            type: ExperienceType.NEGATIVE,
+            category: ExperienceCategory.PITFALL,
+            title: pitfallTitle,
+            content: `Potential recurring pitfall observed at workflow finalization.\n${riskList.slice(0, 5).map(r => `- ${r}`).join('\n')}`,
+            tags: ['long-term-memory', 'pitfall', `mode:${mode}`],
+            ttlDays: 120,
+          });
+        }
+
+        console.log(`[Orchestrator] 🧠 Long-term memory extraction completed (L5).`);
+      }
 
       try {
         const { rebuildCache } = require('./arch-knowledge-cache');
@@ -676,7 +844,7 @@ const OrchestratorTeardownMixin = {
         console.warn(`[Orchestrator] ⚠️  Arch knowledge cache rebuild failed (non-fatal): ${cacheErr.message}`);
       }
     } catch (thErr) {
-      console.warn(`[Orchestrator] ⚠️  Task history recording failed (non-fatal): ${thErr.message}`);
+      console.warn(`[Orchestrator] ⚠️  Task/session memory recording failed (non-fatal): ${thErr.message}`);
     }
 
     // ── ADR-38: TechRadar Staleness Check ──
@@ -785,6 +953,58 @@ const OrchestratorTeardownMixin = {
       }
     } catch (validationErr) {
       console.warn(`[Orchestrator] ⚠️  Execution validation failed (non-fatal): ${validationErr.message}`);
+    }
+
+    // ── ADR-52: Independent Evaluator – Multi-dimensional quality assessment ───
+    // Run AFTER execution validation so artifacts are confirmed to exist.
+    // This evaluator reads from DISK (not memory) to avoid "self-grading" bias.
+    try {
+      const { runIndependentEvaluation, createEvaluationGates } = require('./independent-evaluator');
+      const outputDir = this._outputDir || PATHS.OUTPUT;
+
+      console.log(`[Orchestrator] 🔬 Independent Evaluator: Running multi-dimensional assessment...`);
+      const evaluation = runIndependentEvaluation(outputDir, {
+        evaluatorMode: 'independent',
+      });
+
+      // Log evaluation summary
+      const { summary, dimensions } = evaluation;
+      console.log(`[Orchestrator]    Composite Score: ${summary.compositeScore}/100`);
+      console.log(`[Orchestrator]    Passed: ${summary.passed ? '✅' : '❌'} (threshold: 60)`);
+      console.log(`[Orchestrator]    Quality Gate: ${summary.qualityGatePassed ? '✅' : '❌'} (threshold: 70)`);
+
+      for (const [dim, score] of Object.entries(summary.dimensions)) {
+        console.log(`[Orchestrator]      - ${dim}: ${score}`);
+      }
+
+      // Generate recommendations if score is low
+      if (summary.recommendations?.length > 0) {
+        console.log(`[Orchestrator]    📋 Recommendations:`);
+        for (const rec of summary.recommendations.slice(0, 3)) {
+          console.log(`[Orchestrator]       [${rec.priority}] ${rec.message}`);
+        }
+      }
+
+      // Save evaluation report
+      const evaluationReportPath = path.join(outputDir, 'evaluation-report.json');
+      fs.writeFileSync(evaluationReportPath, JSON.stringify(evaluation, null, 2));
+      console.log(`[Orchestrator]    📄 Evaluation report: evaluation-report.json`);
+
+      // Record low scores to ExperienceStore
+      if (summary.compositeScore < 60 && this.experienceStore) {
+        this.experienceStore.recordIfAbsent('evaluation-low-score', {
+          type: 'negative',
+          category: 'quality_gate',
+          title: 'Independent evaluation score below threshold',
+          content: `Composite score: ${summary.compositeScore}/100. ` +
+                   `Dimensions: ${JSON.stringify(summary.dimensions)}. ` +
+                   `Recommendations: ${summary.recommendations?.slice(0, 3).map(r => r.message).join('; ')}`,
+          tags: ['evaluation', 'quality-issue', 'adr-52'],
+          metrics: { compositeScore: summary.compositeScore },
+        });
+      }
+    } catch (evalErr) {
+      console.warn(`[Orchestrator] ⚠️  Independent Evaluator failed (non-fatal): ${evalErr.message}`);
     }
 
     // ── Agent Feedback System: Finalize and generate reports ───────────────

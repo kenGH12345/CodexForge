@@ -53,7 +53,7 @@ class BaseAgent {
    * @returns {string} outputFilePath   - Path to the produced artifact file.
    */
   async run(inputFilePath = null, rawInput = null, expContext = null, handoffLog = null) {
-    console.log(`[${this.role}] Starting...`);
+    console.error(`[${this.role}] Starting...`);
 
     // 0. Record prompt activity start if handoffLog is available
     let activityId = null;
@@ -75,7 +75,7 @@ class BaseAgent {
     if (inputFilePath && this.contract.inputFilePath) {
       const canonical = this.contract.inputFilePath;
       if (!inputFilePath.endsWith(canonical.replace(/^output\//, ''))) {
-        console.log(
+        console.error(
           `[${this.role}] ℹ️  Runtime input path diverges from canonical contract declaration.\n` +
           `  Canonical : ${canonical}\n` +
           `  Actual    : ${path.basename(inputFilePath)}\n` +
@@ -118,7 +118,7 @@ class BaseAgent {
     // 5. Write output to file
     const outputFilePath = this._writeOutput(outputContent);
 
-    console.log(`[${this.role}] Done. Output: ${outputFilePath}`);
+    console.error(`[${this.role}] Done. Output: ${outputFilePath}`);
     return outputFilePath;
   }
 

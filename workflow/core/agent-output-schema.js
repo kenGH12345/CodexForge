@@ -48,7 +48,7 @@ const ANALYST_SCHEMA = {
  */
 const ARCHITECT_SCHEMA = {
   role: 'architect',
-  version: '1.0',
+  version: '1.2',
   fields: {
     modules:      { type: 'array',  description: 'Module/component definitions',    required: true },
     techStack:    { type: 'object', description: 'Technology stack choices',         required: true },
@@ -56,6 +56,7 @@ const ARCHITECT_SCHEMA = {
     apis:         { type: 'array',  description: 'API endpoint definitions',         required: false },
     dataModels:   { type: 'array',  description: 'Data model definitions',           required: false },
     keyDecisions: { type: 'array',  description: 'Summary of key decisions (text)',  required: false },
+    adrLinkage:   { type: 'object', description: 'Lightweight requirement-to-decision mapping: { links: [{ reqId, adrId, decisionRef }] }', required: true },
   },
 };
 
@@ -65,15 +66,16 @@ const ARCHITECT_SCHEMA = {
  */
 const PLANNER_SCHEMA = {
   role: 'planner',
-  version: '1.1',
+  version: '1.4',
   fields: {
-    tasks:           { type: 'array',  description: 'Ordered list of implementation tasks',    required: true },
+    tasks:           { type: 'array',  description: 'Ordered list of implementation tasks, each with shape: { id, title, description, moduleId, files, priority, estimate, dependencies, acceptanceCriteria: string[] }', required: true },
     dependencies:    { type: 'array',  description: 'Task dependency relationships',           required: false },
     phases:          { type: 'array',  description: 'Implementation phases grouping',          required: true },
     totalEstimate:   { type: 'string', description: 'Total estimated complexity',              required: false },
     keyDecisions:    { type: 'array',  description: 'Planning decisions made',                 required: false },
     risks:           { type: 'array',  description: 'Identified execution risks',              required: false },
     moduleGrouping:  { type: 'object', description: 'Module-aware task grouping: { groups: [{ moduleId, moduleName, taskIds: [] }], crossModuleTasks: [] }', required: false },
+    adrTaskLinkage:  { type: 'object', description: 'Lightweight decision-to-task mapping: { links: [{ reqId, adrId, taskIds: [] }] }', required: true },
   },
 };
 
@@ -252,13 +254,56 @@ function buildJsonBlockInstruction(role) {
   const schema = SCHEMAS[role.toLowerCase()];
   if (!schema) return '';
 
-  const fieldDescriptions = Object.entries(schema.fields)
-    .map(([field, spec]) => `  "${field}": ${spec.type === 'array' ? '[]' : spec.type === 'object' ? '{}' : '""'}  // ${spec.description}${spec.required ? ' [REQUIRED]' : ''}`)
-    .join(',\n');
-
   // Arch-Fix-2: Use the schema-defined version instead of hardcoded "1.0".
   // This ensures the prompt example stays in sync with the schema declaration.
   const schemaVersion = schema.version || '1.0';
+
+  // For planner: generate a richer example that shows tasks[].acceptanceCriteria structure
+  // so LLM knows to include structured AC in each task object (not just in Markdown prose).
+  if (role.toLowerCase() === 'planner') {
+    return [
+      `## MANDATORY: Structured Output Header`,
+      ``,
+      `**You MUST begin your response with a JSON metadata block** (before any Markdown content).`,
+      `This block enables downstream agents to read your decisions as structured data, not text.`,
+      ``,
+      `\`\`\`json`,
+      `{`,
+      `  "role": "planner",`,
+      `  "version": "${schemaVersion}",`,
+      `  "tasks": [`,
+      `    {`,
+      `      "id": "T-1",`,
+      `      "title": "Task title",`,
+      `      "description": "What to implement",`,
+      `      "moduleId": "mod-xxx",`,
+      `      "files": ["path/to/file.js"],`,
+      `      "priority": "High",`,
+      `      "estimate": "Medium",`,
+      `      "dependencies": [],`,
+      `      "acceptanceCriteria": ["Criterion 1 (testable)", "Criterion 2"]`,
+      `    }`,
+      `  ],`,
+      `  "phases": [],  // [REQUIRED]`,
+      `  "dependencies": [],`,
+      `  "totalEstimate": "",`,
+      `  "keyDecisions": [],`,
+      `  "risks": [],`,
+      `  "moduleGrouping": {},`,
+      `  "adrTaskLinkage": { "links": [{ "reqId": "REQ-001", "adrId": "ADR-001", "taskIds": ["T-1"] }] }  // [REQUIRED]`,
+      `}`,
+      `\`\`\``,
+      ``,
+      `**CRITICAL**: Each task object in \`tasks\` MUST include an \`acceptanceCriteria\` array (string[]).`,
+      `These criteria are consumed by the TesterAgent for structured test coverage verification.`,
+      `After the JSON block, write your full Markdown narrative as usual.`,
+      `The JSON block MUST be valid JSON. Do not add comments inside the JSON block.`,
+    ].join('\n');
+  }
+
+  const fieldDescriptions = Object.entries(schema.fields)
+    .map(([field, spec]) => `  "${field}": ${spec.type === 'array' ? '[]' : spec.type === 'object' ? '{}' : '""'}  // ${spec.description}${spec.required ? ' [REQUIRED]' : ''}`)
+    .join(',\n');
 
   return [
     `## MANDATORY: Structured Output Header`,

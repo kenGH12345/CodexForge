@@ -163,10 +163,49 @@ await registry.connectAll();
 
 ## 迁移到其他项目
 
-工作流的核心逻辑与项目无关，可以直接复制 `workflow/` 目录到任意项目中使用。  
-迁移后只需执行**一条命令**，工作流会自动完成所有配置。
+工作流支持两种迁移模式：**远程引用模式**（推荐）和**本地复制模式**。
 
-### 迁移步骤
+### 方式一：远程引用模式（推荐）
+
+无需复制 `workflow/` 目录，目标项目通过配置指向 WorkFlowAgent 的安装位置。
+
+**优势**：单一源头、无版本碎片化、无磁盘浪费、升级即时生效。
+
+#### 第一步：初始化目标项目
+
+```bash
+# 从 WorkFlowAgent 目录执行，指向目标项目
+node workflow/init-project.js --path D:\MyProject
+```
+
+系统会自动检测到远程初始化场景，在生成的 `workflow.config.js` 中写入 `workflowSource` 指向当前 workflow 安装路径。
+
+#### 第二步：生成 IDE Agent 定义（可选，init 已自动生成）
+
+```bash
+# 手动重新生成（升级 Prompt 版本时使用）
+node workflow/index.js "/regenerate-agents --path D:\MyProject --workflow-source C:\workspace\WorkFlowAgent\workflow"
+```
+
+#### 手动配置（已初始化的项目）
+
+在目标项目的 `workflow.config.js` 中添加：
+
+```javascript
+module.exports = {
+  // 指向 WorkFlowAgent 的 workflow/ 目录（绝对路径或相对路径）
+  workflowSource: 'C:/workspace/WorkFlowAgent/workflow',
+  // ... 其他配置
+};
+```
+
+然后执行 `regenerate-agents` 重新生成 IDE Agent 定义即可。
+
+---
+
+### 方式二：本地复制模式
+
+将 `workflow/` 目录复制到目标项目中，适合离线环境或需要独立版本控制的场景。
 
 #### 第一步：复制 workflow 目录
 

@@ -176,6 +176,12 @@ function registerAgentFlowCommands(registerCommand) {
       if (extMatch)  spawnArgs.push('--ext', extMatch[1]);
       if (maxMatch)  spawnArgs.push('--max-files', maxMatch[1]);
       if (dryRun)    spawnArgs.push('--dry-run');
+      
+      // Always output to .workflow/experiences.json (project directory)
+      const outputPath = pathMatch 
+        ? path.join(pathMatch[1], '.workflow', 'experiences.json')
+        : path.join(process.cwd(), '.workflow', 'experiences.json');
+      spawnArgs.push('--output', outputPath);
 
       return new Promise((resolve) => {
         const chunks = [];

@@ -1,5 +1,915 @@
 # CHANGELOG
 
+## [1.0.0] - 2026-04-02
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-02
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-02
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-02
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-02
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-02
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-02
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-02
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-02
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-01
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-01
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-04-01
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-03-31
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
+## [1.0.0] - 2026-03-31
+
+### ✨ Features
+- enhance main index, init-project, config files (`a92b6fa`)
+- enhance test-case-generator, state-machine, contracts, config, misc modules (`d0a0c52`)
+- enhance llm-router, ide-detection, MAPE engine, MCP server (`bc42d0d`)
+- enhance code-graph, clarification-engine, skill modules (`2120514`)
+- enhance stage runners, stage-context-store, prompt-builder (`77bb303`)
+- enhance all agents - analyst, base, developer, planner, tester + generator + output schema (`b6f32ff`)
+- enhance memory manager, context loader, smart selector, budget (`787d9bf`)
+- enhance experience system - query, distillation, evolution, types (`176268b`)
+- ADR-43 Signal-Driven Experience Capture (`69417c9`)
+- add staleness check for condition-triggered article discovery (ADR-42) (`d053945`)
+- Direction 4+5  DecisionTrail (structured decision audit log) + StageSmartSkip (adaptive stage skipping) (`10cec55`)
+- Direction 1+2+3  RunGuard (cost-aware gateway + global execution ceiling) + Enrichment Section Cache (`c841be7`)
+- EventJournal  Append-only event sourcing log for workflow observability (`3ba44bb`)
+- Orchestration Review P1 improvements  IdempotencyJournal, SagaContext, StageResult, Side Effect Isolation (`34ec081`)
+- Deep Review improvements  God File split, Experience distillation, Conditional transitions (`6ebc79b`)
+- Deep Review improvements  robust glob, dynamic thresholds, configurable capacity, isolatable auto-calc (`3521bdf`)
+- Module-Split ARCHITECT  serial module-by-module architecture design with interface contract propagation (`f9189ce`)
+- Functional Module Map - ANALYSE outputs structured module decomposition for ARCHITECT (`2f10f30`)
+- major improvements - streaming JSON for large projects, /wf workflow enforcement, remove project-specific hardcodes (`3eaae87`)
+- strengthen test/review pipeline with 3 preventive measures - Measure 1: Add 3 new CodeReview checklist dimensions (Interface Contract, Export Completeness, Constant Consistency) with 5 new items (INTF-001, INTF-002, EXPORT-001, EXPORT-002, CONST-001) and ITEM_TO_DIMENSION mappings - Measure 2: New integration.test.js with 27 tests covering all AEF cross-module contracts: ReviewAgentBase.allResults, ExperienceStore.getAll(), complexity level matching, index.js exports, constant consistency, formatReport multi-dimensional table, checklist dimension completeness - Measure 3: Upgrade e2e.test.js Smoke Test with Phase 2 API Contract Verification that validates key exported symbols (types, existence) from complaint-wall, code-review-agent, experience-store, review-agent-base, and index.js Total test coverage: 75 -> 102 tests (20 E2E + 42 Unit + 13 PromptSlot + 27 Integration) (`6ad46a0`)
+- integrate AEF (Agentic Engineering Framework) into CODEX FORGE - Phase 1: Import 7 AEF skills (bp-*, self-refinement, spec-template) - Phase 2: Spec-First Analyst prefix + Socratic questioning + complexity fast-path - Phase 3: 4-way multi-dimensional review (REVIEW_DIMENSIONS + ITEM_TO_DIMENSION) - Phase 4: AEF root-cause classification (RootCause) + self-refinement feedback loop - Phase 5: Complexity-based stage routing + enhanced Developer/Architect prefixes All 62 tests passing (20 E2E + 42 unit). 8 files modified, 7 new skills added. (`a04304b`)
+- modular knowledge management - YAML frontmatter, 3-layer loading, dependency resolution, troubleshooting/standards skills, hot-reload watcher (`f9d8140`)
+- HTML bordered tables in README, LLM router, stage runner refactor, service container, and multiple agent/core improvements (`5fb1aeb`)
+- add 5-layer syntax defense + README Quick Start update (`21201d2`)
+- upgrade test case generator to structured JSON format with QA best practices (`a474f4f`)
+- add pre-test case generation to improve test quality (`6142df3`)
+- auto-generate Chinese .zh.md for all workflow output md files (`8b6ec56`)
+
+### 🐛 Bug Fixes
+- fix regex unterminated group in business-logic-extractor.js, remove dead refs in core/index.js (`d04886e`)
+- resolve 6 integration issues from deep audit - Fix #1: Add allResults to ReviewAgentBase.review() return object, enabling AEF 4-Way Review dimension analysis in CodeReviewAgent.formatReport() - Fix #2: Add getAll() method to ExperienceStore, enabling AEF Self-Refinement negative experience pattern analysis - Fix #3: Update complexity level checks in orchestrator-stages.js to match actual estimateTaskComplexity return values (moderate/very_complex) - Fix #4: Import RootCause and ComplaintStatus into index.js and orchestrator-lifecycle.js - Fix #5: Import REVIEW_DIMENSIONS and ITEM_TO_DIMENSION into index.js - Fix #6: Replace hardcoded 'resolved' string with ComplaintStatus.RESOLVED constant (`042c733`)
+- integrate 3 orphaned modules into main workflow (`52cf128`)
+- resolve 3 integration gaps in modular knowledge management (`ebd6232`)
+- resolve 7 defects from round-6 evaluation + reinforce agent output spec - P0-1: rollback path now correctly relies on _runAnalyst's own bus.publish (no double-publish) - P0-2: _runDeveloper rollback propagates __alreadyTransitioned sentinel from _runArchitect correctly - P1-2: timeout tasks marked as exhausted (no retry) via new TaskManager.exhaustTask() - P1-3: ciSuccessRate division-by-zero fixed with explicit denominator guard - P1-4: invalid JS regex anchor \Z replaced with (?=^#{1,3}\s|(?![\s\S])) in extractFromFile - P2-1: fix loop runner.run() wrapped in try/catch to prevent TEST stage crash - P2-2: investigation source cache cleared after rollback to prevent stale data - task-manager: add exhaustTask() method for non-recoverable failures (`609b143`)
+- resolve 10 architectural defects (round 3) - clarification-engine: replace variable-length lookbehind with two-step filter() callback (Node.js all-version compatible) - orchestrator-helpers: String.replace() -> split+join replaceAll to fix ALL occurrences per file - stage-context-store: _persist() atomic write (tmp->rename) consistent with StateMachine and ExperienceStore - experience-store: batchRecord() now applies same TTL logic as record() (negative=90d, positive=365d) - observability: deriveStrategy() projectId isolation - only use same-project history, fallback to global if insufficient - command-router: /wf input length guard (max 8000 chars) with helpful error message - orchestrator-stages: rollback() after re-analysis now calls transition() to keep state machine in sync (defect A) - orchestrator-stages: code review failure now triggers rollback to ARCHITECT (symmetric with arch review rollback to ANALYSE) (defect G) - orchestrator-stages: Fix Agent fixPrompt now requires mandatory Architecture Design + Execution Plan sections (defect J) - index.js: pass projectId to deriveStrategy for project-level history isolation (`3022442`)
+- resolve 8 defects + enforce Architecture Design & Execution Plan as mandatory agent output sections - clarification-engine: fix risk signal false positives with negative lookahead regex - stage-context-store: add _load() for workflow resumption + improve extractFromFile() to extract paragraph content not headings - test-case-executor: generate real business assertions from expected/test_data fields - index.js: 30s timeout for runAuto() LLM call + UUID temp files for parallel workers - orchestrator-stages: rollback() now actually called when arch review fails high-severity - all agents: Architecture Design + Execution Plan sections are now mandatory with compliance checks (`1132217`)
+- cross-stage context propagation via StageContextStore - new core/stage-context-store.js: structured per-stage decision summaries with token budget control - orchestrator-stages: each stage deposits context on exit, reads upstream context on entry - orchestrator-helpers: _buildInvestigationTools dynamically discovers upstream artifacts via StageContextStore - index.js: stageCtx field + parallel task workers also receive cross-stage context (`cc31432`)
+- bridge test-case plan to real execution via TestCaseExecutor - new core/test-case-executor.js: parse JSON cases, generate runnable test scripts, execute and annotate results - orchestrator-stages: Step 0.5 runs TestCaseExecutor after case generation, injects real PASS/FAIL into TesterAgent context - tester-agent: ground-truth mode when real execution results are present - workflow.config: add testFramework option (`5ebc6b5`)
+- resolve 8 architectural defects - rollback/jumpTo, fix-agent source injection, early entropy GC, socratic skip logging, experience TTL+token-cap, i18n error logging, parallel mode reviews, startup purge (`eff5ed4`)
+- add i18n translation, token cap, and case_id coverage validation (`98f8c2d`)
+
+### ♻️ Refactoring
+- slim down orchestrator-lifecycle, orchestrator-task, project-profiler, deep-audit, observability (`fca6c41`)
+- split code-generator.js (1407 lines) into core + templates (`05aff2c`)
+- split commands-devtools.js (1561 lines) into 4 domain modules (`61a83e4`)
+- rebrand to CODEX FORGE + P1 optimizations (`1147274`)
+- split index.js and init-project.js to fix FILE_TOO_LARGE risks (`5c83d39`)
+
+### 🧪 Tests
+- add experience system integration test (37 assertions, 15 test groups) (`290459f`)
+
+### 🔧 Chores
+- remaining changes - output, benchmarks, docs, generated files, config (`e511f21`)
+- add LICENSE, social-preview template, demo GIF placeholder in README (`9e3f050`)
+
+### 📝 Other Changes
+- refactor(ADR-33 Phase 4 Batch 2): split 5 remaining >1000-line files into sub-modules - dashboard-integration.js (1151->587) + dashboard-styles.js (220) - prompt-builder.js (1088->899) + prompt-context-degradation.js (220) - execution-log-validator.js (1064->965) + execution-log-templates.js (113) - lsp-adapter.js (1020->916) + lsp-codec.js (128) - index.js (1467->925) + orchestrator-auto.js (332) All original exports preserved. Module load: 100% pass. (`d169dbe`)
+- refactor(ADR-33 Phase 4 Batch 1): split 3 largest files into sub-modules (`98ad8b0`)
+- docs+skills+tools: update docs, skills, thick-tools, commands (`5d497dd`)
+- feat(P2.5): Module-Aware Planning + Worker-Module Alignment + Module-Granular Experience (`c1c00ee`)
+
+
 All notable fixes and improvements to CODEX FORGE are recorded here.
 Format: `[fix-id] File – Description`
 

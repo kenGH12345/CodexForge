@@ -14,6 +14,8 @@ fs.mkdirSync(tmpDir, { recursive: true });
 let passed = 0;
 let failed = 0;
 
+(async () => {
+
 function assert(condition, msg) {
   if (condition) { passed++; console.log(`  ✅ PASS: ${msg}`); }
   else { failed++; console.error(`  ❌ FAIL: ${msg}`); }
@@ -87,7 +89,7 @@ const store = new StageContextStore({ outputDir: tmpDir });
 const mockOrch = { stageCtx: store };
 const clarResult = { riskNotes: [], rounds: 0, allSignals: [], skipped: false };
 
-storeAnalyseContext(mockOrch, reqPath, clarResult);
+await storeAnalyseContext(mockOrch, reqPath, clarResult);
 
 const analyseCtx = store.get('ANALYSE');
 assert(analyseCtx !== null, 'ANALYSE context stored');
@@ -128,7 +130,7 @@ fs.writeFileSync(noMapPath, noMapContent);
 
 const store2 = new StageContextStore({ outputDir: tmpDir });
 const mockOrch3 = { stageCtx: store2 };
-storeAnalyseContext(mockOrch3, noMapPath, clarResult);
+await storeAnalyseContext(mockOrch3, noMapPath, clarResult);
 
 const ctx2 = store2.get('ANALYSE');
 assert(ctx2.meta.moduleMap === null, 'moduleMap is null when absent from output');
@@ -142,3 +144,5 @@ console.log(`  Module Map Tests: ${passed} passed, ${failed} failed`);
 console.log(`${'='.repeat(60)}\n`);
 
 process.exit(failed > 0 ? 1 : 0);
+
+})().catch(err => { console.error('Test runner error:', err); process.exit(1); });

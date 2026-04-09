@@ -33,7 +33,7 @@ const { ArchitectAgent } = require('./agents/architect-agent');
 const { DeveloperAgent } = require('./agents/developer-agent');
 const { TesterAgent } = require('./agents/tester-agent');
 const { PlannerAgent } = require('./agents/planner-agent');
-const { buildAgentPrompt, setPromptSlotManager, getPromptSlotManager, setSelfReflectionEngine, setSkillEvolutionEngine, setOrchestrator, setEmbeddingService } = require('./core/prompt-builder');
+const { buildAgentPrompt, setPromptSlotManager, getPromptSlotManager, setSelfReflectionEngine, setSkillEvolutionEngine, setOrchestrator, setEmbeddingService, setContextLoaderCheapLlm, setContextLoaderExperienceStore, preloadAdrDigest } = require('./core/prompt-builder');
 const { PromptSlotManager } = require('./core/prompt-slot-manager');
 const { WorkflowState, AgentRole, STATE_ORDER } = require('./core/types');
 const { PATHS, HOOK_EVENTS } = require('./core/constants');
@@ -42,17 +42,22 @@ const { TaskManager, TaskStatus } = require('./core/task-manager');
 const { ExperienceStore, ExperienceType, ExperienceCategory } = require('./core/experience-store');
 const { ComplaintWall, ComplaintSeverity, ComplaintTarget, ComplaintStatus, RootCause } = require('./core/complaint-wall');
 const { SkillEvolutionEngine } = require('./core/skill-evolution');
+const { SkillLlmRefiner } = require('./core/skill-llm-refiner');
+const { SkillEvolutionTriggers } = require('./core/skill-evolution-triggers');
 const { SelfReflectionEngine } = require('./core/self-reflection-engine');
+const { selfReportCollector } = require('./core/agent-self-report');
 const { SessionSignalDetector } = require('./core/session-signal-detector');
 const { getConfig } = require('./core/config-loader');
 const { SelfCorrectionEngine, formatClarificationReport } = require('./core/clarification-engine');
 const { RequirementClarifier } = require('./core/requirement-clarifier');
 const { CoverageChecker } = require('./core/coverage-checker');
 const { CodeReviewAgent, REVIEW_DIMENSIONS, ITEM_TO_DIMENSION } = require('./core/code-review-agent');
-const { ArchitectureReviewAgent } = require('./core/architecture-review-agent');
+const { ARCHITECTURE_CHECKLIST } = require('./core/review-checklists');
 const { TestRunner } = require('./core/test-runner');
 const { Observability } = require('./core/observability');
+const { P0RuntimeLoop } = require('./core/p0-runtime-loop');
 const { EntropyGC } = require('./core/entropy-gc');
+
 const { CIIntegration } = require('./core/ci-integration');
 const { CodeGraph } = require('./core/code-graph');
 const { GitIntegration } = require('./core/git-integration');
@@ -64,6 +69,7 @@ const _stages    = require('./core/orchestrator-stages');
 const _helpers   = require('./core/orchestrator-helpers');
 const _lifecycle = require('./core/orchestrator-lifecycle');
 const _task      = require('./core/orchestrator-task');
+const _run       = require('./core/orchestrator-run');
 const { StageContextStore } = require('./core/stage-context-store');
 // P0/P1 optimisation: ServiceContainer (DI), StageRunner (stage interface), StageRegistry (stage registration)
 const { ServiceContainer } = require('./core/service-container');
@@ -71,6 +77,7 @@ const { StageRunner, StageRegistry } = require('./core/stage-runner');
 const { AnalystStage, ArchitectStage, PlannerStage, DeveloperStage, TesterStage } = require('./core/stages');
 // P3 optimisation: multi-model routing support
 const { LlmRouter } = require('./core/llm-router');
+const { getGlobalHealth, callWithFallback } = require('./core/model-fallback-manager');
 // Direction 1+2: Cost-aware gateway + Global run guard
 const { RunGuard } = require('./core/run-guard');
 // Direction 4: Structured Decision Audit Log
@@ -98,10 +105,15 @@ const { EmbeddingService } = require('./core/embedding-service');
 // Plan-A: Loop guard for conditional rollback retry limits
 const { LoopGuard } = require('./core/loop-guard');
 // RetryDivergenceGuard: prevents duplicate output during rollback retries
-const { buildRetryContext, compareOutputFingerprint } = require('./core/retry-divergence-guard');
+const { buildRetryContext, compareOutputFingerprint, setCheapLlmCall: setRetryGuardCheapLlm } = require('./core/retry-divergence-guard');
+const { setSemanticCompressorCheapLlm } = require('./core/token-budget');
 // Bottom-up dark disconnection prevention: ES6 Proxy wraps shared objects
 // to catch calls to non-existent methods at access time, not at failure time.
 const { createSafeProxy, getDefaultProxyMode } = require('./core/safe-interface-proxy');
+// ADR-37: IDE Detection – displays running mode banner
+const { displayModeBanner } = require('./core/ide-detection');
+// IDE Agent mode visual logging support
+const { AgentHandoffLog, isIDEAgentMode } = require('./core/agent-handoff-log');
 // Smart Context Selection: dynamic adapter block priority adjustment based on project/task type
 // (moved to orchestrator-mcp.js; imports kept only if directly referenced elsewhere)
 // MCP (Model Context Protocol) adapters: moved to orchestrator-mcp.js (P1-1 extraction)
@@ -138,9 +150,16 @@ class Orchestrator {
    *   Example: { fast: gpt4oMiniCall, default: gpt4oCall, strong: claudeOpusCall }
    *   Note: Per-role overrides (llmRoutes) always take priority over tier routing.
    */
-  constructor({ projectId, llmCall, projectRoot = null, askUser = null, dryRun = false, git = {}, outputDir = null, llmRoutes = {}, llmTiers = null }) {
-    this.projectId = projectId;
+  constructor({ projectId, llmCall, projectRoot = null, askUser = null, dryRun = false, git = {}, outputDir = null, runCategory = 'prod', llmRoutes = {}, llmTiers = null, llmSource = 'external' }) {
+this.projectId = projectId;
+    this._llmSource = String(llmSource || 'external').toLowerCase() === 'mock' ? 'mock' : 'external';
     this.projectRoot = projectRoot || path.resolve(__dirname, '..');
+
+    // ── ServiceContainer (early init) ───────────────────────────────────────
+    // Must be initialized early because subsequent code uses this.services
+    this.services = new ServiceContainer();
+    this.services.registerValue('projectId', this.projectId);
+    this.services.registerValue('projectRoot', this.projectRoot);
 
     // P1-D fix: support per-instance outputDir so multiple Orchestrator instances
     // (e.g. one per task in a multi-project setup) can write to isolated directories
@@ -156,6 +175,9 @@ class Orchestrator {
     // all instance methods (StageContextStore, buildDeveloperContextBlock, etc.) can use
     // it instead of the global constant.
     this._outputDir = outputDir || PATHS.OUTPUT_DIR;
+    this._runCategory = ['prod', 'test', 'diag'].includes(String(runCategory || '').toLowerCase())
+      ? String(runCategory).toLowerCase()
+      : 'prod';
     // N4 fix (revised): per-stage source-file cache for investigation tools.
     // Each stage (Architecture / Code / Test) reads a different set of files and
     // reads them at a different point in time (architecture.md doesn't exist yet
@@ -180,8 +202,8 @@ class Orchestrator {
       verbose:     true,
     });
     if (this.dryRun) {
-      console.log(`[Orchestrator] 🧪 DRY-RUN MODE ENABLED – file writes will be intercepted.`);
-      console.log(`[Orchestrator]    Call orchestrator.sandbox.apply() to commit changes.`);
+      console.error(`[Orchestrator] 🧪 DRY-RUN MODE ENABLED – file writes will be intercepted.`);
+      console.error(`[Orchestrator]    Call orchestrator.sandbox.apply() to commit changes.`);
     }
 
     // ── Git PR workflow options ──────────────────────────────────────────────
@@ -233,8 +255,8 @@ class Orchestrator {
     // Re-apply dryRun with config fallback
     if (!dryRun && cfgSandbox.dryRun) {
       this.dryRun = true;
-      console.log(`[Orchestrator] 🧪 DRY-RUN MODE ENABLED (from workflow.config.js) – file writes will be intercepted.`);
-      console.log(`[Orchestrator]    Call orchestrator.sandbox.apply() to commit changes.`);
+      console.error(`[Orchestrator] 🧪 DRY-RUN MODE ENABLED (from workflow.config.js) – file writes will be intercepted.`);
+      console.error(`[Orchestrator]    Call orchestrator.sandbox.apply() to commit changes.`);
     }
 
     // Initialise core subsystems
@@ -243,8 +265,11 @@ class Orchestrator {
     // P1: Initialize Tool Hook Executor for automatic tool execution hooks
     // This enables BEFORE/AFTER tool execution hooks across all tool calls
     const { initializeToolHookExecutor } = require('./tools/tool-hook-executor');
-    initializeToolHookExecutor(this.hooks, { enabled: true });
-    console.log(`[Orchestrator] 🔧 Tool Hook Executor initialized (P1: automatic tool-level hooks)`);
+    initializeToolHookExecutor(this.hooks, {
+      enabled: true,
+      sessionId: this._sessionId || this.projectId || `session-${Date.now()}`,
+    });
+    console.error(`[Orchestrator] 🔧 Tool Hook Executor initialized (P1: automatic tool-level hooks)`);
 
     this.bus = new FileRefBus();
     this.stateMachine = new StateMachine(projectId, this.hooks.getEmitter(), {
@@ -252,6 +277,12 @@ class Orchestrator {
     });
     this.memory = new MemoryManager(this.projectRoot);
     this.socratic = new SocraticEngine();
+
+    // IDE Agent mode: initialise handoffLog for visual output capture
+    this.handoffLog = new AgentHandoffLog({ 
+      ideMode: isIDEAgentMode(),
+      verbose: true 
+    });
 
     // Initialise AgentFlow subsystems
     this.taskManager = new TaskManager();
@@ -271,7 +302,7 @@ class Orchestrator {
       orchestrator: this,
       verbose: this._verbose,
     });
-    console.log(`[Orchestrator] 🎯 SessionSignalDetector initialised (ADR-43: signal-driven experience capture).`);
+    console.error(`[Orchestrator] 🎯 SessionSignalDetector initialised (ADR-43: signal-driven experience capture).`);
 
     // ── Defect F fix: Bidirectional sync between ExperienceStore and ComplaintWall ──
     // Previously these two systems were isolated information silos:
@@ -282,7 +313,7 @@ class Orchestrator {
     //   ExperienceStore.record(NEGATIVE) → auto-files complaint (problem tracking)
     this.experienceStore.setComplaintWall(this.complaintWall);
     this.complaintWall.setExperienceStore(this.experienceStore);
-    console.log(`[Orchestrator] 🔗 ExperienceStore ↔ ComplaintWall bidirectional sync established.`);
+    console.error(`[Orchestrator] 🔗 ExperienceStore ↔ ComplaintWall bidirectional sync established.`);
 
     this.skillEvolution = new SkillEvolutionEngine();
 
@@ -307,7 +338,7 @@ class Orchestrator {
       meta.needsEnrichment = true;
       meta.enrichmentTriggeredAt = null;
       meta.enrichmentCompletedAt = null;
-      console.log(`[Orchestrator] 📝 New skill "${meta.name}" registered (enrichment deferred until first use)`);
+      console.error(`[Orchestrator] 📝 New skill "${meta.name}" registered (enrichment deferred until first use)`);
     };
 
     // ── P1 Self-Reflection Engine: quality gating + proactive audit ──────────
@@ -318,8 +349,9 @@ class Orchestrator {
       outputDir: this._outputDir,
       experienceStore: this.experienceStore,
       complaintWall: this.complaintWall,
+      cheapLlmCall: this.llmRouter?.getTierConfig()?.fast || null,
     });
-    console.log(`[Orchestrator] 🔍 SelfReflectionEngine initialised (${this._selfReflection.getStats().total} historical reflections loaded).`);
+    console.error(`[Orchestrator] 🔍 SelfReflectionEngine initialised (${this._selfReflection.getStats().total} historical reflections loaded).`);
 
     // ── StageContextStore: cross-stage semantic context propagation ──────────
     // P2-A fix: initialise StageContextStore eagerly in the constructor instead of
@@ -339,7 +371,7 @@ class Orchestrator {
       outputDir: this._outputDir,
       verbose: false,
     });
-    console.log(`[Orchestrator] 🔗 StageContextStore initialised for cross-stage context propagation.`);
+    console.error(`[Orchestrator] 🔗 StageContextStore initialised for cross-stage context propagation.`);
 
     // Register built-in skills
     this._registerBuiltinSkills();
@@ -360,11 +392,12 @@ class Orchestrator {
     // for architecture design) and quality tuning (best coding model for development).
     // The router maintains a Map<role, llmCall> with a default fallback.
     this.llmRouter = new LlmRouter(_originalLlmCall, llmRoutes, llmTiers);
+    this.modelHealth = getGlobalHealth();
     if (Object.keys(llmRoutes).length > 0) {
-      console.log(`[Orchestrator] 🔀 LlmRouter configured with ${Object.keys(llmRoutes).length} role-specific route(s): [${Object.keys(llmRoutes).join(', ')}]`);
+      console.error(`[Orchestrator] 🔀 LlmRouter configured with ${Object.keys(llmRoutes).length} role-specific route(s): [${Object.keys(llmRoutes).join(', ')}]`);
     }
     if (llmTiers && typeof llmTiers === 'object' && Object.keys(llmTiers).length > 0) {
-      console.log(`[Orchestrator] 🎯 LlmRouter tier-based routing enabled: [${Object.keys(llmTiers).join(', ')}] – will auto-assign after ANALYSE stage.`);
+      console.error(`[Orchestrator] 🎯 LlmRouter tier-based routing enabled: [${Object.keys(llmTiers).join(', ')}] – will auto-assign after ANALYSE stage.`);
     }
 
     // ── P2 Feature #2: SmartRouterEnhancement – Bottleneck-aware routing ──
@@ -373,7 +406,7 @@ class Orchestrator {
     if (this._config?.smartRouterEnhancement !== false) {
       this.llmRouter.withSmartEnhancement();
     } else {
-      console.log(`[Orchestrator] ⏭️  SmartRouterEnhancement disabled by config`);
+      console.error(`[Orchestrator] ⏭️  SmartRouterEnhancement disabled by config`);
     }
     this._rawLlmCall = async (prompt) => {
       try {
@@ -433,6 +466,78 @@ class Orchestrator {
     // Uses the metered _rawLlmCall so expansion calls are tracked by Observability.
     this.experienceStore.setLlmCall(this._rawLlmCall);
 
+    // ── Cheap LLM for Experience Distillation ────────────────────────────────
+    // Enables LLM semantic merge in ExperienceDistillationMixin.distill().
+    // Uses cheapLlmCall (GPT-4o-mini tier, ~$0.003/call) for 3x quality improvement
+    // over heuristic concatenation. Non-fatal: falls back to heuristic if unavailable.
+    try {
+      const distillCheapLlm = this.llmRouter?.getTierConfig()?.fast || null;
+      if (distillCheapLlm) {
+        this.experienceStore.setCheapLlmCall(distillCheapLlm);
+      }
+    } catch (_) { /* non-fatal */ }
+
+    // ── Cheap LLM for RetryDivergenceGuard ────────────────────────────────
+    // Enables LLM semantic decision extraction in extractKeyDecisions().
+    // Uses cheapLlmCall (GPT-4o-mini tier) for ~90% accuracy vs ~50% regex.
+    // Non-fatal: falls back to regex heuristic if unavailable.
+    try {
+      const retryGuardCheapLlm = this.llmRouter?.getTierConfig()?.fast || null;
+      if (retryGuardCheapLlm) {
+        setRetryGuardCheapLlm(retryGuardCheapLlm);
+      }
+    } catch (_) { /* non-fatal */ }
+
+    // ── Cheap LLM for SemanticCompressor ──────────────────────────────────
+    // Enables LLM-based summarisation in the token budget pipeline.
+    // For natural language blocks > 2000 chars, LLM summary replaces TF-IDF
+    // sentence selection, yielding ~25% better information density.
+    // Non-fatal: falls back to heuristic compression if unavailable.
+    try {
+      const compressorCheapLlm = this.llmRouter?.getTierConfig()?.fast || null;
+      if (compressorCheapLlm) {
+        setSemanticCompressorCheapLlm(compressorCheapLlm);
+      }
+    } catch (_) { /* non-fatal */ }
+
+    // ── Cheap LLM for ContextLoader ADR Digest ───────────────────────────
+    // Enables LLM semantic relevance scoring and concise summarisation for
+    // ADR entries injected into every prompt. Replaces keyword-count heuristic
+    // with semantic understanding, yielding ~100% better information density.
+    // Non-fatal: falls back to keyword-count + line-truncation heuristic.
+    try {
+      const contextLoaderCheapLlm = this.llmRouter?.getTierConfig()?.fast || null;
+      if (contextLoaderCheapLlm) {
+        setContextLoaderCheapLlm(contextLoaderCheapLlm);
+      }
+      // ADR-55: inject ExperienceStore into ContextLoader for Prevention Rule injection
+      // (MemGPT retrieval pattern — retrieve relevant memories on demand)
+      if (this._experienceStore) {
+        setContextLoaderExperienceStore(this._experienceStore);
+      }
+    } catch (_) { /* non-fatal */ }
+
+    // ── LLM-Lite Skill Refiner: inject LLM into SkillEvolutionEngine ─────────
+    // Enables 3 LLM-Lite scenarios: refine bloated skills, fix underperforming
+    // skills, and generate high-quality initial content for auto-created skills.
+    // Cost-aware: prefers cheapLlmCall from LlmRouter 'fast' tier (GPT-4o-mini /
+    // Gemini Flash) over the main workflow model. ~50x cost reduction.
+    // Falls back to _rawLlmCall if no 'fast' tier is configured.
+    // ADR-37 compliant: LLM is enhancement, not dependency (graceful fallback).
+    try {
+      const tierConfig = this.llmRouter.getTierConfig();
+      const cheapLlmCall = tierConfig?.fast || null;
+      const skillRefiner = new SkillLlmRefiner({
+        llmCall: this._rawLlmCall,
+        cheapLlmCall,
+      });
+      this.skillEvolution.setLlmRefiner(skillRefiner);
+      this._skillRefiner = skillRefiner;
+    } catch (err) {
+      console.warn(`[Orchestrator] ⚠️  SkillLlmRefiner init failed (non-fatal): ${err.message}`);
+      this._skillRefiner = null;
+    }
+
     // P1-NEW-3 fix: independent rollback counter Map, keyed by stage name.
     // Using stageCtx.meta for rollback counting is unsafe because RollbackCoordinator
     // calls stageCtx.delete(stage) during rollback, which resets the counter to 0
@@ -442,6 +547,15 @@ class Orchestrator {
 
     // ── Observability: session-level metrics collector ──────────────────────
     this.obs = new Observability(PATHS.OUTPUT_DIR, projectId);
+
+    // ── P0 Runtime Loop: event stream + task recovery + metrics cache ───────
+    this.p0RuntimeLoop = new P0RuntimeLoop({
+      outputDir: this._outputDir,
+      projectId: this.projectId,
+      stateMachine: this.stateMachine,
+      obs: this.obs,
+      verbose: false,
+    });
 
     // ── Adaptive Strategy: derive from cross-session history ────────────────
     // Reads metrics-history.jsonl (if it exists) and adjusts retry/review counts
@@ -454,11 +568,11 @@ class Orchestrator {
       projectId:       projectId,
     });
     if (this._adaptiveStrategy.source !== 'defaults') {
-      console.log(`[Orchestrator] 📈 Adaptive strategy loaded from ${this._adaptiveStrategy.source}:`);
-      console.log(`[Orchestrator]    maxFixRounds=${this._adaptiveStrategy.maxFixRounds} | maxReviewRounds=${this._adaptiveStrategy.maxReviewRounds} | skipEntropyOnClean=${this._adaptiveStrategy.skipEntropyOnClean} | maxExpInjected=${this._adaptiveStrategy.maxExpInjected}`);
+      console.error(`[Orchestrator] 📈 Adaptive strategy loaded from ${this._adaptiveStrategy.source}:`);
+      console.error(`[Orchestrator]    maxFixRounds=${this._adaptiveStrategy.maxFixRounds} | maxReviewRounds=${this._adaptiveStrategy.maxReviewRounds} | skipEntropyOnClean=${this._adaptiveStrategy.skipEntropyOnClean} | maxExpInjected=${this._adaptiveStrategy.maxExpInjected}`);
       if (this._adaptiveStrategy._debug) {
         const d = this._adaptiveStrategy._debug;
-        console.log(`[Orchestrator]    (testFailRate=${d.testFailRate}, errorTrend=${d.errorTrend}, sessions=${d.sessionCount}, expHitRate=${d.expHitRate})`);
+        console.error(`[Orchestrator]    (testFailRate=${d.testFailRate}, errorTrend=${d.errorTrend}, sessions=${d.sessionCount}, expHitRate=${d.expHitRate})`);
       }
     }
 
@@ -486,6 +600,32 @@ class Orchestrator {
     // This closes the loop: retireStaleSkills() → retiredAt → ContextLoader exclusion.
     setSkillEvolutionEngine(this.skillEvolution);
 
+    // ── Agent Self-Report Collector (Prompt-level observability for IDE mode) ─
+    // Initialise the singleton collector with session context so it can
+    // persist self-report data at teardown. Zero overhead when not in IDE.
+    this._selfReportCollector = selfReportCollector;
+    selfReportCollector.reset({
+      sessionId: projectId,
+      outputDir: this._outputDir || PATHS.OUTPUT_DIR,
+    });
+    this.services.registerValue('selfReportCollector', selfReportCollector);
+
+    // ── Skill Evolution Triggers: multi-dimensional trigger system ────────────
+    // Registers event handlers for 4 trigger types: anomaly-driven, skill
+    // degradation, quality gate failure, and skill staleness.
+    // Trigger evaluation is pure rule-based. High-value triggers (degradation,
+    // quality gate failure) invoke SkillLlmRefiner downstream via cheapLlmCall.
+    // Low-value triggers (anomaly, staleness) only detect + record + emit.
+    try {
+      this._skillEvolutionTriggers = new SkillEvolutionTriggers({
+        skillEvolution: this.skillEvolution,
+        skillRefiner: this._skillRefiner || null,
+      });
+      this._unregisterTriggers = this._skillEvolutionTriggers.register();
+    } catch (err) {
+      console.warn(`[Orchestrator] ⚠️  SkillEvolutionTriggers init failed (non-fatal): ${err.message}`);
+    }
+
     // ADR-45: Inject Orchestrator reference into prompt-builder for lazy skill enrichment.
     // ContextLoader uses this to trigger enrichSkillFromExternalKnowledge() when it
     // detects a placeholder skill during loading (first-use trigger pattern).
@@ -510,12 +650,12 @@ class Orchestrator {
           if (this.experienceStore) {
             this.experienceStore._embeddingService = this._embeddingService;
           }
-          console.log(`[Orchestrator] 🧠 EmbeddingService ready (Plan-C: semantic skill/experience matching enabled)`);
+          console.error(`[Orchestrator] 🧠 EmbeddingService ready (Plan-C: semantic skill/experience matching + ADR-OpenSpace BM25 hybrid ranking enabled)`);
         }
       }).catch(() => { /* non-fatal, logged inside EmbeddingService */ });
     } else {
       this._embeddingService = null;
-      console.log(`[Orchestrator] ⏭️  EmbeddingService disabled by config (embedding.enabled=false)`);
+      console.error(`[Orchestrator] ⏭️  EmbeddingService disabled by config (embedding.enabled=false)`);
     }
 
     // ── Plan-A: LoopGuard (conditional rollback retry limits) ────────────────
@@ -526,34 +666,37 @@ class Orchestrator {
       maxRetries: loopGuardCfg.maxRetries ?? 2,
       edgeLimits: loopGuardCfg.edgeLimits || {},
     });
-    console.log(`[Orchestrator] 🔄 LoopGuard initialised (Plan-A: max ${this._loopGuard._maxRetries} retries per backward edge)`);
+    console.error(`[Orchestrator] 🔄 LoopGuard initialised (Plan-A: max ${this._loopGuard._maxRetries} retries per backward edge)`);
 
-    // ── EntropyGC: architectural drift scanner ──────────────────────────────
+// ── EntropyGC: architectural drift scanner ──────────────────────────────
+    const entropyCfg = (this._config && this._config.entropyGC) || {};
     this.entropyGC = new EntropyGC({
       projectRoot:  this.projectRoot,
       outputDir:    PATHS.OUTPUT_DIR,
-      extensions:   cfg.sourceExtensions,
-      ignoreDirs:   cfg.ignoreDirs,
-      maxLines:     cfg.maxLines,
-      docPaths:     cfg.docPaths || [],
-      lintCommand:  cfg.lintCommand || null,
+      extensions:   entropyCfg.sourceExtensions,
+      ignoreDirs:   entropyCfg.ignoreDirs,
+      maxLines:     entropyCfg.maxLines,
+      docPaths:     entropyCfg.docPaths || [],
+      lintCommand:  entropyCfg.lintCommand || null,
       llmCall:      this._rawLlmCall,
     });
 
     // ── CIIntegration: pipeline validation bridge ───────────────────────────
+    const ciCfg = (this._config && this._config.ci) || {};
     this.ci = new CIIntegration({
       projectRoot:  this.projectRoot,
-      lintCommand:  cfg.lintCommand || null,
-      testCommand:  cfg.testCommand || null,
+      lintCommand:  ciCfg.lintCommand || null,
+      testCommand:  ciCfg.testCommand || null,
     });
 
-    // ── CodeGraph: structured code index ───────────────────────────────────
+// ── CodeGraph: structured code index ───────────────────────────────────
+    const codeGraphCfg = (this._config && this._config.codeGraph) || {};
     this.codeGraph = new CodeGraph({
       projectRoot:    this.projectRoot,
       outputDir:      PATHS.OUTPUT_DIR,
-      extensions:     cfg.sourceExtensions,
-      ignoreDirs:     cfg.ignoreDirs,
-      scopeDirs:      cfg.codeGraph?.scopeDirs,
+      extensions:     codeGraphCfg.sourceExtensions,
+      ignoreDirs:     codeGraphCfg.ignoreDirs,
+      scopeDirs:      codeGraphCfg.scopeDirs,
       llmCall:        this._rawLlmCall,
     });
 
@@ -566,45 +709,96 @@ class Orchestrator {
       // N72 fix: wrap buildAgentPrompt in try/catch so an unknown role does not
       // crash the entire task worker – fall back to the raw prompt instead.
       let optimisedPrompt = prompt;
+      let routeMetaRef = null;
       try {
+        // Pre-populate ADR digest cache using cheap LLM (if available).
+        // This must happen BEFORE buildAgentPrompt() because resolve() is synchronous
+        // and can only use cached LLM results. Non-fatal: falls back to heuristic.
+        await preloadAdrDigest(prompt, { projectRoot: this._projectRoot });
+
         const result = buildAgentPrompt(role, prompt);
-        optimisedPrompt = result.prompt;
+        
+        // Defensive: Handle undefined/null result from buildAgentPrompt
+        if (!result || typeof result !== 'object') {
+          console.warn(`[Orchestrator] buildAgentPrompt returned ${result === undefined ? 'undefined' : typeof result} for role "${role}". Using raw prompt.`);
+        } else {
+          optimisedPrompt = result.prompt || prompt;
 
-        // Optimization C: API Prompt Caching – when buildAgentPrompt returns
-        // cache breakpoint metadata, convert to messages array format so the
-        // LLM adapter can leverage API-level caching (Anthropic cache_control,
-        // OpenAI automatic prefix caching). The system message (fixedPrefix)
-        // is stable across calls for the same role, achieving ~90% cost reduction
-        // on cached tokens. Falls back to string format if the adapter rejects arrays.
-        if (result.meta.cacheBreakpoint && result.meta.cacheablePrefix && result.meta.dynamicSuffix) {
-          optimisedPrompt = [
-            {
-              role: 'system',
-              content: result.meta.cacheablePrefix,
-              cache_control: { type: 'ephemeral' },
-            },
-            {
-              role: 'user',
-              content: result.meta.dynamicSuffix,
-            },
-          ];
-        }
+          // Optimization C: API Prompt Caching – when buildAgentPrompt returns
+          // cache breakpoint metadata, convert to messages array format so the
+          // LLM adapter can leverage API-level caching (Anthropic cache_control,
+          // OpenAI automatic prefix caching). The system message (fixedPrefix)
+          // is stable across calls for the same role, achieving ~90% cost reduction
+          // on cached tokens. Falls back to string format if the adapter rejects arrays.
+          if (result.meta && result.meta.cacheBreakpoint && result.meta.cacheablePrefix && result.meta.dynamicSuffix) {
+            optimisedPrompt = [
+              {
+                role: 'system',
+                content: result.meta.cacheablePrefix,
+                cache_control: { type: 'ephemeral' },
+              },
+              {
+                role: 'user',
+                content: result.meta.dynamicSuffix,
+              },
+            ];
+          }
 
-        console.log(`[Orchestrator] LLM call for ${role}: ~${result.meta.estimatedTokens} tokens`);
-        // Skill Lifecycle: record injected skill names for effectiveness tracking
-        if (result.meta.injectedSkillNames && result.meta.injectedSkillNames.length > 0) {
-          this.obs.recordSkillUsage(result.meta.injectedSkillNames);
+          const estimatedTokens = (result.meta && result.meta.estimatedTokens) || 0;
+          console.error(`[Orchestrator] LLM call for ${role}: ~${estimatedTokens} tokens`);
+          // Skill Lifecycle: record injected skill names for effectiveness tracking
+          if (result.meta && result.meta.injectedSkillNames && result.meta.injectedSkillNames.length > 0) {
+            this.obs.recordSkillUsage(result.meta.injectedSkillNames);
+          }
+
+          // P0 Prompt Tracing: pass the optimised prompt text for digest extraction
+          const promptTextForTrace = typeof optimisedPrompt === 'string'
+            ? optimisedPrompt
+            : (Array.isArray(optimisedPrompt)
+                ? optimisedPrompt.map(m => (typeof m === 'object' ? (m.content || '') : String(m))).join('\n')
+                : String(optimisedPrompt || ''));
+
+          // P1: AgentHub-inspired route decision + fallback + trace context
+          const tierConfig = this.llmRouter.getTierConfig() || {};
+          const rawRouteFn = this.llmRouter.getRawForRole(role);
+          const matchedTier = rawRouteFn === tierConfig.strong ? 'strong'
+            : rawRouteFn === tierConfig.fast ? 'fast'
+            : 'default';
+          const routeCallId = `route-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const routeMeta = {
+            callId: routeCallId,
+            sessionId: this.projectId,
+            role,
+            selectedTier: matchedTier,
+            timestamp: new Date().toISOString(),
+            fallback: {
+              triggered: false,
+              chain: [],
+            },
+          };
+          routeMetaRef = routeMeta;
+
+          this.obs.recordLlmCall(role, estimatedTokens, promptTextForTrace, routeMeta);
+
+          try {
+            await this.hooks.emit(HOOK_EVENTS.ROUTER_DECISION_MADE, {
+              role,
+              routeMeta,
+            });
+          } catch (_) { /* hook emission must never break the call */ }
         }
-        // P0 Prompt Tracing: pass the optimised prompt text for digest extraction
-        const promptTextForTrace = typeof optimisedPrompt === 'string'
-          ? optimisedPrompt
-          : (Array.isArray(optimisedPrompt)
-              ? optimisedPrompt.map(m => (typeof m === 'object' ? (m.content || '') : String(m))).join('\n')
-              : String(optimisedPrompt || ''));
-        this.obs.recordLlmCall(role, result.meta.estimatedTokens || 0, promptTextForTrace);
       } catch (err) {
         console.warn(`[Orchestrator] buildAgentPrompt failed for role "${role}": ${err.message}. Using raw prompt.`);
-        this.obs.recordLlmCall(role, 0, typeof prompt === 'string' ? prompt : '');
+        const fallbackRouteMeta = {
+          callId: `route-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          sessionId: this.projectId,
+          role,
+          selectedTier: 'default',
+          timestamp: new Date().toISOString(),
+          fallback: { triggered: false, chain: [] },
+        };
+        routeMetaRef = fallbackRouteMeta;
+        this.obs.recordLlmCall(role, 0, typeof prompt === 'string' ? prompt : '', fallbackRouteMeta);
       }
       // P2-A fix: extract actual token usage from LLM response (if the LLM client
       // attaches a .usage object to the response string, e.g. via a custom wrapper).
@@ -614,8 +808,86 @@ class Orchestrator {
       // P3: use LlmRouter to get the role-specific LLM function.
       // If llmRoutes was configured with a per-role override (e.g. ARCHITECT → Claude Opus),
       // that function is used instead of the default _originalLlmCall.
-      const roleLlm = this.llmRouter.getRawForRole(role);
-      const rawResponse = await roleLlm(optimisedPrompt);
+      const tierConfig = this.llmRouter.getTierConfig() || {};
+      const pickTierFn = (tierName) => {
+        if (tierName === 'strong') return tierConfig.strong || tierConfig.default || this.llmRouter.getDefault();
+        if (tierName === 'fast') return tierConfig.fast || tierConfig.default || this.llmRouter.getDefault();
+        return tierConfig.default || this.llmRouter.getDefault();
+      };
+
+      let activeTier = this.llmRouter.getRawForRole(role) === tierConfig.strong
+        ? 'strong'
+        : (this.llmRouter.getRawForRole(role) === tierConfig.fast ? 'fast' : 'default');
+      let activeFn = this.llmRouter.getRawForRole(role);
+      let rawResponse = null;
+      let lastError = null;
+      const fallbackChain = [];
+
+      for (let hop = 0; hop < 4; hop++) {
+        const modelId = `${role}:${activeTier}`;
+        const result = await callWithFallback(() => activeFn(optimisedPrompt), {
+          role,
+          tier: activeTier,
+          modelId,
+        });
+
+        if (result.success) {
+          rawResponse = result.result;
+          break;
+        }
+
+        lastError = result.error || new Error('LLM call failed without explicit error');
+
+        if (result.retryAllowed && result.maxRetries > 0) {
+          let retrySucceeded = false;
+          for (let i = 0; i < result.maxRetries; i++) {
+            const retryResult = await callWithFallback(() => activeFn(optimisedPrompt), {
+              role,
+              tier: activeTier,
+              modelId,
+            });
+            if (retryResult.success) {
+              rawResponse = retryResult.result;
+              retrySucceeded = true;
+              break;
+            }
+            lastError = retryResult.error || lastError;
+          }
+          if (retrySucceeded) break;
+        }
+
+        if (result.fallbackTier) {
+          fallbackChain.push({ from: activeTier, to: result.fallbackTier, reason: result.decision?.reason || 'fallback' });
+          activeTier = result.fallbackTier;
+          activeFn = pickTierFn(activeTier);
+          continue;
+        }
+
+        break;
+      }
+
+      if (!rawResponse) {
+        throw lastError || new Error(`LLM routing failed for role ${role}`);
+      }
+
+      if (routeMetaRef) {
+        routeMetaRef.selectedTier = activeTier;
+        routeMetaRef.fallback = {
+          triggered: fallbackChain.length > 0,
+          chain: fallbackChain,
+        };
+      }
+
+      if (fallbackChain.length > 0) {
+        try {
+          await this.hooks.emit(HOOK_EVENTS.ROUTER_FALLBACK_TRIGGERED, {
+            role,
+            fallbackChain,
+            sessionId: this.projectId,
+            routeMeta: routeMetaRef,
+          });
+        } catch (_) { /* hook emission must never break the call */ }
+      }
       // ── ADR-42: Output Truncation Detection ─────────────────────────────
       // Check stop_reason/finish_reason to detect when the LLM response was
       // cut off due to max_tokens limit. This is the L1 detection layer.
@@ -657,7 +929,7 @@ class Orchestrator {
         : null;
       if (actualTokens != null) {
         this.obs.recordActualTokens(role, actualTokens);
-        console.log(`[Orchestrator] 📊 Token usage for ${role}: ${actualTokens} actual tokens`);
+        console.error(`[Orchestrator] 📊 Token usage for ${role}: ${actualTokens} actual tokens`);
       }
       // R4-2 audit: wrap response extraction in try/catch. Some LLM SDKs return
       // response objects with getter-based .text that may throw (e.g. streaming response
@@ -682,7 +954,7 @@ class Orchestrator {
       [AgentRole.TESTER]:    new TesterAgent(wrappedLlm(AgentRole.TESTER), emitter, agentOpts),
     };
 
-    // ── P1-a: ServiceContainer (Dependency Injection) ────────────────────────
+// ── P1-a: ServiceContainer (Dependency Injection) ────────────────────────
     // Instead of Orchestrator directly instantiating 20+ subsystems, the
     // ServiceContainer provides lazy initialisation, testability (mock injection),
     // and replaceability (swap subsystems at runtime via register with force=true).
@@ -690,9 +962,7 @@ class Orchestrator {
     // For backward compatibility, we register all existing subsystem instances
     // that were already created above. New code should use
     // this.services.resolve('name') instead of direct property access.
-    this.services = new ServiceContainer();
-    this.services.registerValue('projectId', this.projectId);
-    this.services.registerValue('projectRoot', this.projectRoot);
+    // Note: this.services was created early in constructor, so we only register values here.
     this.services.registerValue('outputDir', this._outputDir);
     this.services.registerValue('config', this._config);
     this.services.registerValue('hooks', this.hooks);
@@ -706,7 +976,9 @@ class Orchestrator {
     this.services.registerValue('skillEvolution', this.skillEvolution);
     this.services.registerValue('stageCtx', this.stageCtx);
     this.services.registerValue('obs', this.obs);
+    this.services.registerValue('p0RuntimeLoop', this.p0RuntimeLoop);
     this.services.registerValue('entropyGC', this.entropyGC);
+
     this.services.registerValue('ci', this.ci);
     this.services.registerValue('codeGraph', this.codeGraph);
     this.services.registerValue('git', this.git);
@@ -715,6 +987,7 @@ class Orchestrator {
     this.services.registerValue('rawLlmCall', this._rawLlmCall);
     this.services.registerValue('adaptiveStrategy', this._adaptiveStrategy);
     this.services.registerValue('llmRouter', this.llmRouter);
+    this.services.registerValue('modelHealth', this.modelHealth);
 
     // ── Direction 1+2: RunGuard (cost-aware gateway + global execution ceiling) ──
     // Layered defence: soft limit (downgrade model tier) + hard limit (abort execution).
@@ -754,7 +1027,7 @@ class Orchestrator {
     this.stageSmartSkip = new StageSmartSkip(smartSkipOpts);
     this.services.registerValue('stageSmartSkip', this.stageSmartSkip);
 
-    console.log(`[Orchestrator] 🏗️  ServiceContainer initialised with ${this.services.getRegisteredNames().length} service(s).`);
+    console.error(`[Orchestrator] 🏗️  ServiceContainer initialised with ${this.services.getRegisteredNames().length} service(s).`);
 
     // ── P0/P1-b: StageRegistry (stage registration) ─────────────────────────
     // Replaces the hardcoded _runStage switch pattern. New stages can be added by:
@@ -767,14 +1040,14 @@ class Orchestrator {
     this.stageRegistry.register(new PlannerStage());
     this.stageRegistry.register(new DeveloperStage());
     this.stageRegistry.register(new TesterStage());
-    console.log(`[Orchestrator] 🔧 StageRegistry initialised: [${this.stageRegistry.getOrder().join(' → ')}]`);
+    console.error(`[Orchestrator] 🔧 StageRegistry initialised: [${this.stageRegistry.getOrder().join(' → ')}]`);
 
     // ── P1-2: NegotiationEngine (Agent Negotiation Protocol) ────────────────
     // Inter-agent negotiation to reduce wasteful rollbacks. When a downstream
     // agent discovers an incompatibility, it negotiates instead of rolling back.
     this.negotiation = new NegotiationEngine({ outputDir: this._outputDir });
     this.services.registerValue('negotiation', this.negotiation);
-    console.log(`[Orchestrator] 🤝 NegotiationEngine initialised (maxRounds=${this.negotiation._maxRounds}).`);
+    console.error(`[Orchestrator] 🤝 NegotiationEngine initialised (maxRounds=${this.negotiation._maxRounds}).`);
 
     // ── P1-4: Structured Logger (JSON Lines) ────────────────────────────────
     // Configure the module-level logger singleton with session context.
@@ -783,7 +1056,7 @@ class Orchestrator {
     structuredLogger.setSessionId(this.projectId);
     this.logger = structuredLogger;
     this.services.registerValue('logger', this.logger);
-    console.log(`[Orchestrator] 📝 Structured Logger configured (outputDir=${this._outputDir}, session=${this.projectId}).`);
+    console.error(`[Orchestrator] 📝 Structured Logger configured (outputDir=${this._outputDir}, session=${this.projectId}).`);
 
     // ── P2-1: ExperienceRouter (Cross-Project Experience Migration) ──────────
     // Intelligent layer on top of ExperienceTransferMixin that automatically
@@ -795,7 +1068,7 @@ class Orchestrator {
       experienceStore: this.experienceStore,
     });
     this.services.registerValue('experienceRouter', this.experienceRouter);
-    console.log(`[Orchestrator] 🌐 ExperienceRouter initialised.`);
+    console.error(`[Orchestrator] 🌐 ExperienceRouter initialised.`);
 
     // ── P2-4: Contract Validation Sweep (non-fatal, development-time) ────────
     // Validates registered services against their interface contracts.
@@ -815,7 +1088,7 @@ class Orchestrator {
         }
       }
     }
-    console.log(`[Orchestrator] 📜 Contract validation sweep complete (${Object.keys(CONTRACT_MAP).length} service(s) checked).`);
+    console.error(`[Orchestrator] 📜 Contract validation sweep complete (${Object.keys(CONTRACT_MAP).length} service(s) checked).`);
 
     // ── Safe Interface Proxy: bottom-up dark disconnection prevention ────────
     // Wraps core shared objects with ES6 Proxy to catch calls to non-existent
@@ -845,7 +1118,7 @@ class Orchestrator {
     this.bus              = createSafeProxy(this.bus,              'FileRefBus',         { mode: _proxyMode });
     this.experienceRouter = createSafeProxy(this.experienceRouter, 'ExperienceRouter',   { mode: _proxyMode });
     this.promptSlotManager = createSafeProxy(this.promptSlotManager, 'PromptSlotManager', { mode: _proxyMode });
-    console.log(`[Orchestrator] 🛡️  SafeInterfaceProxy active (mode=${_proxyMode}, 12 shared objects protected).`);
+    console.error(`[Orchestrator] 🛡️  SafeInterfaceProxy active (mode=${_proxyMode}, 12 shared objects protected).`);
 
     // Fix: Re-register SafeProxy-wrapped objects into ServiceContainer so that
     // services.resolve('name') returns the protected Proxy, not the original raw
@@ -864,6 +1137,27 @@ class Orchestrator {
     // and AdapterPluginRegistry. See orchestrator-mcp.js for full documentation.
     const _mcp = require('./core/orchestrator-mcp');
     _mcp.initMCPSubsystems(this);
+
+    // ── ADR-37: Display Running Mode Banner ──────────────────────────────────
+    // Show visual indicator of current mode for user clarity:
+    //   - Full IDE Agent Mode (with LSP)
+    //   - Limited IDE Mode (CLI only)
+    //   - Standalone Mode (Node Orchestrator)
+    displayModeBanner({ showCapabilities: true, compact: false });
+
+    // ── MAPE Engine: Closed-Loop Autonomous Controller (ADR-35) ──────────────
+    // Initializes the Monitor-Analyze-Plan-Execute engine for self-governance.
+    // MAPE runs as a background service, monitoring workflow health and executing
+    // autonomous improvements. It complements SelfReflectionEngine (analytics)
+    // with closed-loop action execution.
+    const { MAPEEngine } = require('./core/mape-engine');
+    this.mape = new MAPEEngine({
+      orchestrator: this,
+      verbose: this._verbose,
+      outputDir: this._outputDir,
+    });
+    this.services.registerValue('mape', this.mape);
+    console.error(`[Orchestrator] 🔄 MAPE Engine initialised (closed-loop self-governance).`);
   }
 
   // ─── _initWorkflow and _finalizeWorkflow: see orchestrator-lifecycle.js ───
@@ -890,7 +1184,7 @@ class Orchestrator {
 
 
 module.exports = {
-  Orchestrator, ServiceContainer, StageRunner, StageRegistry, LlmRouter, FileLockManager,
+  Orchestrator, ServiceContainer, StageRunner, StageRegistry, LlmRouter, FileLockManager, P0RuntimeLoop,
   // P1-2: Agent Negotiation Protocol
   NegotiationEngine,
   // P1-4: Structured Logger
@@ -923,3 +1217,4 @@ Object.assign(Orchestrator.prototype, _stages);
 Object.assign(Orchestrator.prototype, _helpers);
 Object.assign(Orchestrator.prototype, _lifecycle);
 Object.assign(Orchestrator.prototype, _task);
+Object.assign(Orchestrator.prototype, _run);

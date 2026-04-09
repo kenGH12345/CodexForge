@@ -1,0 +1,2514 @@
+﻿[ToolHooks] Auto-activated: Loading thick-tools-hooked.js
+[ToolHooks] Integration complete. All thick-tools now trigger BEFORE/AFTER hooks.
+[ToolHooks] Metrics logging: enabled
+node : [@babel/*] packages not found. Run: npm install @babel/parser @babel/traverse @bab
+el/generator @babel/types
+所在位置 行:1 字符: 33
++ ... kFlowAgent; node workflow/tools/ide-workflow-bridge.js run --requirem ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([@babel/*] pack...or @babel/types:String) [ 
+   ], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+鉁?AST Transform Engine loaded
+[ConfigLoader] No workflow.config.js found. Using built-in defaults.
+[ToolHookExecutor] Initialized (enabled: true)
+[Orchestrator] 馃敡 Tool Hook Executor initialized (P1: automatic tool-level hooks)
+[ConfigLoader] No workflow.config.js found. Using built-in defaults.
+[ExperienceStore] 馃摉 Synonym table loaded: 1 entries, 0 total hits
+[ExperienceStore] Loaded 85 experiences
+[ComplaintWall] Loaded 18 complaints
+[Orchestrator] 馃幆 SessionSignalDetector initialised (ADR-43: signal-driven experience capture).
+[Orchestrator] 馃敆 ExperienceStore 鈫?ComplaintWall bidirectional sync established.
+[SkillEvolution] Loaded 6 skills from registry
+[SkillEvolution] 馃尦 Loaded lineage DAG: 6 skills, 6 nodes
+[SelfReflection] Loaded 0 reflections (0 patterns tracked).
+[Orchestrator] 馃攳 SelfReflectionEngine initialised (0 historical reflections loaded).
+[Orchestrator] 馃敆 StageContextStore initialised for cross-stage context propagation.
+[Orchestrator] Registering 3 skills from workflow.config.js
+[SkillEvolution] Skill already registered: workflow-orchestration
+[SkillEvolution] Skill already registered: code-review
+[SkillEvolution] Skill already registered: api-design
+[SmartRouterEnhancement] 鉁?Router enhanced with bottleneck-aware routing
+[LlmRouter] 鉁?P2 SmartRouterEnhancement activated
+[ExperienceStore] 馃 LLM query expansion enabled.
+[SkillEvolution] 馃 LLM-Lite Skill Refiner injected
+[SkillEvolutionTriggers] Registered 7 evolution trigger handlers
+[Orchestrator] 馃攧 LoopGuard initialised (Plan-A: max 2 retries per backward edge)
+[IDEDetection] 馃彔 Running inside VS Code (detected via: env:TERM_PROGRAM=vscode, TERM_PROGRAM=vscode)
+[IDEDetection]    Available IDE capabilities: codebaseSearch, grepSearch, viewCodeItem, readFile, listDir, builtinLSP, callHierarchy, findReferences, goToDefinition, typeInference, terminal, editFile
+[CodeGraph] 馃彔 IDE semantic search available 鈥?CodeGraph operates in fallback mode
+[CodeGraph] 鉁?IDE search available - skipping graph initialization (lazy mode)
+[RunGuard] 馃洝锔? Initialised (calls鈮?0, tokens鈮?00K, time鈮?0min, budget=$5)
+[StageSmartSkip] 鈴笍  Initialised (rules: ARCHITECT(score<26), PLAN(score<51))
+[Orchestrator] 馃彈锔? ServiceContainer initialised with 28 service(s).
+[Orchestrator] 馃敡 StageRegistry initialised: [ANALYSE 鈫?ARCHITECT 鈫?PLAN 鈫?CODE 鈫?TEST]
+[Orchestrator] 馃 NegotiationEngine initialised (maxRounds=2).
+[Orchestrator] 馃摑 Structured Logger configured (outputDir=C:\workspace\WorkFlowAgent\output, session=ide-bridge-1774970533481).
+[Orchestrator] 馃寪 ExperienceRouter initialised.
+[Orchestrator] 鈿狅笍  [Contract] IStateMachine violations on 'stateMachine': Missing requir
+ed method: isTerminal
+[Orchestrator] 鈿狅笍  [Contract] IHookSystem violations on 'hooks': Missing required method
+: register; Method emit: expected minArity=2, got 1 (may be false positive with default/r
+est params); Missing required method: listRegistered
+[Orchestrator] 馃摐 Contract validation sweep complete (5 service(s) checked).
+[Orchestrator] 馃洝锔? SafeInterfaceProxy active (mode=warn, 12 shared objects protected).
+[MCPRegistry] Registered adapter: package-registry
+[MCPRegistry] Registered adapter: security-cve
+[MCPRegistry] Registered adapter: lsp
+[MCPRegistry] Registered adapter: code-quality
+[MCPRegistry] Registered adapter: ci-status
+[MCPRegistry] Registered adapter: license-compliance
+[MCPRegistry] Registered adapter: doc-gen
+[MCPRegistry] Registered adapter: llm-cost-router
+[MCPRegistry] Registered adapter: test-infra
+[AdapterPluginRegistry] 鉁?Registered plugin: "industry-research" 鈫?stages=[ARCHITECT], priority=50
+[AdapterPluginRegistry] 鉁?Registered plugin: "package-registry" 鈫?stages=[ARCHITECT,DEVELOPER], priority=55
+[AdapterPluginRegistry] 鉁?Registered plugin: "security-cve" 鈫?stages=[ARCHITECT,DEVELOPER], priority=65
+[AdapterPluginRegistry] 鉁?Registered plugin: "license-compliance" 鈫?stages=[ARCHITECT], priority=58
+[AdapterPluginRegistry] 鉁?Registered plugin: "figma-design" 鈫?stages=[ARCHITECT,DEVELOPER], priority=52
+[AdapterPluginRegistry] 鉁?Registered plugin: "api-research" 鈫?stages=[DEVELOPER], priority=50
+[AdapterPluginRegistry] 鉁?Registered plugin: "code-quality" 鈫?stages=[DEVELOPER], priority=60
+[AdapterPluginRegistry] 鉁?Registered plugin: "ci-status" 鈫?stages=[DEVELOPER,TESTER], priority=63
+[AdapterPluginRegistry] 鉁?Registered plugin: "doc-gen" 鈫?stages=[DEVELOPER], priority=45
+[AdapterPluginRegistry] 鉁?Registered plugin: "test-best-practices" 鈫?stages=[TESTER], priority=50
+[AdapterPluginRegistry] 鉁?Registered plugin: "test-infra" 鈫?stages=[TESTER], priority=43
+[Orchestrator] 馃攲 AdapterPluginRegistry initialised with 11 built-in plugin(s).
+[Orchestrator] 馃彔 IDE-First mode: VS Code detected. Agent prompts will prefer IDE tools.
+[Orchestrator]    LSP: IDE-native (self-spawned LSP skipped)
+[Orchestrator]    Search: IDE codebase_search preferred over CodeGraph.search()
+[Orchestrator] 馃攲 MCPRegistry initialised with PackageRegistry + SecurityCVE(OSV.dev) + LSP(IDE-native, self-spawn skipped) + CodeQuality(local) + CIStatus + LicenseCompliance(ClearlyDefined) + DocGen + LLMCostRouter(OpenRouter) + TestInfra adapter(s).
+
+[32m鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲[0m
+[32m鈺?                                                         鈺?[0m
+[32m鈺?[0m                 馃彔  FULL IDE AGENT MODE                  [32m鈺?[0m
+[32m鈺?                                                         鈺?[0m
+[32m鈺?[0m   [2mRunning inside VS Code with full LSP support[0m   [32m鈺?[0m
+[32m鈺?                                                         鈺?[0m
+[32m鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲[0m
+[32m鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?[0m
+[32m鈹?[0m 馃彔 Environment                                           [32m鈹?[0m
+[32m鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?[0m
+[32m鈹?[0m IDE:     VS Code                                         [32m鈹?[0m
+[32m鈹?[0m Key Cap: codebase search                                 [32m鈹?[0m
+[32m鈹?[0m Others:  +11 more                                        [32m鈹?[0m
+[32m鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?[0m
+
+[1mTool Priority:[0m
+  [32m1. IDE-native tools[0m (codebase_search, grep_search, view_code_item)
+  [2m2. Self-built fallback[0m (CodeGraph, LSPAdapter)
+
+[Orchestrator] 馃攧 MAPE Engine initialised (closed-loop self-governance).
+[runWorkflow] Starting full workflow for requirement: 楠岃瘉宸ヤ綔娴佷慨澶?..
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[Orchestrator] 馃殌 Starting sequential workflow execution
+[Orchestrator] 馃搵 Requirement: 楠岃瘉宸ヤ綔娴佷慨澶?鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 馃 SocraticChallenger initialized (maxRetries=1)
+[Orchestrator] 馃К EvolutionLoop initialized for self-evolution
+[Orchestrator] 馃敡 Initializing workflow...
+[StateMachine] New workflow started. State: INIT
+[Orchestrator] StateMachine initialised. Resume state: INIT
+[MemoryManager] Building global context (strategy: undefined)...
+[MemoryManager] Scanning .js, .ts, .py, .go, .java, .cs, .lua code symbols...
+[MemoryManager] Extracting project context from source files...
+[MemoryManager] AGENTS.md written: C:\workspace\WorkFlowAgent\AGENTS.md
+[ArchKnowledgeCache] Cache written: C:\workspace\WorkFlowAgent\output\arch-knowledge-cache.json
+[ArchKnowledgeCache] Rebuilt sections: structure
+[ToolSelector] Large project detected (501 files). Using THICK tools strategy.
+[ThickTools:scanCodeSymbols] Scanned 80 files. ~3551 tokens.
+[MemoryManager] Starting file watcher on: C:\workspace\WorkFlowAgent
+[MemoryManager] Watcher active. Memory will auto-sync on changes.
+[Orchestrator] 馃搵 AGENTS.md loaded (11474 chars) 鈥?will be injected into all Agent prompts.
+[Orchestrator] 鈿狅笍  18 open complaint(s) need attention:
+  [minor] [Auto] Negative experience recorded: Interface contract text-block format may c
+ause cross-module inconsistency
+  [minor] [Auto] Negative experience recorded: Execution validation score below threshold
+  [minor] [Auto] Negative experience recorded: [LOW_CONFIDENCE] ANALYSE: Confidence 0.499
+99999999999994 < thresho
+[Orchestrator] 鈩癸笍  SkillWatcher deferred: ContextLoader not yet initialised (will activate on first LLM call).
+[MCPAdapter:package-registry] Connected (default registry: npm).
+[SafeInterfaceProxy] 鉂?HookSystem.register does not exist!
+  "register" is not a method or property of HookSystem.
+  Did you mean: HookSystem._registerBuiltins()?
+  Available methods (4): _registerBuiltins, emit, getEmitter, on
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the HookSystem API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:283:24)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[SafeInterfaceProxy] 鉂?HookSystem.register does not exist!
+  "register" is not a method or property of HookSystem.
+  Did you mean: HookSystem._registerBuiltins()?
+  Available methods (4): _registerBuiltins, emit, getEmitter, on
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the HookSystem API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:288:27)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[SafeInterfaceProxy] 鉂?HookSystem.listRegistered does not exist!
+  "listRegistered" is not a method or property of HookSystem.
+  Available methods (4): _registerBuiltins, emit, getEmitter, on
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the HookSystem API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:283:24)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[SafeInterfaceProxy] 鉂?HookSystem.listRegistered does not exist!
+  "listRegistered" is not a method or property of HookSystem.
+  Available methods (4): _registerBuiltins, emit, getEmitter, on
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the HookSystem API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:288:27)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[Orchestrator] 鈿狅笍  Contract IHookSystem: 2 violation(s):
+[Orchestrator]    - Method register: expected minArity=2, got 0 (may be false positive wi
+th default/rest params)
+[Orchestrator]    - Method emit: expected minArity=2, got 1 (may be false positive with d
+efault/rest params)
+[SafeInterfaceProxy] 鉂?StateMachine.isTerminal does not exist!
+  "isTerminal" is not a method or property of StateMachine.
+  Available methods (32): _acquireTransitionLock, _checkRequirementCompleteness, _getArti
+factSourceState, _jumpToInner, _readManifest, _recordArtifact, _releaseTransitionLock, _t
+ransitionInner, _validatePrecondition, _writeManifest, addConditionalTransition, flushRis
+ks, getArtifacts, getConditionalRules, getNextState...
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the StateMachine API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:283:24)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[SafeInterfaceProxy] 鉂?StateMachine.isTerminal does not exist!
+  "isTerminal" is not a method or property of StateMachine.
+  Available methods (32): _acquireTransitionLock, _checkRequirementCompleteness, _getArti
+factSourceState, _jumpToInner, _readManifest, _recordArtifact, _releaseTransitionLock, _t
+ransitionInner, _validatePrecondition, _writeManifest, addConditionalTransition, flushRis
+ks, getArtifacts, getConditionalRules, getNextState...
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the StateMachine API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:288:27)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[Orchestrator] 馃敆 ExperienceStore linked to PromptBuilder (synonym expansion enabled).
+[SkillDiscovery] 鈴笍  Skill "project-standards" already exists with content (15 lines). Skipping.
+鈩癸笍 [Orchestrator] Workflow initialised {"projectId":"ide-bridge-1774970533481","resumeState":"INIT","outputDir":"C:\\workspace\\WorkFlowAgent\\output"}
+鈩癸笍 [Negotiation] Round counters reset for new workflow run
+[MCPAdapter:security-cve] Connected (provider: OSV.dev).
+[EventJournal] 馃摉 Attached to HookSystem 鈥?capturing all events to event-journal-ide-bridge-1774970533481-1774970533666.jsonl
+[IntrospectionManager] Initialized for session: ide-bridge-1774970533481-1774970533667
+[IntrospectionManager] Subscribed to workflow hooks
+[Orchestrator] 馃攳 Workflow Introspection Manager initialized
+
+鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+鈺?                                                                       鈺?鈺? 馃殌 WorkFlowAgent 路 鏅鸿兘宸ヤ綔娴佺紪鎺掔郴缁?                                   鈺?鈺?                                                                       鈺?鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈼?  ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈼?  ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈼?  PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈼?  CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+馃搶 鍚敤 wf 宸ヤ綔娴?鎴戝皢鎸夌収宸ヤ綔娴佹ā寮忓疄鏂介渶姹傘€傝鎴戝厛杩涜鍒嗘瀽鍜屾灦鏋勮鍒掋€?
+[Orchestrator] 馃攧 Agent Handoff Log initialized
+[Orchestrator] 馃攧 Agent Feedback System initialized
+[FeedbackHelpers] 鉁?Integrated with orchestrator lifecycle
+[Orchestrator] 馃敡 Tool Hook handlers registered
+[LSPAdapter] 馃彔 IDE environment detected 鈥?skipping self-spawned LSP.
+[LSPAdapter]    IDE already provides LSP capabilities (definition, references, hover, symbols).
+[LSPAdapter]    Agent should use IDE tools: view_code_item, codebase_search, grep_search.
+[LSPAdapter]    CodeGraph regex-based indexing remains available as fallback.
+[Orchestrator] 鉁?Initialization complete (45ms)
+[Orchestrator] 馃搷 Resume state: INIT
+[Orchestrator] 馃摑 Extracted requirement data: taskType=bugfix, scope=unknown
+[StateMachine] 馃摑 Requirement data recorded: raw, taskType, targetScope, successCriteria
+[Orchestrator] 馃摑 Requirement data recorded in StateMachine
+[Orchestrator] 馃摗 Event emitted: workflow:start
+[Orchestrator] 馃搳 Pipeline stages: [ANALYSE 鈫?ARCHITECT 鈫?PLAN 鈫?CODE 鈫?TEST]
+
+
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 鈻讹笍  Executing stage: ANALYSE
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃攳 ANALYSE    | AnalystAgent                                  鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈼?  ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈼?  PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈼?  CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?[RequirementClarifier] No askUser callback 鈥?skipping clarification (non-interactive mode).
+[MCPAdapter:code-quality] Connected (backend: local).
+[SafeInterfaceProxy] 鉂?CodeGraph.getModuleSummaryMarkdown does not exist!
+  "getModuleSummaryMarkdown" is not a method or property of CodeGraph.
+  Did you mean: CodeGraph.getAllSymbolValues(), CodeGraph.getCallGraph(), CodeGraph.getCa
+tegoryStats()?
+  Available methods (77): _addSymbol, _buildCalledByIndex, _buildIDEResult, _buildQueryRe
+sult, _buildTokenIndex, _collectFiles, _computeImportanceWeights, _detectChangedFilesByMt
+ime, _doLoad, _editDistancePrefix, _enrichSymbol, _extractCallEdges, _extractClassDeclSig
+nature, _extractClassMembers, _extractConstructorSignature...
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the CodeGraph API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at Orchestrator._runAnalyst (C:\workspace\WorkFlowAgent\workflow\core\stage-analyst.j
+s:185:49)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+[SafeInterfaceProxy] 鉂?CodeGraph.getModuleSummaryMarkdown does not exist!
+  "getModuleSummaryMarkdown" is not a method or property of CodeGraph.
+  Did you mean: CodeGraph.getAllSymbolValues(), CodeGraph.getCallGraph(), CodeGraph.getCa
+tegoryStats()?
+  Available methods (77): _addSymbol, _buildCalledByIndex, _buildIDEResult, _buildQueryRe
+sult, _buildTokenIndex, _collectFiles, _computeImportanceWeights, _detectChangedFilesByMt
+ime, _doLoad, _editDistancePrefix, _enrichSymbol, _extractCallEdges, _extractClassDeclSig
+nature, _extractClassMembers, _extractConstructorSignature...
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the CodeGraph API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at Orchestrator._runAnalyst (C:\workspace\WorkFlowAgent\workflow\core\stage-analyst.j
+s:186:45)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+[Orchestrator] 馃椇锔? Code Graph has no module summary (new project or single-directory). Module Map will be generated from scratch.
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+[MCPAdapter:ci-status] Connected (provider: github, repo: kenGH12345/CodexForge).
+[MCPAdapter:license-compliance] Connected (backend: clearlydefined).
+[EmbeddingService] 鈿狅笍  Model load failed (non-fatal): Neither @huggingface/transformers 
+nor @xenova/transformers is installed. Run: npm install @huggingface/transformers
+[EmbeddingService]    Semantic matching disabled. Keyword matching will be used as fallba
+ck.
+[MCPAdapter:doc-gen] Connected (projectRoot: C:\workspace\WorkFlowAgent).
+[ExperienceStore] 鈿狅笍  Query expansion: could not parse LLM response as JSON array.
+[Orchestrator] 馃摎 ANALYSE experience injection: 0 experience(s) from ExperienceStore (keyword-scored + LLM-expanded)
+[Orchestrator] 鈿?Pre-complexity assessment: simple (score=0)
+[analyst] Starting...
+    馃摑 analyst 鈫?analyst-analysis
+[PromptBuilder] Patterns applied in 0ms
+[SkillWatcher] 馃憖 Watching skills directory: C:\workspace\WorkFlowAgent\workflow\skills (1 watcher(s))
+[Orchestrator] 馃攧 SkillWatcher started (deferred 鈫?ContextLoader now available).
+[ContextLoader] 馃搳 SkillRanker corpus built: 27 skills, 284 terms, avgDocLen=20.7
+[ContextLoader] Injected 4 context doc(s) (~2758 tokens): architecture-constraints.md (4 sections for analyst), bp-architecture-design.md, architecture-design.md, bp-component-design.md
+[Orchestrator] LLM call for analyst: ~0 tokens
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+      鉁?analyst-analysis (10ms)
+[AnalystAgent] 鈿狅笍  No structured JSON block found in output. Downstream agents will use 
+regex-based extraction (degraded mode).
+[AnalystAgent] 鈿狅笍  COMPLIANCE: Missing mandatory section(s): Architecture Design, Execut
+ion Plan, Functional Module Map. The agent output specification requires these sections.
+[analyst] Done. Output: C:\workspace\WorkFlowAgent\output\requirement.md
+[Orchestrator] 馃敆 ANALYSE context stored: 6 key decision(s).
+[Observability] 馃搳 Task complexity: simple (score=2/100)
+[Orchestrator] 馃搳 AEF Complexity Assessment: level=simple, score=2
+[Orchestrator] 鈿?AEF Fast-Path: Simple task detected 鈥?ARCHITECT stage will use streamlined review.
+[FileRefBus] analyst 鈫?architect: requirement.md
+  馃攧 analyst 鈫?architect: requirement.md
+[Orchestrator] 鈴憋笍  Stage execution time: 174ms
+[Orchestrator] 馃搫 Artifact path: C:\workspace\WorkFlowAgent\output\requirement.md
+[Orchestrator] 馃 Running SocraticChallenger: DEVIL'S ADVOCATE mode...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃 DEVIL'S ADVOCATE for stage: ANALYSE
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃搵 Agent claims: requirement understood, scope defined, stakeholders identified
+[SocraticChallenger] 鉂?Generated 6 challenge questions
+[SocraticChallenger] 馃暢锔? Detected 14 potential blind spots
+[SocraticChallenger] 馃搳 缁村害璇勫垎:
+   鐩稿叧鎬? 0%
+   骞垮害: 0%
+   娣卞害: 0%
+   閫昏緫鎬? 0%
+   娓呮櫚搴? 0%
+   绮剧‘鎬? 0%
+   杈圭晫鏉′欢: 0%
+   缁撹渚濇嵁: 0%
+   鏁版嵁鏀拺: 0%
+   涓氱晫瀵规瘮: 0%
+[SocraticChallenger] 馃搳 Confidence in conclusions: 0%
+[SocraticChallenger] 鈹€鈹€ CHALLENGE QUESTIONS 鈹€鈹€
+  1. [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?  2. [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?  3. [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?  4. [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+  5. [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?  6. [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[SocraticChallenger] 鈹€鈹€ BLIND SPOTS 鈹€鈹€
+  1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+  2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+  3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+  4. [閫昏緫鎬 鏈秹鍙? causality established
+  5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+  6. [閫昏緫鎬[ANALYSE] 缂哄皯: 闇€姹傞€昏緫涓€鑷存€?  7. [閫昏緫鎬[ANALYSE] 缂哄皯: 鍥犳灉閾惧垎鏋?  8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+  9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+  10. [娓呮櫚搴 鏈秹鍙? concepts explained
+  11. [娓呮櫚搴 鏈秹鍙? examples provided
+  12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+  13. [娓呮櫚搴[ANALYSE] 缂哄皯: 鏈瀹氫箟
+  14. [娓呮櫚搴[ANALYSE] 缂哄皯: 闇€姹傛竻鏅板害
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈹€鈹€ CHALLENGE QUESTIONS (Self-Doubt) 鈹€鈹€
+[Orchestrator]    Q1: [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?[Orchestrator]    Q2: [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?[Orchestrator]    Q3: [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?[Orchestrator]    Q4: [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+[Orchestrator]    Q5: [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?[Orchestrator]    Q6: [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[Orchestrator] 鈹€鈹€ BLIND SPOTS DETECTED 鈹€鈹€
+[Orchestrator]    1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+[Orchestrator]    2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+[Orchestrator]    3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+[Orchestrator]    4. [閫昏緫鎬 鏈秹鍙? causality established
+[Orchestrator]    5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+[Orchestrator]    6. [閫昏緫鎬[ANALYSE] 缂哄皯: 闇€姹傞€昏緫涓€鑷存€?[Orchestrator]    7. [閫昏緫鎬[ANALYSE] 缂哄皯: 鍥犳灉閾惧垎鏋?[Orchestrator]    8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+[Orchestrator]    9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+[Orchestrator]    10. [娓呮櫚搴 鏈秹鍙? concepts explained
+[Orchestrator]    11. [娓呮櫚搴 鏈秹鍙? examples provided
+[Orchestrator]    12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+[Orchestrator]    13. [娓呮櫚搴[ANALYSE] 缂哄皯: 鏈瀹氫箟
+[Orchestrator]    14. [娓呮櫚搴[ANALYSE] 缂哄皯: 闇€姹傛竻鏅板害
+[Orchestrator] 馃搳 Confidence in conclusions: 0%
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? reasoning chain valid...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? no logical fallacies...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? causality established...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? counter-arguments addressed...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬[ANALYSE] 缂哄皯: 闇€姹傞€昏緫涓€鑷存€?..
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬[ANALYSE] 缂哄皯: 鍥犳灉閾惧垎鏋?..
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? terms clearly defined...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? no ambiguous language...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? concepts explained...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? examples provided...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? scope unambiguous...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴[ANALYSE] 缂哄皯: 鏈瀹氫箟...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴[ANALYSE] 缂哄皯: 闇€姹傛竻鏅板害...
+[EvolutionLoop] 馃摗 Signal: [HIGH] LOW_CONFIDENCE @ ANALYSE
+[EvolutionLoop]    Evidence: Confidence 0 < threshold 0.5...
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: [LOW_CO
+NFIDENCE] ANALYSE: Confidence 0 < th...
+[EvolutionLoop]    鈫?Recorded to ExperienceStore: [LOW_CONFIDENCE] ANALYSE: Confidence 0 < threshold...
+[EvolutionLoop] 馃К Evolution triggered: recorded
+[Orchestrator] 鈿狅笍  Low confidence detected, will revisit stage...
+
+[Orchestrator] 馃攧 Retry attempt 1 for stage: ANALYSE
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃攳 ANALYSE    | AnalystAgent                                  鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈼?  ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈼?  PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈼?  CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?[RequirementClarifier] No askUser callback 鈥?skipping clarification (non-interactive mode).
+[SafeInterfaceProxy] 鉂?CodeGraph.getModuleSummaryMarkdown does not exist!
+  "getModuleSummaryMarkdown" is not a method or property of CodeGraph.
+  Did you mean: CodeGraph.getAllSymbolValues(), CodeGraph.getCallGraph(), CodeGraph.getCa
+tegoryStats()?
+  Available methods (77): _addSymbol, _buildCalledByIndex, _buildIDEResult, _buildQueryRe
+sult, _buildTokenIndex, _collectFiles, _computeImportanceWeights, _detectChangedFilesByMt
+ime, _doLoad, _editDistancePrefix, _enrichSymbol, _extractCallEdges, _extractClassDeclSig
+nature, _extractClassMembers, _extractConstructorSignature...
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the CodeGraph API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at Orchestrator._runAnalyst (C:\workspace\WorkFlowAgent\workflow\core\stage-analyst.j
+s:185:49)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+[SafeInterfaceProxy] 鉂?CodeGraph.getModuleSummaryMarkdown does not exist!
+  "getModuleSummaryMarkdown" is not a method or property of CodeGraph.
+  Did you mean: CodeGraph.getAllSymbolValues(), CodeGraph.getCallGraph(), CodeGraph.getCa
+tegoryStats()?
+  Available methods (77): _addSymbol, _buildCalledByIndex, _buildIDEResult, _buildQueryRe
+sult, _buildTokenIndex, _collectFiles, _computeImportanceWeights, _detectChangedFilesByMt
+ime, _doLoad, _editDistancePrefix, _enrichSymbol, _extractCallEdges, _extractClassDeclSig
+nature, _extractClassMembers, _extractConstructorSignature...
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the CodeGraph API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at Orchestrator._runAnalyst (C:\workspace\WorkFlowAgent\workflow\core\stage-analyst.j
+s:186:45)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+[Orchestrator] 馃椇锔? Code Graph has no module summary (new project or single-directory). Module Map will be generated from scratch.
+[Orchestrator] 馃摎 ANALYSE experience injection: 0 experience(s) from ExperienceStore (keyword-scored + LLM-expanded)
+[Orchestrator] 鈿?Pre-complexity assessment: simple (score=0)
+[analyst] Starting...
+    馃摑 analyst 鈫?analyst-analysis
+[PromptBuilder] Patterns applied in 0ms
+[ContextLoader] Injected 4 context doc(s) (~2758 tokens): architecture-constraints.md (4 sections for analyst), bp-architecture-design.md, architecture-design.md, bp-component-design.md
+[Orchestrator] LLM call for analyst: ~0 tokens
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+      鉁?analyst-analysis (2ms)
+[AnalystAgent] 鈿狅笍  No structured JSON block found in output. Downstream agents will use 
+regex-based extraction (degraded mode).
+[AnalystAgent] 鈿狅笍  COMPLIANCE: Missing mandatory section(s): Architecture Design, Execut
+ion Plan, Functional Module Map. The agent output specification requires these sections.
+[analyst] Done. Output: C:\workspace\WorkFlowAgent\output\requirement.md
+[Orchestrator] 馃敆 ANALYSE context stored: 6 key decision(s).
+[Observability] 馃搳 Task complexity: simple (score=2/100)
+[Orchestrator] 馃搳 AEF Complexity Assessment: level=simple, score=2
+[Orchestrator] 鈿?AEF Fast-Path: Simple task detected 鈥?ARCHITECT stage will use streamlined review.
+[FileRefBus] analyst 鈫?architect: requirement.md
+  鈴?Rollback: architect handoff superseded
+  馃攧 analyst 鈫?architect: requirement.md
+[Orchestrator] 鈴憋笍  Stage execution time: 186ms
+[Orchestrator] 馃搫 Artifact path: C:\workspace\WorkFlowAgent\output\requirement.md
+[Orchestrator] 馃 Running SocraticChallenger: DEVIL'S ADVOCATE mode...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃 DEVIL'S ADVOCATE for stage: ANALYSE
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃搵 Agent claims: requirement understood, scope defined, stakeholders identified
+[SocraticChallenger] 鉂?Generated 6 challenge questions
+[SocraticChallenger] 馃暢锔? Detected 14 potential blind spots
+[SocraticChallenger] 馃搳 缁村害璇勫垎:
+   鐩稿叧鎬? 0%
+   骞垮害: 0%
+   娣卞害: 0%
+   閫昏緫鎬? 0%
+   娓呮櫚搴? 0%
+   绮剧‘鎬? 0%
+   杈圭晫鏉′欢: 0%
+   缁撹渚濇嵁: 0%
+   鏁版嵁鏀拺: 0%
+   涓氱晫瀵规瘮: 0%
+[SocraticChallenger] 馃搳 Confidence in conclusions: 0%
+[SocraticChallenger] 鈹€鈹€ CHALLENGE QUESTIONS 鈹€鈹€
+  1. [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?  2. [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?  3. [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?  4. [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+  5. [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?  6. [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[SocraticChallenger] 鈹€鈹€ BLIND SPOTS 鈹€鈹€
+  1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+  2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+  3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+  4. [閫昏緫鎬 鏈秹鍙? causality established
+  5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+  6. [閫昏緫鎬[ANALYSE] 缂哄皯: 闇€姹傞€昏緫涓€鑷存€?  7. [閫昏緫鎬[ANALYSE] 缂哄皯: 鍥犳灉閾惧垎鏋?  8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+  9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+  10. [娓呮櫚搴 鏈秹鍙? concepts explained
+  11. [娓呮櫚搴 鏈秹鍙? examples provided
+  12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+  13. [娓呮櫚搴[ANALYSE] 缂哄皯: 鏈瀹氫箟
+  14. [娓呮櫚搴[ANALYSE] 缂哄皯: 闇€姹傛竻鏅板害
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈹€鈹€ CHALLENGE QUESTIONS (Self-Doubt) 鈹€鈹€
+[Orchestrator]    Q1: [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?[Orchestrator]    Q2: [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?[Orchestrator]    Q3: [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?[Orchestrator]    Q4: [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+[Orchestrator]    Q5: [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?[Orchestrator]    Q6: [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[Orchestrator] 鈹€鈹€ BLIND SPOTS DETECTED 鈹€鈹€
+[Orchestrator]    1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+[Orchestrator]    2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+[Orchestrator]    3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+[Orchestrator]    4. [閫昏緫鎬 鏈秹鍙? causality established
+[Orchestrator]    5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+[Orchestrator]    6. [閫昏緫鎬[ANALYSE] 缂哄皯: 闇€姹傞€昏緫涓€鑷存€?[Orchestrator]    7. [閫昏緫鎬[ANALYSE] 缂哄皯: 鍥犳灉閾惧垎鏋?[Orchestrator]    8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+[Orchestrator]    9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+[Orchestrator]    10. [娓呮櫚搴 鏈秹鍙? concepts explained
+[Orchestrator]    11. [娓呮櫚搴 鏈秹鍙? examples provided
+[Orchestrator]    12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+[Orchestrator]    13. [娓呮櫚搴[ANALYSE] 缂哄皯: 鏈瀹氫箟
+[Orchestrator]    14. [娓呮櫚搴[ANALYSE] 缂哄皯: 闇€姹傛竻鏅板害
+[Orchestrator] 馃搳 Confidence in conclusions: 0%
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? reasoning chain valid...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? no logical fallacies...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? causality established...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? counter-arguments addressed...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬[ANALYSE] 缂哄皯: 闇€姹傞€昏緫涓€鑷存€?..
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [閫昏緫鎬[ANALYSE] 缂哄皯: 鍥犳灉閾惧垎鏋?..
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? terms clearly defined...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? no ambiguous language...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? concepts explained...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? examples provided...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? scope unambiguous...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴[ANALYSE] 缂哄皯: 鏈瀹氫箟...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ANALYSE
+[EvolutionLoop]    Evidence: [娓呮櫚搴[ANALYSE] 缂哄皯: 闇€姹傛竻鏅板害...
+[EvolutionLoop] 馃摗 Signal: [HIGH] LOW_CONFIDENCE @ ANALYSE
+[EvolutionLoop]    Evidence: Confidence 0 < threshold 0.5...
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: [LOW_CO
+NFIDENCE] ANALYSE: Confidence 0 < th...
+[EvolutionLoop]    鈫?Recorded to ExperienceStore: [LOW_CONFIDENCE] ANALYSE: Confidence 0 < threshold...
+[EvolutionLoop] 馃К Evolution triggered: recorded
+[Orchestrator] 鉁?Stage ANALYSE completed (challenged with 6 questions)
+[Orchestrator] 鉁?Stage ANALYSE completed in 190ms
+
+[Hook] 鈴?Transitioning: INIT 鈫?ANALYSE
+[StateMachine] Transition: INIT 鈫?ANALYSE (artifact: C:\workspace\WorkFlowAgent\output\requirement.md)
+[Hook] 鉁?Transitioned: INIT 鈫?ANALYSE | Artifact: C:\workspace\WorkFlowAgent\output\requirement.md
+[Orchestrator] 馃搳 StateMachine transitioned to: ANALYSE (artifact: C:\workspace\WorkFlowAgent\output\requirement.md)
+
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 鈻讹笍  Executing stage: ARCHITECT
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃彈锔?ARCHITECT  | ArchitectAgent                                鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈼?  PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈼?  CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?  馃摜 architect consumed requirement.md
+[Orchestrator] 馃敆 Cross-stage context injected into ArchitectAgent (994 chars, dynamic selection). Upstream: ANALYSE(6 decisions, 0 risks) 鈫?ARCHITECT(6 decisions, 1 risks) 鈫?PLAN(6 decisions, 0 risks)
+[Socratic] 鈿?Non-blocking: "tech_stack_preference" already answered: "Follow the architecture document recommendation". Using cached.
+[Orchestrator] 鈿?Tech stack preference (non-blocking): "Follow the architecture document recommendation"
+[Orchestrator] 馃搵 AGENTS.md injected into ArchitectAgent context.
+[Orchestrator] 馃摎 Experience context injected for ArchitectAgent (6066 chars, 4 experience(s), limit=5)
+[SmartContext] 馃 Project type: general, Task type: general
+[SmartContext] 馃彔 IDE semantic search detected 鈥?CodeGraph priority reduced to 'useful' (fallback role)
+[SmartContext] ContextProfile(project=general, task=general, essential=[], skip=[FIGMA_DESIGN])
+[Orchestrator] 馃摐 License Compliance (ARCHITECT): checking license compliance...
+[SmartContext] 鈴笍  Skipping Figma Design (irrelevant for general/general)
+[Orchestrator] 馃摐 License Compliance (ARCHITECT): 鉁?All licenses compliant.
+[AdapterPluginRegistry] 鈿?ARCHITECT: 5 plugin(s) executed in 2ms (0 produced content).
+[TaskHistory] Loaded 1 history entries
+[Orchestrator] 馃摉 Recall Memory injected for ArchitectAgent (244 chars)
+[SmartContext] 馃搳 Block adjustments: demoted=[License Compliance(-10)], skipped=[Figma Design]
+[ToolResultFilter] 鉁傦笍  AGENTS.md: 11505 鈫?2508 chars (truncate(head=40+tail=20))
+[ToolResultFilter] 馃搳 Batch filter [intent:general]: saved 8997 chars across 1 block(s): [AGENTS.md(-8997)]
+[TokenBudget] 馃 Semantic compression: saved 1693 chars across [Experience(-1693,hierarchical)]
+[ModuleArchitect] Module map absent or < 2 modules. Using standard single-pass design.
+[architect] Starting...
+    馃摑 architect 鈫?architect-analysis
+[PatternLibrary] Unknown pattern: "analytical"
+[PromptBuilder] Patterns applied in 0ms
+[ContextLoader] Injected 4 context doc(s) (~2810 tokens): architecture-constraints.md, bp-architecture-design.md, bp-component-design.md, architecture-design.md
+[Orchestrator] LLM call for architect: ~0 tokens
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+      鉁?architect-analysis (4ms)
+[ArchitectAgent] 鈿狅笍  No structured JSON block found in output. Downstream agents will us
+e regex-based extraction (degraded mode).
+[ArchitectAgent] 鈿狅笍  COMPLIANCE: Missing mandatory section(s): Architecture Design, Exec
+ution Plan. The agent output specification requires these sections.
+[architect] Done. Output: C:\workspace\WorkFlowAgent\output\architecture.md
+[StateMachine] 鈿?Parallel execution in state ANALYSE: [CoverageCheck, ArchReview]
+
+鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+鈺? 馃搵 COVERAGE CHECK  鈥? Requirement vs Architecture       鈺?鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+[CoverageChecker] 馃摑 Found 5 requirement item(s). Running coverage check...
+[CoverageChecker] 馃攧 Checking batch 1: items 1鈥?
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+
+鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+鈺? 馃攳 CODE REVIEW  鈥? Checklist-based Analysis             鈺?鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+
+[CodeReview] 馃攧 Round 1/2: Running checklist review...
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+[CoverageChecker] 鈿狅笍  Could not parse LLM response for batch. Marking all as unchecked.
+
+[CoverageChecker] 馃搳 Coverage: 0/5 (100%)
+[CoverageChecker] 鈿狅笍  Unchecked (5) 鈥?LLM parse errors
+[CodeReview] 鈿狅笍  Could not parse LLM review response. Treating all as N/A.
+[CodeReview] 馃搳 Round 1: 0 PASS / 0 FAIL / 18 N/A
+[CodeReview] 鉁?All checklist items passed. Review complete.
+
+[CodeReview] 馃洝锔? Coverage matrix: 0% (0 covered, 1 blind spots, 9 N/A)
+[CodeReview] 鈿狅笍  Blind spots: Input Validation
+[CodeReview] 馃搫 Review report written to: C:\workspace\WorkFlowAgent\workflow\output\architecture-review.md
+[StateMachine] 鈿?Parallel complete in 3ms: 鉁?CoverageCheck, 鉁?ArchReview
+[Orchestrator] 馃搳 Coverage: 0/0 evaluated (100%) | total parsed: 5
+[Socratic] 鈿?Non-blocking: "architecture_approval" already answered: "Yes, approve and proceed to code generation". Using cached.
+[Orchestrator] 鉁?Architecture approved by user. Proceeding to code generation.
+[Orchestrator] 鉁?Architecture review passed.
+[QualityGate] 馃搳 evaluate(ARCHITECT): pass=true, rollback=false, failures=0, rollbackCount=0/1
+[QualityGate] 馃摑 Experience recorded: ARCHITECT -> PASS
+[Orchestrator] 鈩癸笍  Architecture review: no issues. Proceeding automatically.
+[Orchestrator] 馃幆 Experience hit-rate (ARCHITECT): 3/4 matched
+[Orchestrator] 馃搳 Marked 3/4 experience(s) as effective (ARCHITECT passed). Evolution triggers: 0
+[Orchestrator] 馃敆 ARCHITECT context stored: 6 key decision(s), 1 risk(s).
+
+鈿狅笍  [FileRefBus] CONTRACT VIOLATION (soft warning)
+   From: architect 鈫?To: planner
+   File: architecture.md
+   Reason: Contract violation for architecture.md for PlannerAgent: none of the required 
+sections [## Architecture, ## Component, ## Design...] found in file. The file may have a
+n unexpected format or missing structured JSON block.
+   The downstream Agent may produce incorrect output due to malformed input.
+
+[FileRefBus] architect 鈫?planner: architecture.md
+  馃攧 architect 鈫?planner: architecture.md
+[Orchestrator] 鈴憋笍  Stage execution time: 24ms
+[Orchestrator] 馃搫 Artifact path: C:\workspace\WorkFlowAgent\output\architecture.md
+[Orchestrator] 馃 Running SocraticChallenger: DEVIL'S ADVOCATE mode...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃 DEVIL'S ADVOCATE for stage: ARCHITECT
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃搵 Agent claims: architecture designed, components defined, interfaces specified
+[SocraticChallenger] 鉂?Generated 6 challenge questions
+[SocraticChallenger] 馃暢锔? Detected 14 potential blind spots
+[SocraticChallenger] 馃搳 缁村害璇勫垎:
+   鐩稿叧鎬? 0%
+   骞垮害: 0%
+   娣卞害: 0%
+   閫昏緫鎬? 0%
+   娓呮櫚搴? 0%
+   绮剧‘鎬? 0%
+   杈圭晫鏉′欢: 0%
+   缁撹渚濇嵁: 0%
+   鏁版嵁鏀拺: 0%
+   涓氱晫瀵规瘮: 0%
+[SocraticChallenger] 馃搳 Confidence in conclusions: 0%
+[SocraticChallenger] 鈹€鈹€ CHALLENGE QUESTIONS 鈹€鈹€
+  1. [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?  2. [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?  3. [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?  4. [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+  5. [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?  6. [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[SocraticChallenger] 鈹€鈹€ BLIND SPOTS 鈹€鈹€
+  1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+  2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+  3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+  4. [閫昏緫鎬 鏈秹鍙? causality established
+  5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+  6. [閫昏緫鎬[ARCHITECT] 缂哄皯: 鏋舵瀯鎺ㄧ悊閾?  7. [閫昏緫鎬[ARCHITECT] 缂哄皯: 璁捐鍐崇瓥閫昏緫
+  8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+  9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+  10. [娓呮櫚搴 鏈秹鍙? concepts explained
+  11. [娓呮櫚搴 鏈秹鍙? examples provided
+  12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+  13. [娓呮櫚搴[ARCHITECT] 缂哄皯: 鏋舵瀯鎻忚堪娓呮櫚
+  14. [娓呮櫚搴[ARCHITECT] 缂哄皯: 鎺ュ彛瀹氫箟鏄庣‘
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈹€鈹€ CHALLENGE QUESTIONS (Self-Doubt) 鈹€鈹€
+[Orchestrator]    Q1: [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?[Orchestrator]    Q2: [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?[Orchestrator]    Q3: [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?[Orchestrator]    Q4: [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+[Orchestrator]    Q5: [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?[Orchestrator]    Q6: [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[Orchestrator] 鈹€鈹€ BLIND SPOTS DETECTED 鈹€鈹€
+[Orchestrator]    1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+[Orchestrator]    2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+[Orchestrator]    3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+[Orchestrator]    4. [閫昏緫鎬 鏈秹鍙? causality established
+[Orchestrator]    5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+[Orchestrator]    6. [閫昏緫鎬[ARCHITECT] 缂哄皯: 鏋舵瀯鎺ㄧ悊閾?[Orchestrator]    7. [閫昏緫鎬[ARCHITECT] 缂哄皯: 璁捐鍐崇瓥閫昏緫
+[Orchestrator]    8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+[Orchestrator]    9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+[Orchestrator]    10. [娓呮櫚搴 鏈秹鍙? concepts explained
+[Orchestrator]    11. [娓呮櫚搴 鏈秹鍙? examples provided
+[Orchestrator]    12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+[Orchestrator]    13. [娓呮櫚搴[ARCHITECT] 缂哄皯: 鏋舵瀯鎻忚堪娓呮櫚
+[Orchestrator]    14. [娓呮櫚搴[ARCHITECT] 缂哄皯: 鎺ュ彛瀹氫箟鏄庣‘
+[Orchestrator] 馃搳 Confidence in conclusions: 0%
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? reasoning chain valid...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? no logical fallacies...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? causality established...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? counter-arguments addressed...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬[ARCHITECT] 缂哄皯: 鏋舵瀯鎺ㄧ悊閾?..
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬[ARCHITECT] 缂哄皯: 璁捐鍐崇瓥閫昏緫...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? terms clearly defined...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? no ambiguous language...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? concepts explained...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? examples provided...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? scope unambiguous...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴[ARCHITECT] 缂哄皯: 鏋舵瀯鎻忚堪娓呮櫚...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴[ARCHITECT] 缂哄皯: 鎺ュ彛瀹氫箟鏄庣‘...
+[EvolutionLoop] 馃摗 Signal: [HIGH] LOW_CONFIDENCE @ ARCHITECT
+[EvolutionLoop]    Evidence: Confidence 0 < threshold 0.5...
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: [LOW_CO
+NFIDENCE] ARCHITECT: Confidence 0 < ...
+[EvolutionLoop]    鈫?Recorded to ExperienceStore: [LOW_CONFIDENCE] ARCHITECT: Confidence 0 < thresho...
+[EvolutionLoop] 馃К Evolution triggered: recorded
+[Orchestrator] 鈿狅笍  Low confidence detected, will revisit stage...
+
+[Orchestrator] 馃攧 Retry attempt 1 for stage: ARCHITECT
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃彈锔?ARCHITECT  | ArchitectAgent                                鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈼?  PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈼?  CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?  馃摜 architect consumed requirement.md
+[Orchestrator] 馃敆 Cross-stage context injected into ArchitectAgent (994 chars, dynamic selection). Upstream: ANALYSE(6 decisions, 0 risks) 鈫?ARCHITECT(6 decisions, 1 risks) 鈫?PLAN(6 decisions, 0 risks)
+[Socratic] 鈿?Non-blocking: "tech_stack_preference" already answered: "Follow the architecture document recommendation". Using cached.
+[Orchestrator] 鈿?Tech stack preference (non-blocking): "Follow the architecture document recommendation"
+[Orchestrator] 馃搵 AGENTS.md injected into ArchitectAgent context.
+[Orchestrator] 馃摎 Experience context injected for ArchitectAgent (6066 chars, 4 experience(s), limit=5)
+[Orchestrator] 馃摐 License Compliance (ARCHITECT): checking license compliance...
+[SmartContext] 鈴笍  Skipping Figma Design (irrelevant for general/general)
+[Orchestrator] 馃摐 License Compliance (ARCHITECT): 鉁?All licenses compliant.
+[AdapterPluginRegistry] 鈿?ARCHITECT: 5 plugin(s) executed in 1ms (0 produced content).
+[Orchestrator] 馃摉 Recall Memory injected for ArchitectAgent (244 chars)
+[SmartContext] 馃搳 Block adjustments: demoted=[License Compliance(-10)], skipped=[Figma Design]
+[ToolResultFilter] 鉁傦笍  AGENTS.md: 11505 鈫?2508 chars (truncate(head=40+tail=20))
+[ToolResultFilter] 馃搳 Batch filter [intent:general]: saved 8997 chars across 1 block(s): [AGENTS.md(-8997)]
+[TokenBudget] 馃 Semantic compression: saved 1693 chars across [Experience(-1693,hierarchical)]
+[ModuleArchitect] Module map absent or < 2 modules. Using standard single-pass design.
+[architect] Starting...
+    馃摑 architect 鈫?architect-analysis
+[PatternLibrary] Unknown pattern: "analytical"
+[PromptBuilder] Patterns applied in 0ms
+[ContextLoader] Injected 4 context doc(s) (~2810 tokens): architecture-constraints.md, bp-architecture-design.md, bp-component-design.md, architecture-design.md
+[Orchestrator] LLM call for architect: ~0 tokens
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+      鉁?architect-analysis (3ms)
+[ArchitectAgent] 鈿狅笍  No structured JSON block found in output. Downstream agents will us
+e regex-based extraction (degraded mode).
+[ArchitectAgent] 鈿狅笍  COMPLIANCE: Missing mandatory section(s): Architecture Design, Exec
+ution Plan. The agent output specification requires these sections.
+[architect] Done. Output: C:\workspace\WorkFlowAgent\output\architecture.md
+[StateMachine] 鈿?Parallel execution in state ANALYSE: [CoverageCheck, ArchReview]
+
+鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+鈺? 馃搵 COVERAGE CHECK  鈥? Requirement vs Architecture       鈺?鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+[CoverageChecker] 馃摑 Found 5 requirement item(s). Running coverage check...
+[CoverageChecker] 馃攧 Checking batch 1: items 1鈥?
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+
+鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+鈺? 馃攳 CODE REVIEW  鈥? Checklist-based Analysis             鈺?鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+
+[CodeReview] 馃攧 Round 1/2: Running checklist review...
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+[CoverageChecker] 鈿狅笍  Could not parse LLM response for batch. Marking all as unchecked.
+
+[CoverageChecker] 馃搳 Coverage: 0/5 (100%)
+[CoverageChecker] 鈿狅笍  Unchecked (5) 鈥?LLM parse errors
+[CodeReview] 鈿狅笍  Could not parse LLM review response. Treating all as N/A.
+[CodeReview] 馃搳 Round 1: 0 PASS / 0 FAIL / 18 N/A
+[CodeReview] 鉁?All checklist items passed. Review complete.
+
+[CodeReview] 馃洝锔? Coverage matrix: 0% (0 covered, 1 blind spots, 9 N/A)
+[CodeReview] 鈿狅笍  Blind spots: Input Validation
+[CodeReview] 馃搫 Review report written to: C:\workspace\WorkFlowAgent\workflow\output\architecture-review.md
+[StateMachine] 鈿?Parallel complete in 1ms: 鉁?CoverageCheck, 鉁?ArchReview
+[RollbackCoordinator] 馃攧 Restored 2 subtask cache entry(ies) from manifest (crash recovery).
+[Orchestrator] 馃搳 Coverage: 0/0 evaluated (100%) | total parsed: 5
+[Socratic] 鈿?Non-blocking: "architecture_approval" already answered: "Yes, approve and proceed to code generation". Using cached.
+[Orchestrator] 鉁?Architecture approved by user. Proceeding to code generation.
+[Orchestrator] 鉁?Architecture review passed.
+[QualityGate] 馃搳 evaluate(ARCHITECT): pass=true, rollback=false, failures=0, rollbackCount=0/1
+[QualityGate] 馃摑 Experience recorded: ARCHITECT -> PASS
+[Orchestrator] 鈩癸笍  Architecture review: no issues. Proceeding automatically.
+[Orchestrator] 馃幆 Experience hit-rate (ARCHITECT): 3/4 matched
+[Orchestrator] 馃搳 Marked 3/4 experience(s) as effective (ARCHITECT passed). Evolution triggers: 0
+[Orchestrator] 馃敆 ARCHITECT context stored: 6 key decision(s), 1 risk(s).
+
+鈿狅笍  [FileRefBus] CONTRACT VIOLATION (soft warning)
+   From: architect 鈫?To: planner
+   File: architecture.md
+   Reason: Contract violation for architecture.md for PlannerAgent: none of the required 
+sections [## Architecture, ## Component, ## Design...] found in file. The file may have a
+n unexpected format or missing structured JSON block.
+[FileRefBus] architect 鈫?planner: architecture.md
+  鈴?Rollback: planner handoff superseded
+   The downstream Agent may produce incorrect output due to malformed input.
+
+  馃攧 architect 鈫?planner: architecture.md
+[Orchestrator] 鈴憋笍  Stage execution time: 42ms
+[Orchestrator] 馃搫 Artifact path: C:\workspace\WorkFlowAgent\output\architecture.md
+[Orchestrator] 馃 Running SocraticChallenger: DEVIL'S ADVOCATE mode...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃 DEVIL'S ADVOCATE for stage: ARCHITECT
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃搵 Agent claims: architecture designed, components defined, interfaces specified
+[SocraticChallenger] 鉂?Generated 6 challenge questions
+[SocraticChallenger] 馃暢锔? Detected 14 potential blind spots
+[SocraticChallenger] 馃搳 缁村害璇勫垎:
+   鐩稿叧鎬? 0%
+   骞垮害: 0%
+   娣卞害: 0%
+   閫昏緫鎬? 0%
+   娓呮櫚搴? 0%
+   绮剧‘鎬? 0%
+   杈圭晫鏉′欢: 0%
+   缁撹渚濇嵁: 0%
+   鏁版嵁鏀拺: 0%
+   涓氱晫瀵规瘮: 0%
+[SocraticChallenger] 馃搳 Confidence in conclusions: 0%
+[SocraticChallenger] 鈹€鈹€ CHALLENGE QUESTIONS 鈹€鈹€
+  1. [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?  2. [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?  3. [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?  4. [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+  5. [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?  6. [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[SocraticChallenger] 鈹€鈹€ BLIND SPOTS 鈹€鈹€
+  1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+  2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+  3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+  4. [閫昏緫鎬 鏈秹鍙? causality established
+  5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+  6. [閫昏緫鎬[ARCHITECT] 缂哄皯: 鏋舵瀯鎺ㄧ悊閾?  7. [閫昏緫鎬[ARCHITECT] 缂哄皯: 璁捐鍐崇瓥閫昏緫
+  8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+  9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+  10. [娓呮櫚搴 鏈秹鍙? concepts explained
+  11. [娓呮櫚搴 鏈秹鍙? examples provided
+  12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+  13. [娓呮櫚搴[ARCHITECT] 缂哄皯: 鏋舵瀯鎻忚堪娓呮櫚
+  14. [娓呮櫚搴[ARCHITECT] 缂哄皯: 鎺ュ彛瀹氫箟鏄庣‘
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈹€鈹€ CHALLENGE QUESTIONS (Self-Doubt) 鈹€鈹€
+[Orchestrator]    Q1: [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?[Orchestrator]    Q2: [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?[Orchestrator]    Q3: [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?[Orchestrator]    Q4: [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+[Orchestrator]    Q5: [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?[Orchestrator]    Q6: [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[Orchestrator] 鈹€鈹€ BLIND SPOTS DETECTED 鈹€鈹€
+[Orchestrator]    1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+[Orchestrator]    2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+[Orchestrator]    3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+[Orchestrator]    4. [閫昏緫鎬 鏈秹鍙? causality established
+[Orchestrator]    5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+[Orchestrator]    6. [閫昏緫鎬[ARCHITECT] 缂哄皯: 鏋舵瀯鎺ㄧ悊閾?[Orchestrator]    7. [閫昏緫鎬[ARCHITECT] 缂哄皯: 璁捐鍐崇瓥閫昏緫
+[Orchestrator]    8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+[Orchestrator]    9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+[Orchestrator]    10. [娓呮櫚搴 鏈秹鍙? concepts explained
+[Orchestrator]    11. [娓呮櫚搴 鏈秹鍙? examples provided
+[Orchestrator]    12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+[Orchestrator]    13. [娓呮櫚搴[ARCHITECT] 缂哄皯: 鏋舵瀯鎻忚堪娓呮櫚
+[Orchestrator]    14. [娓呮櫚搴[ARCHITECT] 缂哄皯: 鎺ュ彛瀹氫箟鏄庣‘
+[Orchestrator] 馃搳 Confidence in conclusions: 0%
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? reasoning chain valid...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? no logical fallacies...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? causality established...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? counter-arguments addressed...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬[ARCHITECT] 缂哄皯: 鏋舵瀯鎺ㄧ悊閾?..
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [閫昏緫鎬[ARCHITECT] 缂哄皯: 璁捐鍐崇瓥閫昏緫...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? terms clearly defined...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? no ambiguous language...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? concepts explained...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? examples provided...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? scope unambiguous...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴[ARCHITECT] 缂哄皯: 鏋舵瀯鎻忚堪娓呮櫚...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ ARCHITECT
+[EvolutionLoop]    Evidence: [娓呮櫚搴[ARCHITECT] 缂哄皯: 鎺ュ彛瀹氫箟鏄庣‘...
+[EvolutionLoop] 馃摗 Signal: [HIGH] LOW_CONFIDENCE @ ARCHITECT
+[EvolutionLoop]    Evidence: Confidence 0 < threshold 0.5...
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: [LOW_CO
+NFIDENCE] ARCHITECT: Confidence 0 < ...
+[EvolutionLoop]    鈫?Recorded to ExperienceStore: [LOW_CONFIDENCE] ARCHITECT: Confidence 0 < thresho...
+[EvolutionLoop] 馃К Evolution triggered: recorded
+[Orchestrator] 鉁?Stage ARCHITECT completed (challenged with 6 questions)
+[Orchestrator] 鉁?Stage ARCHITECT completed in 46ms
+
+[Hook] 鈴?Transitioning: ANALYSE 鈫?ARCHITECT
+[StateMachine] Transition: ANALYSE 鈫?ARCHITECT (artifact: C:\workspace\WorkFlowAgent\output\architecture.md)
+[Hook] 鉁?Transitioned: ANALYSE 鈫?ARCHITECT | Artifact: C:\workspace\WorkFlowAgent\output\architecture.md
+[Orchestrator] 馃搳 StateMachine transitioned to: ARCHITECT (artifact: C:\workspace\WorkFlowAgent\output\architecture.md)
+
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 鈻讹笍  Executing stage: PLAN
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃摑 PLAN       | PlannerAgent                                  鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈴?鈻?PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈼?  CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?  馃摜 planner consumed architecture.md
+[Orchestrator] 馃摜 PLAN upstream input: architecture.md
+[Orchestrator] 馃敆 PLAN upstream context: 20 line(s) from ANALYSE + ARCHITECT stages
+[Orchestrator] 馃摎 PLAN experience injection: 6 experience(s) from ExperienceStore
+[Orchestrator]    Experience IDs: [EXP-1774859895570-0088-VWP6E, EXP-1774859895569-0007-8IWU4, EXP-1774859895570-0073-KX45V, EXP-TEST-ASYNC-001, EXP-TEST-MOCK-002...]
+[Orchestrator] 馃殌 Executing PlannerAgent (generating execution-plan.md)...
+[planner] Starting...
+    馃摑 planner 鈫?planner-analysis
+[PromptBuilder] Patterns applied in 0ms
+[ContextLoader] Injected 4 context doc(s) (~2810 tokens): architecture-constraints.md (4 sections for planner), bp-component-design.md, bp-architecture-design.md, architecture-design.md
+[Orchestrator] LLM call for planner: ~0 tokens
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+      鉁?planner-analysis (2ms)
+[PlannerAgent] 鈿狅笍  No structured JSON block found in output. Downstream agents will use 
+regex-based extraction (degraded mode).
+[PlannerAgent] 鈿狅笍  COMPLIANCE: Missing mandatory section(s): Plan Overview, Implementati
+on Phases, Task Breakdown, Dependency Graph. The agent output specification requires thes
+e sections.
+[planner] Done. Output: C:\workspace\WorkFlowAgent\output\execution-plan.md
+[Orchestrator] 鉁?PlannerAgent completed in 0.0s 鈫?execution-plan.md
+[Socratic] 鈿?Non-blocking: "PLAN_APPROVAL" already answered: "[object Object]". Using cached.
+[Orchestrator] 鉁?Execution plan approved by user. Proceeding to CODE stage.
+[Orchestrator] 馃幆 Experience hit-rate (PLAN): 3/6 matched
+[Orchestrator] 馃搳 Marked 3/6 experience(s) as effective (PLAN passed). Evolution triggers: 0
+[Orchestrator] 馃敆 PLAN context stored: 6 key decision(s), 0 task(s).
+[Orchestrator] 馃摑 Plan summary: Functional Requirements 1. Core functionality must work as expected 2. User interface must be intuitive 3. Error handling must be robust
+[Orchestrator] 馃搳 Plan stats: 31 lines, 0.8 KB, 0 phase(s), 0 dependency link(s)
+
+鈿狅笍  [FileRefBus] CONTRACT VIOLATION (soft warning)
+   From: planner 鈫?To: developer
+   File: architecture.md
+   Reason: Contract violation for architecture.md for DeveloperAgent (via PlannerAgent): 
+none of the required sections [## Architecture, ## Component, ## Design...] found in file
+. The file may have an unexpected format or missing structured JSON block.
+   The downstream Agent may produce incorrect output due to malformed input.
+
+[FileRefBus] planner 鈫?developer: architecture.md
+  馃攧 planner 鈫?developer: architecture.md
+[Orchestrator] 馃摛 Bus: PLANNER 鈫?DEVELOPER (architecture.md + execution-plan, 0 task(s))
+[Orchestrator] 鉁?PLAN stage completed in 0.0s (PlannerAgent: 0.0s, overhead: 0.0s)
+[Orchestrator] 鈴憋笍  Stage execution time: 5ms
+[Orchestrator] 馃搫 Artifact path: C:\workspace\WorkFlowAgent\output\execution-plan.md
+[Orchestrator] 馃 Running SocraticChallenger: DEVIL'S ADVOCATE mode...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃 DEVIL'S ADVOCATE for stage: PLAN
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃搵 Agent claims: tasks identified, dependencies mapped, timeline estimated
+[SocraticChallenger] 鉂?Generated 6 challenge questions
+[SocraticChallenger] 馃暢锔? Detected 14 potential blind spots
+[SocraticChallenger] 馃搳 缁村害璇勫垎:
+   鐩稿叧鎬? 0%
+   骞垮害: 0%
+   娣卞害: 0%
+   閫昏緫鎬? 0%
+   娓呮櫚搴? 0%
+   绮剧‘鎬? 0%
+   杈圭晫鏉′欢: 0%
+   缁撹渚濇嵁: 0%
+   鏁版嵁鏀拺: 0%
+   涓氱晫瀵规瘮: 0%
+[SocraticChallenger] 馃搳 Confidence in conclusions: 0%
+[SocraticChallenger] 鈹€鈹€ CHALLENGE QUESTIONS 鈹€鈹€
+  1. [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?  2. [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?  3. [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?  4. [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+  5. [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?  6. [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[SocraticChallenger] 鈹€鈹€ BLIND SPOTS 鈹€鈹€
+  1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+  2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+  3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+  4. [閫昏緫鎬 鏈秹鍙? causality established
+  5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+  6. [閫昏緫鎬[PLAN] 缂哄皯: 浠诲姟椤哄簭閫昏緫
+  7. [閫昏緫鎬[PLAN] 缂哄皯: 渚濊禆鍏崇郴姝ｇ‘
+  8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+  9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+  10. [娓呮櫚搴 鏈秹鍙? concepts explained
+  11. [娓呮櫚搴 鏈秹鍙? examples provided
+  12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+  13. [娓呮櫚搴[PLAN] 缂哄皯: 浠诲姟鎻忚堪娓呮櫚
+  14. [娓呮櫚搴[PLAN] 缂哄皯: 楠屾敹鏍囧噯鏄庣‘
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈹€鈹€ CHALLENGE QUESTIONS (Self-Doubt) 鈹€鈹€
+[Orchestrator]    Q1: [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?[Orchestrator]    Q2: [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?[Orchestrator]    Q3: [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?[Orchestrator]    Q4: [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+[Orchestrator]    Q5: [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?[Orchestrator]    Q6: [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[Orchestrator] 鈹€鈹€ BLIND SPOTS DETECTED 鈹€鈹€
+[Orchestrator]    1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+[Orchestrator]    2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+[Orchestrator]    3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+[Orchestrator]    4. [閫昏緫鎬 鏈秹鍙? causality established
+[Orchestrator]    5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+[Orchestrator]    6. [閫昏緫鎬[PLAN] 缂哄皯: 浠诲姟椤哄簭閫昏緫
+[Orchestrator]    7. [閫昏緫鎬[PLAN] 缂哄皯: 渚濊禆鍏崇郴姝ｇ‘
+[Orchestrator]    8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+[Orchestrator]    9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+[Orchestrator]    10. [娓呮櫚搴 鏈秹鍙? concepts explained
+[Orchestrator]    11. [娓呮櫚搴 鏈秹鍙? examples provided
+[Orchestrator]    12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+[Orchestrator]    13. [娓呮櫚搴[PLAN] 缂哄皯: 浠诲姟鎻忚堪娓呮櫚
+[Orchestrator]    14. [娓呮櫚搴[PLAN] 缂哄皯: 楠屾敹鏍囧噯鏄庣‘
+[Orchestrator] 馃搳 Confidence in conclusions: 0%
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? reasoning chain valid...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? no logical fallacies...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? causality established...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? counter-arguments addressed...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬[PLAN] 缂哄皯: 浠诲姟椤哄簭閫昏緫...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬[PLAN] 缂哄皯: 渚濊禆鍏崇郴姝ｇ‘...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? terms clearly defined...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? no ambiguous language...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? concepts explained...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? examples provided...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? scope unambiguous...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴[PLAN] 缂哄皯: 浠诲姟鎻忚堪娓呮櫚...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴[PLAN] 缂哄皯: 楠屾敹鏍囧噯鏄庣‘...
+[EvolutionLoop] 馃摗 Signal: [HIGH] LOW_CONFIDENCE @ PLAN
+[EvolutionLoop]    Evidence: Confidence 0 < threshold 0.5...
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: [LOW_CO
+NFIDENCE] PLAN: Confidence 0 < thres...
+[EvolutionLoop]    鈫?Recorded to ExperienceStore: [LOW_CONFIDENCE] PLAN: Confidence 0 < threshold 0....
+[EvolutionLoop] 馃К Evolution triggered: recorded
+[Orchestrator] 鈿狅笍  Low confidence detected, will revisit stage...
+
+[Orchestrator] 馃攧 Retry attempt 1 for stage: PLAN
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃摑 PLAN       | PlannerAgent                                  鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈴?鈻?PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈼?  CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?  馃摜 planner consumed architecture.md
+[Orchestrator] 馃摜 PLAN upstream input: architecture.md
+[Orchestrator] 馃敆 PLAN upstream context: 20 line(s) from ANALYSE + ARCHITECT stages
+[Orchestrator] 馃摎 PLAN experience injection: 6 experience(s) from ExperienceStore
+[Orchestrator]    Experience IDs: [EXP-1774859895570-0088-VWP6E, EXP-1774859895569-0007-8IWU4, EXP-1774859895570-0073-KX45V, EXP-TEST-ASYNC-001, EXP-TEST-MOCK-002...]
+[Orchestrator] 馃殌 Executing PlannerAgent (generating execution-plan.md)...
+[planner] Starting...
+    馃摑 planner 鈫?planner-analysis
+[PromptBuilder] Patterns applied in 1ms
+[ContextLoader] Injected 4 context doc(s) (~2810 tokens): architecture-constraints.md (4 sections for planner), bp-component-design.md, bp-architecture-design.md, architecture-design.md
+[Orchestrator] LLM call for planner: ~0 tokens
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+      鉁?planner-analysis (3ms)
+[PlannerAgent] 鈿狅笍  No structured JSON block found in output. Downstream agents will use 
+regex-based extraction (degraded mode).
+[PlannerAgent] 鈿狅笍  COMPLIANCE: Missing mandatory section(s): Plan Overview, Implementati
+on Phases, Task Breakdown, Dependency Graph. The agent output specification requires thes
+e sections.
+[planner] Done. Output: C:\workspace\WorkFlowAgent\output\execution-plan.md
+[Orchestrator] 鉁?PlannerAgent completed in 0.0s 鈫?execution-plan.md
+[Socratic] 鈿?Non-blocking: "PLAN_APPROVAL" already answered: "[object Object]". Using cached.
+[Orchestrator] 鉁?Execution plan approved by user. Proceeding to CODE stage.
+[Orchestrator] 馃幆 Experience hit-rate (PLAN): 3/6 matched
+[Orchestrator] 馃搳 Marked 3/6 experience(s) as effective (PLAN passed). Evolution triggers: 0
+[Orchestrator] 馃敆 PLAN context stored: 6 key decision(s), 0 task(s).
+[Orchestrator] 馃摑 Plan summary: Functional Requirements 1. Core functionality must work as expected 2. User interface must be intuitive 3. Error handling must be robust
+[Orchestrator] 馃搳 Plan stats: 31 lines, 0.8 KB, 0 phase(s), 0 dependency link(s)
+
+鈿狅笍  [FileRefBus] CONTRACT VIOLATION (soft warning)
+   From: planner 鈫?To: developer
+   File: architecture.md
+   Reason: Contract violation for architecture.md for DeveloperAgent (via PlannerAgent): 
+none of the required sections [## Architecture, ## Component, ## Design...] found in file
+. The file may have an unexpected format or missing structured JSON block.
+   The downstream Agent may produce incorrect output due to malformed input.
+
+[FileRefBus] planner 鈫?developer: architecture.md
+  鈴?Rollback: developer handoff superseded
+  馃攧 planner 鈫?developer: architecture.md
+[Orchestrator] 馃摛 Bus: PLANNER 鈫?DEVELOPER (architecture.md + execution-plan, 0 task(s))
+[Orchestrator] 鉁?PLAN stage completed in 0.0s (PlannerAgent: 0.0s, overhead: 0.0s)
+[Orchestrator] 鈴憋笍  Stage execution time: 14ms
+[Orchestrator] 馃搫 Artifact path: C:\workspace\WorkFlowAgent\output\execution-plan.md
+[Orchestrator] 馃 Running SocraticChallenger: DEVIL'S ADVOCATE mode...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃 DEVIL'S ADVOCATE for stage: PLAN
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃搵 Agent claims: tasks identified, dependencies mapped, timeline estimated
+[SocraticChallenger] 鉂?Generated 6 challenge questions
+[SocraticChallenger] 馃暢锔? Detected 14 potential blind spots
+[SocraticChallenger] 馃搳 缁村害璇勫垎:
+   鐩稿叧鎬? 0%
+   骞垮害: 0%
+   娣卞害: 0%
+   閫昏緫鎬? 0%
+   娓呮櫚搴? 0%
+   绮剧‘鎬? 0%
+   杈圭晫鏉′欢: 0%
+   缁撹渚濇嵁: 0%
+   鏁版嵁鏀拺: 0%
+   涓氱晫瀵规瘮: 0%
+[SocraticChallenger] 馃搳 Confidence in conclusions: 0%
+[SocraticChallenger] 鈹€鈹€ CHALLENGE QUESTIONS 鈹€鈹€
+  1. [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?  2. [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?  3. [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?  4. [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+  5. [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?  6. [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[SocraticChallenger] 鈹€鈹€ BLIND SPOTS 鈹€鈹€
+  1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+  2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+  3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+  4. [閫昏緫鎬 鏈秹鍙? causality established
+  5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+  6. [閫昏緫鎬[PLAN] 缂哄皯: 浠诲姟椤哄簭閫昏緫
+  7. [閫昏緫鎬[PLAN] 缂哄皯: 渚濊禆鍏崇郴姝ｇ‘
+  8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+  9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+  10. [娓呮櫚搴 鏈秹鍙? concepts explained
+  11. [娓呮櫚搴 鏈秹鍙? examples provided
+  12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+  13. [娓呮櫚搴[PLAN] 缂哄皯: 浠诲姟鎻忚堪娓呮櫚
+  14. [娓呮櫚搴[PLAN] 缂哄皯: 楠屾敹鏍囧噯鏄庣‘
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈹€鈹€ CHALLENGE QUESTIONS (Self-Doubt) 鈹€鈹€
+[Orchestrator]    Q1: [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?[Orchestrator]    Q2: [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?[Orchestrator]    Q3: [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?[Orchestrator]    Q4: [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+[Orchestrator]    Q5: [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?[Orchestrator]    Q6: [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[Orchestrator] 鈹€鈹€ BLIND SPOTS DETECTED 鈹€鈹€
+[Orchestrator]    1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+[Orchestrator]    2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+[Orchestrator]    3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+[Orchestrator]    4. [閫昏緫鎬 鏈秹鍙? causality established
+[Orchestrator]    5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+[Orchestrator]    6. [閫昏緫鎬[PLAN] 缂哄皯: 浠诲姟椤哄簭閫昏緫
+[Orchestrator]    7. [閫昏緫鎬[PLAN] 缂哄皯: 渚濊禆鍏崇郴姝ｇ‘
+[Orchestrator]    8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+[Orchestrator]    9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+[Orchestrator]    10. [娓呮櫚搴 鏈秹鍙? concepts explained
+[Orchestrator]    11. [娓呮櫚搴 鏈秹鍙? examples provided
+[Orchestrator]    12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+[Orchestrator]    13. [娓呮櫚搴[PLAN] 缂哄皯: 浠诲姟鎻忚堪娓呮櫚
+[Orchestrator]    14. [娓呮櫚搴[PLAN] 缂哄皯: 楠屾敹鏍囧噯鏄庣‘
+[Orchestrator] 馃搳 Confidence in conclusions: 0%
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? reasoning chain valid...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? no logical fallacies...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? causality established...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? counter-arguments addressed...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬[PLAN] 缂哄皯: 浠诲姟椤哄簭閫昏緫...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [閫昏緫鎬[PLAN] 缂哄皯: 渚濊禆鍏崇郴姝ｇ‘...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? terms clearly defined...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? no ambiguous language...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? concepts explained...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? examples provided...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? scope unambiguous...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴[PLAN] 缂哄皯: 浠诲姟鎻忚堪娓呮櫚...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ PLAN
+[EvolutionLoop]    Evidence: [娓呮櫚搴[PLAN] 缂哄皯: 楠屾敹鏍囧噯鏄庣‘...
+[EvolutionLoop] 馃摗 Signal: [HIGH] LOW_CONFIDENCE @ PLAN
+[EvolutionLoop]    Evidence: Confidence 0 < threshold 0.5...
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: [LOW_CO
+NFIDENCE] PLAN: Confidence 0 < thres...
+[EvolutionLoop]    鈫?Recorded to ExperienceStore: [LOW_CONFIDENCE] PLAN: Confidence 0 < threshold 0....
+[EvolutionLoop] 馃К Evolution triggered: recorded
+[Orchestrator] 鉁?Stage PLAN completed (challenged with 6 questions)
+[Orchestrator] 鉁?Stage PLAN completed in 17ms
+
+[Hook] 鈴?Transitioning: ARCHITECT 鈫?PLAN
+[StateMachine] Transition: ARCHITECT 鈫?PLAN (artifact: C:\workspace\WorkFlowAgent\output\execution-plan.md)
+[Hook] 鉁?Transitioned: ARCHITECT 鈫?PLAN | Artifact: C:\workspace\WorkFlowAgent\output\execution-plan.md
+[Orchestrator] 馃搳 StateMachine transitioned to: PLAN (artifact: C:\workspace\WorkFlowAgent\output\execution-plan.md)
+
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 鈻讹笍  Executing stage: CODE
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃捇 CODE       | DeveloperAgent                                鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈴?鈻?PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈴?鈻?CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?  馃摜 developer consumed architecture.md
+[Orchestrator] 馃搵 Execution plan loaded (822 chars) from C:\workspace\WorkFlowAgent\output\execution-plan.md
+[Orchestrator] 馃敆 Cross-stage context injected into DeveloperAgent (994 chars, dynamic selection). Upstream: ANALYSE(6 decisions, 0 risks) 鈫?ARCHITECT(6 decisions, 1 risks) 鈫?PLAN(6 decisions, 0 risks)
+[Orchestrator] 馃搵 AGENTS.md injected into DeveloperAgent context.
+[Orchestrator] 馃摎 Experience context injected for DeveloperAgent (674 chars, 4 experience(s), limit=5)
+[Orchestrator] Code graph query failed (non-fatal): Cannot read properties of undefined (
+reading 'kind')
+[CodeGraph] IDE query failed for "Requirement,Analysis,Overview,User,Stories,Functional,Requirements,Core,Error,Performance,Response,Security,Input,Compatibility,Support,Constraints,Assumptions,Users,System,Open,Questions", using regex fallback: view_code_item tool not initialized
+[Orchestrator] 馃攧 CI Status (DEVELOPER): fetching CI pipeline status...
+[Orchestrator] 馃搳 Code Quality (DEVELOPER): running code quality analysis...
+[SmartContext] 鈴笍  Skipping Figma Design (irrelevant for general/general)
+[Orchestrator] 馃摎 Undocumented Exports (DEVELOPER): scanning for undocumented exports...
+[MCPAdapter:doc-gen] Scanning 30 source file(s) for undocumented exports...
+[MCPAdapter:doc-gen] Found 11/32 undocumented export(s).
+[Orchestrator] 馃摎 Undocumented Exports (DEVELOPER): 11/32 undocumented export(s).
+[Orchestrator] 馃攧 CI Status (DEVELOPER): status unavailable or unknown.
+[Orchestrator] 馃搳 Code Quality (DEVELOPER): 鈿狅笍  Quality gate: ERROR. 15 issue(s) found (local).
+[AdapterPluginRegistry] 鈿?DEVELOPER: 7 plugin(s) executed in 434ms (2 produced content).
+[Orchestrator] 馃搵 Execution plan injected into DeveloperAgent context (859 chars).
+[TaskHistory] Loaded 1 history entries
+[Orchestrator] 馃摉 Recall Memory injected for DeveloperAgent (244 chars)
+[SmartContext] 馃搳 Block adjustments: skipped=[Figma Design]
+[BlockCompressor] 馃棞锔?Compressed 1 block(s), saved 1560 chars: Code Quality(-1560)
+[ToolResultFilter] 鉁傦笍  AGENTS.md: 11505 鈫?2508 chars (truncate(head=40+tail=20))
+[ToolResultFilter] 馃搳 Batch filter [intent:general]: saved 8997 chars across 1 block(s): [AGENTS.md(-8997)]
+[Orchestrator] 馃棞锔? DEVELOPER compression: saved 1560 chars.
+[developer] Starting...
+    馃摑 developer 鈫?developer-analysis
+[developer] 鈩癸笍  Runtime input path diverges from canonical contract declaration.
+  Canonical : output/execution-plan.md
+  Actual    : architecture.md
+  This is expected when the Stage layer injects enriched context.
+[PromptBuilder] Patterns applied in 0ms
+[ContextLoader] Injected 3 context doc(s) (~2801 tokens): architecture-constraints.md (11 sections for developer), bp-component-design.md, bp-architecture-design.md
+[Orchestrator] LLM call for developer: ~0 tokens
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+      鉁?developer-analysis (2ms)
+[DeveloperAgent] 鈿狅笍  No structured JSON block found in output. Downstream agents will us
+e regex-based extraction (degraded mode).
+[DeveloperAgent] 鈿狅笍  COMPLIANCE: Missing mandatory section(s): Architecture Design, Exec
+ution Plan. The agent output specification requires these sections.
+[developer] Done. Output: C:\workspace\WorkFlowAgent\output\code.diff
+[Orchestrator] 馃搳 Code Quality (CodeReview): running code quality analysis...
+[Orchestrator] 馃搳 Code Quality (CodeReview): 鈿狅笍  Quality gate: ERROR. 15 issue(s) found (local).
+
+鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+鈺? 馃攳 CODE REVIEW  鈥? Checklist-based Analysis             鈺?鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+
+[CodeReview] 馃攧 Round 1/2: Running checklist review...
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+[CodeReview] 鈿狅笍  Could not parse LLM review response. Treating all as N/A.
+[CodeReview] 馃搳 Round 1: 0 PASS / 0 FAIL / 25 N/A
+[CodeReview] 鉁?All checklist items passed. Review complete.
+
+[CodeReview] 馃洝锔? Coverage matrix: 0% (0 covered, 2 blind spots, 8 N/A)
+[CodeReview] 鈿狅笍  Blind spots: Input Validation, Business Logic
+[CodeReview] 馃搫 Review report written to: C:\workspace\WorkFlowAgent\workflow\output\code-review.md
+[RollbackCoordinator] 馃攧 Restored 2 subtask cache entry(ies) from manifest (crash recovery).
+[QualityGate] 馃搳 evaluate(CODE): pass=true, rollback=false, failures=0, rollbackCount=0/1
+[QualityGate] 馃摑 Experience recorded: CODE -> PASS
+[Orchestrator] 鉁?Code review passed. Reason: All 25 checklist items passed
+
+[Orchestrator] 馃攳 Early entropy scan (post-CODE stage)...
+
+[EntropyGC] 馃攳 Starting entropy scan...
+[EntropyGC] Scanning 352 source files...
+[EntropyGC] 馃搳 Running code quality check (local)...
+[EntropyGC] 馃搳 Code quality check: 7 issue(s) found
+[EntropyGC] 鉁?Scan complete: 81 violation(s) found
+[EntropyGC]    High: 29 | Medium: 52 | Low: 0
+[EntropyGC]    Report: C:\workspace\WorkFlowAgent\workflow\output\entropy-report.md
+[Orchestrator] 鈿狅笍  [EntropyGC/early] 81 violation(s) detected after CODE stage (29 high)
+. See output/entropy-report.md.
+[Orchestrator] 馃幆 Experience hit-rate (CODE): 2/4 matched
+[Orchestrator] 馃搳 Marked 2/4 experience(s) as effective (CODE passed). Evolution triggers: 0
+[Orchestrator] 馃敆 CODE context stored: 6 key decision(s), 1 risk(s).
+
+鈿狅笍  [FileRefBus] CONTRACT VIOLATION (soft warning)
+   From: developer 鈫?To: tester
+   File: code.diff
+   Reason: Contract violation for code.diff for TesterAgent: none of the required section
+s [diff --git, --- a/, +++ b/...] found in file. The file may have an unexpected format o
+r missing structured JSON block.
+   The downstream Agent may produce incorrect output due to malformed input.
+
+[FileRefBus] developer 鈫?tester: code.diff
+  馃攧 developer 鈫?tester: code.diff
+[Orchestrator] 鈴憋笍  Stage execution time: 531ms
+[Orchestrator] 馃搫 Artifact path: C:\workspace\WorkFlowAgent\output\code.diff
+[Orchestrator] 馃 Running SocraticChallenger: DEVIL'S ADVOCATE mode...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃 DEVIL'S ADVOCATE for stage: CODE
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃搵 Agent claims: code written, tests passing, implementation complete
+[SocraticChallenger] 鉂?Generated 6 challenge questions
+[SocraticChallenger] 馃暢锔? Detected 14 potential blind spots
+[SocraticChallenger] 馃搳 缁村害璇勫垎:
+   鐩稿叧鎬? 0%
+   骞垮害: 0%
+   娣卞害: 0%
+   閫昏緫鎬? 0%
+   娓呮櫚搴? 0%
+   绮剧‘鎬? 0%
+   杈圭晫鏉′欢: 0%
+   缁撹渚濇嵁: 0%
+   鏁版嵁鏀拺: 0%
+   涓氱晫瀵规瘮: 0%
+[SocraticChallenger] 馃搳 Confidence in conclusions: 0%
+[SocraticChallenger] 鈹€鈹€ CHALLENGE QUESTIONS 鈹€鈹€
+  1. [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?  2. [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?  3. [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?  4. [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+  5. [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?  6. [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[SocraticChallenger] 鈹€鈹€ BLIND SPOTS 鈹€鈹€
+  1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+  2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+  3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+  4. [閫昏緫鎬 鏈秹鍙? causality established
+  5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+  6. [閫昏緫鎬[CODE] 缂哄皯: 浠ｇ爜閫昏緫姝ｇ‘
+  7. [閫昏緫鎬[CODE] 缂哄皯: 鏉′欢鍒嗘敮瀹屽
+  8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+  9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+  10. [娓呮櫚搴 鏈秹鍙? concepts explained
+  11. [娓呮櫚搴 鏈秹鍙? examples provided
+  12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+  13. [娓呮櫚搴[CODE] 缂哄皯: 鍛藉悕娓呮櫚
+  14. [娓呮櫚搴[CODE] 缂哄皯: 娉ㄩ噴瀹屾暣
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈹€鈹€ CHALLENGE QUESTIONS (Self-Doubt) 鈹€鈹€
+[Orchestrator]    Q1: [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?[Orchestrator]    Q2: [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?[Orchestrator]    Q3: [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?[Orchestrator]    Q4: [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+[Orchestrator]    Q5: [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?[Orchestrator]    Q6: [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[Orchestrator] 鈹€鈹€ BLIND SPOTS DETECTED 鈹€鈹€
+[Orchestrator]    1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+[Orchestrator]    2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+[Orchestrator]    3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+[Orchestrator]    4. [閫昏緫鎬 鏈秹鍙? causality established
+[Orchestrator]    5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+[Orchestrator]    6. [閫昏緫鎬[CODE] 缂哄皯: 浠ｇ爜閫昏緫姝ｇ‘
+[Orchestrator]    7. [閫昏緫鎬[CODE] 缂哄皯: 鏉′欢鍒嗘敮瀹屽
+[Orchestrator]    8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+[Orchestrator]    9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+[Orchestrator]    10. [娓呮櫚搴 鏈秹鍙? concepts explained
+[Orchestrator]    11. [娓呮櫚搴 鏈秹鍙? examples provided
+[Orchestrator]    12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+[Orchestrator]    13. [娓呮櫚搴[CODE] 缂哄皯: 鍛藉悕娓呮櫚
+[Orchestrator]    14. [娓呮櫚搴[CODE] 缂哄皯: 娉ㄩ噴瀹屾暣
+[Orchestrator] 馃搳 Confidence in conclusions: 0%
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? reasoning chain valid...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? no logical fallacies...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? causality established...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? counter-arguments addressed...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬[CODE] 缂哄皯: 浠ｇ爜閫昏緫姝ｇ‘...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬[CODE] 缂哄皯: 鏉′欢鍒嗘敮瀹屽...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? terms clearly defined...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? no ambiguous language...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? concepts explained...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? examples provided...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? scope unambiguous...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴[CODE] 缂哄皯: 鍛藉悕娓呮櫚...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴[CODE] 缂哄皯: 娉ㄩ噴瀹屾暣...
+[EvolutionLoop] 馃摗 Signal: [HIGH] LOW_CONFIDENCE @ CODE
+[EvolutionLoop]    Evidence: Confidence 0 < threshold 0.5...
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: [LOW_CO
+NFIDENCE] CODE: Confidence 0 < thres...
+[EvolutionLoop]    鈫?Recorded to ExperienceStore: [LOW_CONFIDENCE] CODE: Confidence 0 < threshold 0....
+[EvolutionLoop] 馃К Evolution triggered: recorded
+[Orchestrator] 鈿狅笍  Low confidence detected, will revisit stage...
+
+[Orchestrator] 馃攧 Retry attempt 1 for stage: CODE
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃捇 CODE       | DeveloperAgent                                鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈴?鈻?PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈴?鈻?CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?  馃摜 developer consumed architecture.md
+[Orchestrator] 馃搵 Execution plan loaded (822 chars) from C:\workspace\WorkFlowAgent\output\execution-plan.md
+[Orchestrator] 馃敆 Cross-stage context injected into DeveloperAgent (994 chars, dynamic selection). Upstream: ANALYSE(6 decisions, 0 risks) 鈫?ARCHITECT(6 decisions, 1 risks) 鈫?PLAN(6 decisions, 0 risks) 鈫?CODE(6 decisions, 1 risks)
+[Orchestrator] 馃搵 AGENTS.md injected into DeveloperAgent context.
+[Orchestrator] 馃摎 Experience context injected for DeveloperAgent (674 chars, 4 experience(s), limit=5)
+[Orchestrator] Code graph query failed (non-fatal): Cannot read properties of undefined (
+reading 'kind')
+[CodeGraph] IDE query failed for "Requirement,Analysis,Overview,User,Stories,Functional,Requirements,Core,Error,Performance,Response,Security,Input,Compatibility,Support,Constraints,Assumptions,Users,System,Open,Questions", using regex fallback: view_code_item tool not initialized
+[Orchestrator] 馃攧 CI Status (DEVELOPER): fetching CI pipeline status...
+[MCPAdapter:ci-status] Cache hit (age 0s).
+[Orchestrator] 馃搳 Code Quality (DEVELOPER): running code quality analysis...
+[SmartContext] 鈴笍  Skipping Figma Design (irrelevant for general/general)
+[Orchestrator] 馃摎 Undocumented Exports (DEVELOPER): scanning for undocumented exports...
+[MCPAdapter:doc-gen] Scanning 30 source file(s) for undocumented exports...
+[MCPAdapter:doc-gen] Found 11/32 undocumented export(s).
+[Orchestrator] 馃攧 CI Status (DEVELOPER): status unavailable or unknown.
+[Orchestrator] 馃摎 Undocumented Exports (DEVELOPER): 11/32 undocumented export(s).
+[Orchestrator] 馃搳 Code Quality (DEVELOPER): 鈿狅笍  Quality gate: ERROR. 15 issue(s) found (local).
+[AdapterPluginRegistry] 鈿?DEVELOPER: 7 plugin(s) executed in 13ms (2 produced content).
+[Orchestrator] 馃搵 Execution plan injected into DeveloperAgent context (859 chars).
+[Orchestrator] 馃摉 Recall Memory injected for DeveloperAgent (244 chars)
+[SmartContext] 馃搳 Block adjustments: skipped=[Figma Design]
+[BlockCompressor] 馃棞锔?Compressed 1 block(s), saved 1560 chars: Code Quality(-1560)
+[ToolResultFilter] 鉁傦笍  AGENTS.md: 11505 鈫?2508 chars (truncate(head=40+tail=20))
+[ToolResultFilter] 馃搳 Batch filter [intent:general]: saved 8997 chars across 1 block(s): [AGENTS.md(-8997)]
+[Orchestrator] 馃棞锔? DEVELOPER compression: saved 1560 chars.
+[developer] Starting...
+    馃摑 developer 鈫?developer-analysis
+[developer] 鈩癸笍  Runtime input path diverges from canonical contract declaration.
+  Canonical : output/execution-plan.md
+  Actual    : architecture.md
+  This is expected when the Stage layer injects enriched context.
+[PromptBuilder] Patterns applied in 0ms
+[ContextLoader] Injected 3 context doc(s) (~2801 tokens): architecture-constraints.md (11 sections for developer), bp-component-design.md, bp-architecture-design.md
+[Orchestrator] LLM call for developer: ~0 tokens
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+      鉁?developer-analysis (3ms)
+[DeveloperAgent] 鈿狅笍  No structured JSON block found in output. Downstream agents will us
+e regex-based extraction (degraded mode).
+[DeveloperAgent] 鈿狅笍  COMPLIANCE: Missing mandatory section(s): Architecture Design, Exec
+ution Plan. The agent output specification requires these sections.
+[developer] Done. Output: C:\workspace\WorkFlowAgent\output\code.diff
+[Orchestrator] 馃搳 Code Quality (CodeReview): running code quality analysis...
+[Orchestrator] 馃搳 Code Quality (CodeReview): 鈿狅笍  Quality gate: ERROR. 15 issue(s) found (local).
+
+鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+鈺? 馃攳 CODE REVIEW  鈥? Checklist-based Analysis             鈺?鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+
+[CodeReview] 馃攧 Round 1/2: Running checklist review...
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+[CodeReview] 鈿狅笍  Could not parse LLM review response. Treating all as N/A.
+[CodeReview] 馃搳 Round 1: 0 PASS / 0 FAIL / 25 N/A
+[CodeReview] 鉁?All checklist items passed. Review complete.
+
+[CodeReview] 馃洝锔? Coverage matrix: 0% (0 covered, 2 blind spots, 8 N/A)
+[CodeReview] 鈿狅笍  Blind spots: Input Validation, Business Logic
+[CodeReview] 馃搫 Review report written to: C:\workspace\WorkFlowAgent\workflow\output\code-review.md
+[RollbackCoordinator] 馃攧 Restored 4 subtask cache entry(ies) from manifest (crash recovery).
+[QualityGate] 馃搳 evaluate(CODE): pass=true, rollback=false, failures=0, rollbackCount=0/1
+[QualityGate] 馃摑 Experience recorded: CODE -> PASS
+[Orchestrator] 鉁?Code review passed. Reason: All 25 checklist items passed
+
+[Orchestrator] 馃攳 Early entropy scan (post-CODE stage)...
+
+[EntropyGC] 馃攳 Starting entropy scan...
+[EntropyGC] Scanning 352 source files...
+[EntropyGC] 馃搳 Running code quality check (local)...
+[EntropyGC] 馃搳 Code quality check: 7 issue(s) found
+[EntropyGC] 鉁?Scan complete: 81 violation(s) found
+[EntropyGC]    High: 29 | Medium: 52 | Low: 0
+[EntropyGC]    Report: C:\workspace\WorkFlowAgent\workflow\output\entropy-report.md
+[Orchestrator] 鈿狅笍  [EntropyGC/early] 81 violation(s) detected after CODE stage (29 high)
+. See output/entropy-report.md.
+[Orchestrator] 馃幆 Experience hit-rate (CODE): 2/4 matched
+[Orchestrator] 馃搳 Marked 2/4 experience(s) as effective (CODE passed). Evolution triggers: 0
+[Orchestrator] 馃敆 CODE context stored: 6 key decision(s), 1 risk(s).
+
+鈿狅笍  [FileRefBus] CONTRACT VIOLATION (soft warning)
+   From: developer 鈫?To: tester
+   File: code.diff
+   Reason: Contract violation for code.diff for TesterAgent: none of the required section
+s [diff --git, --- a/, +++ b/...] found in file. The file may have an unexpected format o
+r missing structured JSON block.
+   The downstream Agent may produce incorrect output due to malformed input.
+
+[FileRefBus] developer 鈫?tester: code.diff
+  鈴?Rollback: tester handoff superseded
+  馃攧 developer 鈫?tester: code.diff
+[Orchestrator] 鈴憋笍  Stage execution time: 638ms
+[Orchestrator] 馃搫 Artifact path: C:\workspace\WorkFlowAgent\output\code.diff
+[Orchestrator] 馃 Running SocraticChallenger: DEVIL'S ADVOCATE mode...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃 DEVIL'S ADVOCATE for stage: CODE
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃搵 Agent claims: code written, tests passing, implementation complete
+[SocraticChallenger] 鉂?Generated 6 challenge questions
+[SocraticChallenger] 馃暢锔? Detected 14 potential blind spots
+[SocraticChallenger] 馃搳 缁村害璇勫垎:
+   鐩稿叧鎬? 0%
+   骞垮害: 0%
+   娣卞害: 0%
+   閫昏緫鎬? 0%
+   娓呮櫚搴? 0%
+   绮剧‘鎬? 0%
+   杈圭晫鏉′欢: 0%
+   缁撹渚濇嵁: 0%
+   鏁版嵁鏀拺: 0%
+   涓氱晫瀵规瘮: 0%
+[SocraticChallenger] 馃搳 Confidence in conclusions: 0%
+[SocraticChallenger] 鈹€鈹€ CHALLENGE QUESTIONS 鈹€鈹€
+  1. [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?  2. [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?  3. [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?  4. [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+  5. [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?  6. [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[SocraticChallenger] 鈹€鈹€ BLIND SPOTS 鈹€鈹€
+  1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+  2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+  3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+  4. [閫昏緫鎬 鏈秹鍙? causality established
+  5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+  6. [閫昏緫鎬[CODE] 缂哄皯: 浠ｇ爜閫昏緫姝ｇ‘
+  7. [閫昏緫鎬[CODE] 缂哄皯: 鏉′欢鍒嗘敮瀹屽
+  8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+  9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+  10. [娓呮櫚搴 鏈秹鍙? concepts explained
+  11. [娓呮櫚搴 鏈秹鍙? examples provided
+  12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+  13. [娓呮櫚搴[CODE] 缂哄皯: 鍛藉悕娓呮櫚
+  14. [娓呮櫚搴[CODE] 缂哄皯: 娉ㄩ噴瀹屾暣
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈹€鈹€ CHALLENGE QUESTIONS (Self-Doubt) 鈹€鈹€
+[Orchestrator]    Q1: [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?[Orchestrator]    Q2: [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?[Orchestrator]    Q3: [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?[Orchestrator]    Q4: [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+[Orchestrator]    Q5: [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?[Orchestrator]    Q6: [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[Orchestrator] 鈹€鈹€ BLIND SPOTS DETECTED 鈹€鈹€
+[Orchestrator]    1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+[Orchestrator]    2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+[Orchestrator]    3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+[Orchestrator]    4. [閫昏緫鎬 鏈秹鍙? causality established
+[Orchestrator]    5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+[Orchestrator]    6. [閫昏緫鎬[CODE] 缂哄皯: 浠ｇ爜閫昏緫姝ｇ‘
+[Orchestrator]    7. [閫昏緫鎬[CODE] 缂哄皯: 鏉′欢鍒嗘敮瀹屽
+[Orchestrator]    8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+[Orchestrator]    9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+[Orchestrator]    10. [娓呮櫚搴 鏈秹鍙? concepts explained
+[Orchestrator]    11. [娓呮櫚搴 鏈秹鍙? examples provided
+[Orchestrator]    12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+[Orchestrator]    13. [娓呮櫚搴[CODE] 缂哄皯: 鍛藉悕娓呮櫚
+[Orchestrator]    14. [娓呮櫚搴[CODE] 缂哄皯: 娉ㄩ噴瀹屾暣
+[Orchestrator] 馃搳 Confidence in conclusions: 0%
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? reasoning chain valid...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? no logical fallacies...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? causality established...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? counter-arguments addressed...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬[CODE] 缂哄皯: 浠ｇ爜閫昏緫姝ｇ‘...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [閫昏緫鎬[CODE] 缂哄皯: 鏉′欢鍒嗘敮瀹屽...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? terms clearly defined...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? no ambiguous language...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? concepts explained...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? examples provided...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? scope unambiguous...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴[CODE] 缂哄皯: 鍛藉悕娓呮櫚...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ CODE
+[EvolutionLoop]    Evidence: [娓呮櫚搴[CODE] 缂哄皯: 娉ㄩ噴瀹屾暣...
+[EvolutionLoop] 馃摗 Signal: [HIGH] LOW_CONFIDENCE @ CODE
+[EvolutionLoop]    Evidence: Confidence 0 < threshold 0.5...
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: [LOW_CO
+NFIDENCE] CODE: Confidence 0 < thres...
+[EvolutionLoop]    鈫?Recorded to ExperienceStore: [LOW_CONFIDENCE] CODE: Confidence 0 < threshold 0....
+[EvolutionLoop] 馃К Evolution triggered: recorded
+[Orchestrator] 鉁?Stage CODE completed (challenged with 6 questions)
+[Orchestrator] 鉁?Stage CODE completed in 641ms
+
+[Hook] 鈴?Transitioning: PLAN 鈫?CODE
+[StateMachine] Transition: PLAN 鈫?CODE (artifact: C:\workspace\WorkFlowAgent\output\code.diff)
+[Hook] 鉁?Transitioned: PLAN 鈫?CODE | Artifact: C:\workspace\WorkFlowAgent\output\code.diff
+[Orchestrator] 馃搳 StateMachine transitioned to: CODE (artifact: C:\workspace\WorkFlowAgent\output\code.diff)
+
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 鈻讹笍  Executing stage: TEST
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鉁?TEST       | TesterAgent                                   鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈴?鈻?PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈴?鈻?CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈴?鈻?TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鉁?TEST       | TesterAgent                                   鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈴?鈻?PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈴?鈻?CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈴?鈻?TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?  馃摜 tester consumed code.diff
+[Orchestrator] 馃敆 Cross-stage context injected into TesterAgent (2013 chars, dynamic selection). Upstream: ANALYSE(6 decisions, 0 risks) 鈫?ARCHITECT(6 decisions, 1 risks) 鈫?PLAN(6 decisions, 0 risks) 鈫?CODE(6 decisions, 1 risks)
+[Orchestrator] 鈩癸笍  Code was self-corrected in 1 round(s) (0 issue(s) fixed). Tester should pay attention to corrected areas.
+
+[Orchestrator] 馃搵 Pre-generating test cases (test-first planning)...
+[TestCaseGenerator] 馃И Generating test cases from requirements...
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+[TestCaseGenerator] 馃摝 Backed up previous test-cases.md 鈫?test-cases.v1.md
+[TestCaseGenerator] 鉁?Generated 0 test case(s) 鈫?C:\workspace\WorkFlowAgent\workflow\output\test-cases.md
+[Orchestrator] 鉁?Test cases generated: 0 case(s) 鈫?output/test-cases.md
+[Orchestrator] 鈴笍  Test case execution skipped (no cases generated).
+[Orchestrator] 馃搵 AGENTS.md injected into TesterAgent context.
+[Orchestrator] 馃摎 Experience context injected for TesterAgent (674 chars, 4 experience(s), limit=5)
+[Orchestrator] 馃攧 CI Status (TESTER): fetching CI pipeline status...
+[MCPAdapter:ci-status] Cache hit (age 0s).
+[Orchestrator] 馃攧 CI Status (TESTER): status unavailable or unknown.
+[AdapterPluginRegistry] 鈿?TESTER: 3 plugin(s) executed in 1ms (0 produced content).
+[ToolResultFilter] 鉁傦笍  AGENTS.md: 11505 鈫?2508 chars (truncate(head=40+tail=20))
+[ToolResultFilter] 馃搳 Batch filter [intent:general]: saved 8997 chars across 1 block(s): [AGENTS.md(-8997)]
+[tester] Starting...
+    馃摑 tester 鈫?tester-analysis
+[PromptBuilder] Patterns applied in 0ms
+[ContextLoader] Injected 4 context doc(s) (~2810 tokens): architecture-constraints.md (5 sections for tester), bp-component-design.md, bp-architecture-design.md, test-report.md
+[Orchestrator] LLM call for tester: ~0 tokens
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+      鉁?tester-analysis (2ms)
+[TesterAgent] 鈿狅笍  No structured JSON block found in output. Downstream agents will use r
+egex-based extraction (degraded mode).
+[TesterAgent] WARNING: Test report missing sections: Test Summary, Defects Found, Recomme
+ndations
+[TesterAgent] 鈿狅笍  COMPLIANCE: Missing mandatory section(s): Test Summary, Defects Found,
+ Recommendations. The agent output specification requires these sections.
+[tester] Done. Output: C:\workspace\WorkFlowAgent\output\test-report.md
+
+鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+鈺? 馃 SELF-CORRECTION  鈥? Test Report                      鈺?鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+[SelfCorrection] 馃 Running semantic signal detection (LLM)...
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+[SelfCorrection] 馃 Semantic detection: no real issues found.
+
+[SelfCorrection] 鉁?Initial scan: No issues detected. Artifact is clean.
+
+[Orchestrator] 鉁?Test report passed self-correction. Workflow proceeding.
+[Orchestrator] 鈩癸笍  No testCommand configured 鈥?skipping real test execution.
+[Orchestrator] 馃挕 Set testCommand in workflow.config.js to enable automated verification.
+
+[Orchestrator] 馃殌 Running CI pipeline validation (post-test)...
+[Hook] 馃殌 CI pipeline started
+
+[CIIntegration] 馃殌 Running local CI pipeline...
+[CIIntegration]   鈻?syntax-check: node --check on all .js files
+[CIIntegration]   鉁?syntax-check passed (0.0s)
+
+[EntropyGC] 馃攳 Starting entropy scan...
+[EntropyGC] Scanning 352 source files...
+[EntropyGC] 鉁?Scan complete: 74 violation(s) found
+[EntropyGC]    High: 23 | Medium: 51 | Low: 0
+[EntropyGC]    Report: C:\workspace\WorkFlowAgent\workflow\output\entropy-report.md
+[CIIntegration] Pipeline 鉂? Pipeline failed (0.1s)
+[Hook] 鈿狅笍  CI pipeline complete (failed): Pipeline failed
+[Orchestrator] 鈿狅笍  [CIIntegration] Pipeline failed: Pipeline failed
+[Hook] 鉂?CI pipeline FAILED: Pipeline failed
+
+[Orchestrator] 馃攳 Running entropy scan after Tester stage...
+
+[EntropyGC] 馃攳 Starting entropy scan...
+[EntropyGC] Scanning 352 source files...
+[EntropyGC] 馃搳 Running code quality check (local)...
+[EntropyGC] 馃搳 Code quality check: 7 issue(s) found
+[EntropyGC] 鉁?Scan complete: 81 violation(s) found
+[EntropyGC]    High: 29 | Medium: 52 | Low: 0
+[EntropyGC]    Report: C:\workspace\WorkFlowAgent\workflow\output\entropy-report.md
+[Orchestrator] 鈿狅笍  [EntropyGC] 81 violation(s) found after Tester stage (29 high / 52 me
+dium / 0 low). See output/entropy-report.md.
+[Orchestrator] 馃捑 ExperienceStore flushed (hitCount increments persisted).
+
+[Orchestrator] 馃搵 Running document output validation (鎵撶偣鏃ュ織瀹℃煡)...
+[ExecutionValidator:INFO] Starting execution log validation...
+[ExecutionValidator:INFO] Parsing execution state...
+[ExecutionValidator:INFO] Validating against standard flow...
+[ExecutionValidator:INFO] Generating reports...
+[ExecutionValidator:INFO] Reports written: C:\workspace\WorkFlowAgent\workflow\output\execution-validation-report.md
+[ExecutionValidator:INFO] Validation complete in 15ms
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+       E X E C U T I O N   V A L I D A T I O N   R E S U L T
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+  Status: 鈿狅笍 PASSED_WITH_WARNINGS
+  Score: 49/100
+  Stages: 1/5 completed
+  Warnings: 10
+
+  Stage Breakdown:
+    鈿狅笍 ANALYSE    20/100
+    鈿狅笍 ARCHITECT  50/100
+    鈿狅笍 PLAN       50/100
+    鉁?CODE       75/100
+    鈿狅笍 TEST       50/100
+
+  Top Recommendations:
+    馃煛 Overall execution score (0) below threshold
+    馃煝 Stage ANALYSE missing sections: requirements, scope
+    馃煝 Stage ARCHITECT missing sections: architecture, components, tech-stack, data-flow
+
+  Report: execution-validation-report.md
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鉁?Document Output Validation: PASSED
+[Orchestrator]    Execution Score: 49/100 (passed_with_warnings)
+[Orchestrator]    Stages: 1/5 completed
+[Orchestrator]    鈿狅笍  Evolution files: evolution-log.json, quality-report.md
+[ComplaintWall] 馃棧锔?Complaint filed [annoying]: [Auto] Negative experience recorded: Outp
+ut document validation score below thre...
+[Orchestrator] 馃摑 Output validation report: output/test-output-validation.json
+[Orchestrator] 馃敆 TEST context stored: 6 key decision(s).
+[Orchestrator] 鈴憋笍  Stage execution time: 180ms
+[Orchestrator] 馃搫 Artifact path: C:\workspace\WorkFlowAgent\output\test-report.md
+[Orchestrator] 馃 Running SocraticChallenger: DEVIL'S ADVOCATE mode...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃 DEVIL'S ADVOCATE for stage: TEST
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃搵 Agent claims: tests passing, coverage achieved, quality verified
+[SocraticChallenger] 鉂?Generated 6 challenge questions
+[SocraticChallenger] 馃暢锔? Detected 14 potential blind spots
+[SocraticChallenger] 馃搳 缁村害璇勫垎:
+   鐩稿叧鎬? 0%
+   骞垮害: 0%
+   娣卞害: 0%
+   閫昏緫鎬? 0%
+   娓呮櫚搴? 0%
+   绮剧‘鎬? 0%
+   杈圭晫鏉′欢: 0%
+   缁撹渚濇嵁: 0%
+   鏁版嵁鏀拺: 0%
+   涓氱晫瀵规瘮: 0%
+[SocraticChallenger] 馃搳 Confidence in conclusions: 0%
+[SocraticChallenger] 鈹€鈹€ CHALLENGE QUESTIONS 鈹€鈹€
+  1. [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?  2. [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?  3. [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?  4. [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+  5. [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?  6. [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[SocraticChallenger] 鈹€鈹€ BLIND SPOTS 鈹€鈹€
+  1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+  2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+  3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+  4. [閫昏緫鎬 鏈秹鍙? causality established
+  5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+  6. [閫昏緫鎬[TEST] 缂哄皯: 娴嬭瘯閫昏緫瑕嗙洊
+  7. [閫昏緫鎬[TEST] 缂哄皯: 鏂█姝ｇ‘鎬?  8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+  9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+  10. [娓呮櫚搴 鏈秹鍙? concepts explained
+  11. [娓呮櫚搴 鏈秹鍙? examples provided
+  12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+  13. [娓呮櫚搴[TEST] 缂哄皯: 娴嬭瘯鎻忚堪娓呮櫚
+  14. [娓呮櫚搴[TEST] 缂哄皯: 棰勬湡缁撴灉鏄庣‘
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈹€鈹€ CHALLENGE QUESTIONS (Self-Doubt) 鈹€鈹€
+[Orchestrator]    Q1: [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?[Orchestrator]    Q2: [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?[Orchestrator]    Q3: [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?[Orchestrator]    Q4: [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+[Orchestrator]    Q5: [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?[Orchestrator]    Q6: [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[Orchestrator] 鈹€鈹€ BLIND SPOTS DETECTED 鈹€鈹€
+[Orchestrator]    1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+[Orchestrator]    2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+[Orchestrator]    3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+[Orchestrator]    4. [閫昏緫鎬 鏈秹鍙? causality established
+[Orchestrator]    5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+[Orchestrator]    6. [閫昏緫鎬[TEST] 缂哄皯: 娴嬭瘯閫昏緫瑕嗙洊
+[Orchestrator]    7. [閫昏緫鎬[TEST] 缂哄皯: 鏂█姝ｇ‘鎬?[Orchestrator]    8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+[Orchestrator]    9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+[Orchestrator]    10. [娓呮櫚搴 鏈秹鍙? concepts explained
+[Orchestrator]    11. [娓呮櫚搴 鏈秹鍙? examples provided
+[Orchestrator]    12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+[Orchestrator]    13. [娓呮櫚搴[TEST] 缂哄皯: 娴嬭瘯鎻忚堪娓呮櫚
+[Orchestrator]    14. [娓呮櫚搴[TEST] 缂哄皯: 棰勬湡缁撴灉鏄庣‘
+[Orchestrator] 馃搳 Confidence in conclusions: 0%
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? reasoning chain valid...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? no logical fallacies...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? causality established...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? counter-arguments addressed...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬[TEST] 缂哄皯: 娴嬭瘯閫昏緫瑕嗙洊...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬[TEST] 缂哄皯: 鏂█姝ｇ‘鎬?..
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? terms clearly defined...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? no ambiguous language...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? concepts explained...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? examples provided...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? scope unambiguous...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴[TEST] 缂哄皯: 娴嬭瘯鎻忚堪娓呮櫚...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴[TEST] 缂哄皯: 棰勬湡缁撴灉鏄庣‘...
+[EvolutionLoop] 馃摗 Signal: [HIGH] LOW_CONFIDENCE @ TEST
+[EvolutionLoop]    Evidence: Confidence 0 < threshold 0.5...
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: [LOW_CO
+NFIDENCE] TEST: Confidence 0 < thres...
+[EvolutionLoop]    鈫?Recorded to ExperienceStore: [LOW_CONFIDENCE] TEST: Confidence 0 < threshold 0....
+[EvolutionLoop] 馃К Evolution triggered: recorded
+[Orchestrator] 鈿狅笍  Low confidence detected, will revisit stage...
+
+[Orchestrator] 馃攧 Retry attempt 1 for stage: TEST
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鉁?TEST       | TesterAgent                                   鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈴?鈻?PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈴?鈻?CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈴?鈻?TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鉁?TEST       | TesterAgent                                   鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈴?鈻?ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈴?鈻?PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈴?鈻?CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈴?鈻?TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?  馃摜 tester consumed code.diff
+[Orchestrator] 馃敆 Cross-stage context injected into TesterAgent (2013 chars, dynamic selection). Upstream: ANALYSE(6 decisions, 0 risks) 鈫?ARCHITECT(6 decisions, 1 risks) 鈫?PLAN(6 decisions, 0 risks) 鈫?CODE(6 decisions, 1 risks) 鈫?TEST(6 decisions, 0 risks)
+[Orchestrator] 鈩癸笍  Code was self-corrected in 1 round(s) (0 issue(s) fixed). Tester should pay attention to corrected areas.
+
+[Orchestrator] 馃搵 Pre-generating test cases (test-first planning)...
+[TestCaseGenerator] 馃И Generating test cases from requirements...
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+[TestCaseGenerator] 馃摝 Backed up previous test-cases.md 鈫?test-cases.v2.md
+[TestCaseGenerator] 鉁?Generated 0 test case(s) 鈫?C:\workspace\WorkFlowAgent\workflow\output\test-cases.md
+[Orchestrator] 鉁?Test cases generated: 0 case(s) 鈫?output/test-cases.md
+[Orchestrator] 鈴笍  Test case execution skipped (no cases generated).
+[Orchestrator] 馃搵 AGENTS.md injected into TesterAgent context.
+[Orchestrator] 馃摎 Experience context injected for TesterAgent (368 chars, 2 experience(s), limit=5)
+[Orchestrator] 馃攧 CI Status (TESTER): fetching CI pipeline status...
+[MCPAdapter:ci-status] Cache hit (age 0s).
+[Orchestrator] 馃攧 CI Status (TESTER): status unavailable or unknown.
+[AdapterPluginRegistry] 鈿?TESTER: 3 plugin(s) executed in 1ms (0 produced content).
+[ToolResultFilter] 鉁傦笍  AGENTS.md: 11505 鈫?2508 chars (truncate(head=40+tail=20))
+[ToolResultFilter] 馃搳 Batch filter [intent:general]: saved 8997 chars across 1 block(s): [AGENTS.md(-8997)]
+[tester] Starting...
+    馃摑 tester 鈫?tester-analysis
+[PromptBuilder] Patterns applied in 0ms
+[ContextLoader] 鈿?Enrichment cache: 5 hits / 5 misses (saving ~4080 token estimations)
+[ContextLoader] Injected 4 context doc(s) (~2810 tokens): architecture-constraints.md (5 sections for tester), bp-component-design.md, bp-architecture-design.md, test-report.md
+[Orchestrator] LLM call for tester: ~0 tokens
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+      鉁?tester-analysis (3ms)
+[TesterAgent] 鈿狅笍  No structured JSON block found in output. Downstream agents will use r
+egex-based extraction (degraded mode).
+[TesterAgent] WARNING: Test report missing sections: Test Summary, Defects Found, Recomme
+ndations
+[TesterAgent] 鈿狅笍  COMPLIANCE: Missing mandatory section(s): Test Summary, Defects Found,
+ Recommendations. The agent output specification requires these sections.
+[tester] Done. Output: C:\workspace\WorkFlowAgent\output\test-report.md
+
+鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+鈺? 馃 SELF-CORRECTION  鈥? Test Report                      鈺?鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+[SelfCorrection] 馃 Running semantic signal detection (LLM)...
+[runWorkflow] 鈿狅笍  Warning: Using mock LLM call - no real LLM connected
+[runWorkflow] 馃摑 Generating mock content based on prompt type...
+[SelfCorrection] 馃 Semantic detection: no real issues found.
+
+[SelfCorrection] 鉁?Initial scan: No issues detected. Artifact is clean.
+
+[Orchestrator] 鉁?Test report passed self-correction. Workflow proceeding.
+[Orchestrator] 鈩癸笍  No testCommand configured 鈥?skipping real test execution.
+[Orchestrator] 馃挕 Set testCommand in workflow.config.js to enable automated verification.
+
+[Orchestrator] 馃殌 Running CI pipeline validation (post-test)...
+[Hook] 馃殌 CI pipeline started
+
+[CIIntegration] 馃殌 Running local CI pipeline...
+[CIIntegration]   鈻?syntax-check: node --check on all .js files
+[CIIntegration]   鉁?syntax-check passed (0.0s)
+
+[EntropyGC] 馃攳 Starting entropy scan...
+[EntropyGC] Scanning 352 source files...
+[EntropyGC] 鉁?Scan complete: 74 violation(s) found
+[EntropyGC]    High: 23 | Medium: 51 | Low: 0
+[EntropyGC]    Report: C:\workspace\WorkFlowAgent\workflow\output\entropy-report.md
+[CIIntegration] Pipeline 鉂? Pipeline failed (0.1s)
+[Hook] 鈿狅笍  CI pipeline complete (failed): Pipeline failed
+[Orchestrator] 鈿狅笍  [CIIntegration] Pipeline failed: Pipeline failed
+[Hook] 鉂?CI pipeline FAILED: Pipeline failed
+
+[Orchestrator] 馃攳 Running entropy scan after Tester stage...
+
+[EntropyGC] 馃攳 Starting entropy scan...
+[EntropyGC] Scanning 352 source files...
+[EntropyGC] 馃搳 Running code quality check (local)...
+[EntropyGC] 馃搳 Code quality check: 7 issue(s) found
+[EntropyGC] 鉁?Scan complete: 81 violation(s) found
+[EntropyGC]    High: 29 | Medium: 52 | Low: 0
+[EntropyGC]    Report: C:\workspace\WorkFlowAgent\workflow\output\entropy-report.md
+[Orchestrator] 鈿狅笍  [EntropyGC] 81 violation(s) found after Tester stage (29 high / 52 me
+dium / 0 low). See output/entropy-report.md.
+[Orchestrator] 馃捑 ExperienceStore flushed (hitCount increments persisted).
+
+[Orchestrator] 馃搵 Running document output validation (鎵撶偣鏃ュ織瀹℃煡)...
+[ExecutionValidator:INFO] Starting execution log validation...
+[ExecutionValidator:INFO] Parsing execution state...
+[ExecutionValidator:INFO] Validating against standard flow...
+[ExecutionValidator:INFO] Generating reports...
+[ExecutionValidator:INFO] Reports written: C:\workspace\WorkFlowAgent\workflow\output\execution-validation-report.md
+[ExecutionValidator:INFO] Validation complete in 3ms
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+       E X E C U T I O N   V A L I D A T I O N   R E S U L T
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+  Status: 鈿狅笍 PASSED_WITH_WARNINGS
+  Score: 49/100
+  Stages: 1/5 completed
+  Warnings: 10
+
+  Stage Breakdown:
+    鈿狅笍 ANALYSE    20/100
+    鈿狅笍 ARCHITECT  50/100
+    鈿狅笍 PLAN       50/100
+    鉁?CODE       75/100
+    鈿狅笍 TEST       50/100
+
+  Top Recommendations:
+    馃煛 Overall execution score (0) below threshold
+    馃煝 Stage ANALYSE missing sections: requirements, scope
+    馃煝 Stage ARCHITECT missing sections: architecture, components, tech-stack, data-flow
+
+  Report: execution-validation-report.md
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鉁?Document Output Validation: PASSED
+[Orchestrator]    Execution Score: 49/100 (passed_with_warnings)
+[Orchestrator]    Stages: 1/5 completed
+[Orchestrator]    鈿狅笍  Evolution files: evolution-log.json, quality-report.md
+[Orchestrator] 馃摑 Output validation report: output/test-output-validation.json
+[Orchestrator] 馃敆 TEST context stored: 6 key decision(s).
+[Orchestrator] 鈴憋笍  Stage execution time: 342ms
+[Orchestrator] 馃搫 Artifact path: C:\workspace\WorkFlowAgent\output\test-report.md
+[Orchestrator] 馃 Running SocraticChallenger: DEVIL'S ADVOCATE mode...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃 DEVIL'S ADVOCATE for stage: TEST
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[SocraticChallenger] 馃搵 Agent claims: tests passing, coverage achieved, quality verified
+[SocraticChallenger] 鉂?Generated 6 challenge questions
+[SocraticChallenger] 馃暢锔? Detected 14 potential blind spots
+[SocraticChallenger] 馃搳 缁村害璇勫垎:
+   鐩稿叧鎬? 0%
+   骞垮害: 0%
+   娣卞害: 0%
+   閫昏緫鎬? 0%
+   娓呮櫚搴? 0%
+   绮剧‘鎬? 0%
+   杈圭晫鏉′欢: 0%
+   缁撹渚濇嵁: 0%
+   鏁版嵁鏀拺: 0%
+   涓氱晫瀵规瘮: 0%
+[SocraticChallenger] 馃搳 Confidence in conclusions: 0%
+[SocraticChallenger] 鈹€鈹€ CHALLENGE QUESTIONS 鈹€鈹€
+  1. [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?  2. [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?  3. [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?  4. [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+  5. [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?  6. [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[SocraticChallenger] 鈹€鈹€ BLIND SPOTS 鈹€鈹€
+  1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+  2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+  3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+  4. [閫昏緫鎬 鏈秹鍙? causality established
+  5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+  6. [閫昏緫鎬[TEST] 缂哄皯: 娴嬭瘯閫昏緫瑕嗙洊
+  7. [閫昏緫鎬[TEST] 缂哄皯: 鏂█姝ｇ‘鎬?  8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+  9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+  10. [娓呮櫚搴 鏈秹鍙? concepts explained
+  11. [娓呮櫚搴 鏈秹鍙? examples provided
+  12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+  13. [娓呮櫚搴[TEST] 缂哄皯: 娴嬭瘯鎻忚堪娓呮櫚
+  14. [娓呮櫚搴[TEST] 缂哄皯: 棰勬湡缁撴灉鏄庣‘
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈹€鈹€ CHALLENGE QUESTIONS (Self-Doubt) 鈹€鈹€
+[Orchestrator]    Q1: [鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?[Orchestrator]    Q2: [骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?[Orchestrator]    Q3: [娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?[Orchestrator]    Q4: [閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵
+[Orchestrator]    Q5: [娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?[Orchestrator]    Q6: [绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?[Orchestrator] 鈹€鈹€ BLIND SPOTS DETECTED 鈹€鈹€
+[Orchestrator]    1. [閫昏緫鎬 鏈秹鍙? reasoning chain valid
+[Orchestrator]    2. [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion
+[Orchestrator]    3. [閫昏緫鎬 鏈秹鍙? no logical fallacies
+[Orchestrator]    4. [閫昏緫鎬 鏈秹鍙? causality established
+[Orchestrator]    5. [閫昏緫鎬 鏈秹鍙? counter-arguments addressed
+[Orchestrator]    6. [閫昏緫鎬[TEST] 缂哄皯: 娴嬭瘯閫昏緫瑕嗙洊
+[Orchestrator]    7. [閫昏緫鎬[TEST] 缂哄皯: 鏂█姝ｇ‘鎬?[Orchestrator]    8. [娓呮櫚搴 鏈秹鍙? terms clearly defined
+[Orchestrator]    9. [娓呮櫚搴 鏈秹鍙? no ambiguous language
+[Orchestrator]    10. [娓呮櫚搴 鏈秹鍙? concepts explained
+[Orchestrator]    11. [娓呮櫚搴 鏈秹鍙? examples provided
+[Orchestrator]    12. [娓呮櫚搴 鏈秹鍙? scope unambiguous
+[Orchestrator]    13. [娓呮櫚搴[TEST] 缂哄皯: 娴嬭瘯鎻忚堪娓呮櫚
+[Orchestrator]    14. [娓呮櫚搴[TEST] 缂哄皯: 棰勬湡缁撴灉鏄庣‘
+[Orchestrator] 馃搳 Confidence in conclusions: 0%
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? reasoning chain valid...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? premises consistent with conclusion...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? no logical fallacies...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? causality established...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬 鏈秹鍙? counter-arguments addressed...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬[TEST] 缂哄皯: 娴嬭瘯閫昏緫瑕嗙洊...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [閫昏緫鎬[TEST] 缂哄皯: 鏂█姝ｇ‘鎬?..
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? terms clearly defined...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? no ambiguous language...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? concepts explained...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? examples provided...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴 鏈秹鍙? scope unambiguous...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴[TEST] 缂哄皯: 娴嬭瘯鎻忚堪娓呮櫚...
+[EvolutionLoop] 馃摗 Signal: [HIGH] SOCRATIC_CHALLENGE @ TEST
+[EvolutionLoop]    Evidence: [娓呮櫚搴[TEST] 缂哄皯: 棰勬湡缁撴灉鏄庣‘...
+[EvolutionLoop] 馃摗 Signal: [HIGH] LOW_CONFIDENCE @ TEST
+[EvolutionLoop]    Evidence: Confidence 0 < threshold 0.5...
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: [LOW_CO
+NFIDENCE] TEST: Confidence 0 < thres...
+[EvolutionLoop]    鈫?Recorded to ExperienceStore: [LOW_CONFIDENCE] TEST: Confidence 0 < threshold 0....
+[EvolutionLoop] 馃К Evolution triggered: recorded
+[Orchestrator] 鉁?Stage TEST completed (challenged with 6 questions)
+[Orchestrator] 鉁?Stage TEST completed in 346ms
+
+[Hook] 鈴?Transitioning: CODE 鈫?TEST
+[StateMachine] Transition: CODE 鈫?TEST (artifact: C:\workspace\WorkFlowAgent\output\test-report.md)
+[Hook] 鉁?Transitioned: CODE 鈫?TEST | Artifact: C:\workspace\WorkFlowAgent\output\test-report.md
+[Orchestrator] 馃搳 StateMachine transitioned to: TEST (artifact: C:\workspace\WorkFlowAgent\output\test-report.md)
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[Orchestrator] 馃弫 Pipeline completed, running finalization...
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈿狅笍  Session Signal Detection failed (non-fatal): this.decisionTrail.getTi
+meline is not a function
+[Orchestrator] 馃搳 Adapter telemetry: 5 recommendation(s):
+  鈫?[ARCHITECT] Recall Memory: demote 鈥?ROI below 20% threshold (ROI=0%, dropped=0, truncated=0)
+  鈫?[DEVELOPER] Recall Memory: demote 鈥?ROI below 20% threshold (ROI=0%, dropped=0, truncated=0)
+  鈫?[DEVELOPER] Code Quality: demote 鈥?ROI below 20% threshold (ROI=0%, dropped=0, truncated=0)
+  鈫?[DEVELOPER] Execution Plan: demote 鈥?ROI below 20% threshold (ROI=0%, dropped=0, truncated=0)
+  鈫?[DEVELOPER] Undocumented Exports: demote 鈥?ROI below 20% threshold (ROI=0%, dropped=0, truncated=0)
+[Orchestrator] 馃棞锔? Total compression savings: 3120 chars across 17 block(s).
+[Orchestrator] 鈴笍  Self-Reflection skipped (no errors, short session)
+[Observability] 馃摑 Flushed 21 prompt trace(s) to C:\workspace\WorkFlowAgent\workflow\output\prompt-traces.jsonl
+[Orchestrator] 馃摑 Prompt traces: 21 trace(s) persisted for replay & debugging.
+[AgentSelfReport] 馃搳 10 report(s) persisted to C:\workspace\WorkFlowAgent\output\agent-self-reports.jsonl
+[Orchestrator] 馃搳 Agent Self-Reports: 10 report(s) persisted (compliance: 0.0%, avg confidence: 0.0/5).
+
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  馃洝锔? RUN GUARD SUMMARY
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+  馃煝 LLM Calls:  0 / 50  [鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0%
+  馃煝 Tokens:     0.0K / 800K  [鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0%
+  馃煝 Duration:   0.0min / 30min  [鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0%
+  馃煝 Budget:     $0.0000 / $5.00  [鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0%
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 鈿狅笍  Observability flush failed (non-fatal): Cannot read properties of und
+efined (reading '_promptTraces')
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+           H A N D O F F   F L O W   S U M M A R Y
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+  鈹溾攢 鈴?analyst    鈫?architect  鈴?
+   鈹? summary: "Functional Requirements 1. Core function..."
+  鈹溾攢 鈴?architect  鈫?planner    鈴?
+   鈹? reviews: 1 | issues: 0 | risks: 1 | summary: "鈿狅笍 Unchecked Requirements (parse errors)..."
+  鈹溾攢 鈴?planner    鈫?developer  鈴?
+   鈹? summary: "Functional Requirements 1. Core function..."
+  鈹斺攢 鈴?developer  鈫?tester     鈴?
+      reviews: 1 | issues: 0 | risks: 1 | summary: "Functional Requirements 1. Core function..."
+
+  馃攧 Retry Attempt #2
+  鈹溾攢 鈫?analyst    鈫?architect  馃摜 
+   鈹? summary: "Functional Requirements 1. Core function..."
+  鈹溾攢 鈫?architect  鈫?planner    馃摜 
+   鈹? reviews: 1 | issues: 0 | risks: 1 | summary: "鈿狅笍 Unchecked Requirements (parse errors)..."
+  鈹溾攢 鈫?planner    鈫?developer  馃摜 
+   鈹? summary: "Functional Requirements 1. Core function..."
+  鈹斺攢 鈫?developer  鈫?tester     馃摜 
+      reviews: 1 | issues: 0 | risks: 1 | summary: "Functional Requirements 1. Core function..."
+
+  鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  Total Handoffs: 8  |  Successful: 0 鉁? |  Failed: 0 鉂? |  Rollbacks: 4 鈴?鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+           馃攳 C R I T I C A L   P A T H   A N A L Y S I S
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+  馃搳 Critical Path (0 stages, 0ms)
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+  馃捑 Handoff log saved to: C:\workspace\WorkFlowAgent\output\agent-handoff-log.json
+  馃搳 Flowchart saved to: C:\workspace\WorkFlowAgent\output\agent-handoff-flow.mmd
+  馃攳 Execution analysis saved to: C:\workspace\WorkFlowAgent\output\execution-analysis.json
+[Orchestrator] 鈴笍  Auto-Deploy YELLOW skipped (no strategy history)
+[Orchestrator] 鈿狅笍  Observability dashboard failed (non-fatal): Cannot read properties of
+ undefined (reading '_promptTraces')
+[Orchestrator] 鈿狅笍  HTML report generation failed (non-fatal): Cannot read properties of 
+undefined (reading '_promptTraces')
+[ObservabilityStrategy] 鈿狅笍  Insufficient history for trends report (0 sessions, need 鈮?)
+[Orchestrator] 鈿狅笍  Dashboard integration failed (non-fatal): Observability.loadHistory i
+s not a function
+
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹
+€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  馃敆 RISK CORRELATION ANALYSIS (1 chain(s) found)
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹
+€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  鉀擄笍  [HIGH] Security Amplification: validation gap + data access exposure
+      Contributing factors:
+        鈫?[ARCHITECT] [CodeReview] Security coverage blind spots: Input Validation
+        鈫?[ARCHITECT] [CodeReview] Security coverage blind spots: Input Validation
+      Impact: A validation bypass combined with direct data access creates a potential da
+ta breach.
+      Recommendation: Implement defense-in-depth: validate at API boundary AND before dat
+a access.
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹
+€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹
+€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  鈿狅笍  RISK SUMMARY (13 item(s))
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹
+€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  [MEDIUM] [CodeReview] Security coverage blind spots: Input Validation
+  [MEDIUM] [CodeReview] Security coverage blind spots: Input Validation
+  [MEDIUM] [CodeQuality] Quality gate FAILED: code_smells, high_complexity_files
+  [MEDIUM] [CodeReview] Security coverage blind spots: Input Validation, Business Logic
+  [HIGH] [EntropyGC/early] 81 violation(s) detected after CODE stage (29 high). See outpu
+t/entropy-report.md.
+  [MEDIUM] [CodeQuality] Quality gate FAILED: code_smells, high_complexity_files
+  [MEDIUM] [CodeReview] Security coverage blind spots: Input Validation, Business Logic
+  [HIGH] [EntropyGC/early] 81 violation(s) detected after CODE stage (29 high). See outpu
+t/entropy-report.md.
+  [MEDIUM] [CIIntegration] Pipeline failed: Pipeline failed
+  [MEDIUM] [EntropyGC] 81 violation(s) found after Tester stage (29 high / 52 medium / 0 
+low). See output/entropy-report.md.
+  [MEDIUM] [CIIntegration] Pipeline failed: Pipeline failed
+  [MEDIUM] [EntropyGC] 81 violation(s) found after Tester stage (29 high / 52 medium / 0 
+low). See output/entropy-report.md.
+  [HIGH] [RiskCorrelation] Security Amplification: validation gap + data access exposure:
+ [CodeReview] Security coverage blind spots: Input Validation + [CodeReview] Security cov
+erage blind spots: Input Validation. Impact: A validation bypass combined with direct dat
+a access creates a potential data breach.
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹
+€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+[MCPAdapter:doc-gen] Generated CHANGELOG for 1.0.0: 50 commit(s).
+[MCPAdapter:doc-gen] CHANGELOG.md updated at: C:\workspace\WorkFlowAgent\CHANGELOG.md
+[Orchestrator] 馃摑 CHANGELOG.md auto-updated: 50 commit(s) for v1.0.0.
+[ExperienceStore] 馃寪 Extracted 1 universal experience(s) 鈫?C:\Users\kenzheng\.codexforge\exports\ide-bridge-1774970533481-experiences.json
+[ExperienceRouter] 馃搵 Project "ide-bridge-1774970533481" registered with 1 experience(s).
+[Orchestrator] 馃寪 ExperienceRouter: published 1 experience(s) to cross-project registry.
+[EventJournal] 馃摉 Closed. 8 events written to event-journal-ide-bridge-1774970533481-1774970533666.jsonl
+[Orchestrator] 馃摉 EventJournal: 8 events captured in event-journal-ide-bridge-1774970533481-1774970533666.jsonl
+鈩癸笍 [Orchestrator] Workflow finalisation complete {"mode":"sequential","projectId":"ide-bridge-1774970533481"}
+[Orchestrator] 馃摑 Structured Logger: 3 log entries written to workflow.log.jsonl
+[Orchestrator] 鈴笍  MAPE Engine skipped (no anomaly signals or insufficient history)
+
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  馃寵 SLEEPTIME MAINTENANCE PIPELINE
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[ExperienceStore] 馃И Distillation complete: 3 cluster(s) merged, 34 redundant record(s) removed (15ms)
+  [1/4] 馃И DISTILL: 3 cluster(s) merged, 34 removed (15ms)
+  [2/4] 馃棏锔? PURGE: no expired records (0ms)
+  [3/4] 馃摝 RETIRE: all skills healthy (0ms)
+  [4/4] 馃攳 AUDIT: clean (1ms)
+  鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  馃寵 Sleeptime complete: 4 ok, 0 error(s), 0 skipped (16ms)
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+[TaskHistory] Loaded 1 history entries
+[Orchestrator] 馃摉 Task history recorded for recall memory (2 total entries).
+[TaskHistory] Loaded 1 history entries
+[ArchKnowledgeCache] Cache written: C:\workspace\WorkFlowAgent\output\arch-knowledge-cache.json
+[ArchKnowledgeCache] Rebuilt sections: taskHistory
+[Orchestrator] 馃敂 TechRadar: never since last tech scan.
+[Orchestrator]    Run /techradar to discover new techniques and evaluate upgrades.
+[Orchestrator] 馃敂 ArticleScout: never since last article discovery.
+[Orchestrator]    Run /article-scout to discover high-value AI/Agent articles.
+[Orchestrator] 鈿狅笍  Introspection health check: 28 error(s), 0 warning(s)
+[Orchestrator]    Fix 28 critical consistency issues
+[IntrospectionManager] Reports generated: {
+  jsonPath: 'C:\\workspace\\WorkFlowAgent\\output\\workflow-introspection-report.json',
+  markdownPath: 'C:\\workspace\\WorkFlowAgent\\output\\workflow-introspection-report.md'
+}
+[Orchestrator] 馃攳 Workflow Introspection Report: C:\workspace\WorkFlowAgent\output\workflow-introspection-report.md
+[IntrospectionManager] Introspection log persisted: C:\workspace\WorkFlowAgent\output\workflow-introspection.jsonl
+[IntrospectionManager] Reports generated: {
+  jsonPath: 'C:\\workspace\\WorkFlowAgent\\output\\workflow-introspection-report.json',
+  markdownPath: 'C:\\workspace\\WorkFlowAgent\\output\\workflow-introspection-report.md'
+}
+[IntrospectionManager] Session summary: {
+  totalEntries: 53,
+  uniqueTraces: 0,
+  byModule: { Prompt: 28, Experience: 15, State: 10 },
+  byAction: {
+    injected: 28,
+    registered: 15,
+    transition_start: 5,
+    transition_complete: 5
+  },
+  moduleCoverage: 2
+}
+[Orchestrator] 馃攳 Running execution validation...
+[ExecutionValidator:INFO] Starting execution log validation...
+[ExecutionValidator:INFO] Parsing execution state...
+[ExecutionValidator:INFO] Validating against standard flow...
+[ExecutionValidator:INFO] Generating reports...
+[ExecutionValidator:INFO] Reports written: C:\workspace\WorkFlowAgent\output\execution-validation-report.md
+[ExecutionValidator:INFO] Validation complete in 3ms
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+       E X E C U T I O N   V A L I D A T I O N   R E S U L T
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+  Status: 鈿狅笍 PASSED_WITH_WARNINGS
+  Score: 55/100
+  Stages: 1/5 completed
+  Warnings: 8
+
+  Stage Breakdown:
+    鈿狅笍 ANALYSE    50/100
+    鈿狅笍 ARCHITECT  50/100
+    鈿狅笍 PLAN       50/100
+    鉁?CODE       75/100
+    鈿狅笍 TEST       50/100
+
+  Top Recommendations:
+    馃煛 Overall execution score (0) below threshold
+    馃煝 Stage ANALYSE missing sections: scope
+    馃煝 Stage ARCHITECT missing sections: architecture, components, tech-stack, data-flow
+
+  Report: execution-validation-report.md
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 鈿狅笍 Execution Validation: PASSED_WITH_WARNINGS (55/100)
+[Orchestrator]    Stages: 1/5 completed, 0 failed
+[Orchestrator]    Warnings: 8
+[ComplaintWall] 馃棧锔?Complaint filed [minor]: [Auto] Negative experience recorded: Executi
+on validation score below threshold
+[Orchestrator]    鈿狅笍  Low execution quality recorded to ExperienceStore
+[Orchestrator]    Report: execution-validation-report.md
+[Orchestrator] 馃敩 Independent Evaluator: Running multi-dimensional assessment...
+[IndependentEvaluator] 馃攳 Loading artifacts from: C:\workspace\WorkFlowAgent\output
+[Orchestrator] 鈿狅笍  Independent Evaluator failed (non-fatal): Invalid regular expression:
+ /if (!/i: Unterminated group
+
+  鈩癸笍  No feedback recorded.
+
+  馃捑 Feedback report saved to: C:\workspace\WorkFlowAgent\output\agent-feedback-report.json
+
+  馃捑 Feedback report saved to: C:\workspace\WorkFlowAgent\output\agent-feedback-report.json
+[PromptAutoOptimizer] 鈿狅笍 Insufficient feedback (0/5 min), skipping analysis
+[Orchestrator] 鈴笍  Prompt Auto-Optimizer: insufficient_feedback
+[Orchestrator] 鉁?Finalization complete (176ms)
+[Orchestrator] 馃摗 Event emitted: workflow:complete
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[Orchestrator] 馃搳 WORKFLOW SUMMARY
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+  Total stages:     5
+  Successful:       5
+  Failed:           0
+  Total time:       1.24s
+  Avg confidence:   N/A
+  Challenges made:  30
+  Blind spots found:70
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 馃К Evolution Stats:
+[Orchestrator]    Signals captured: 150
+[Orchestrator]    Evolution actions: 10
+[Orchestrator]    Quality score: 0 (F)
+[EvolutionLoop] 馃搫 Structured log saved: C:\workspace\WorkFlowAgent\output\evolution-log.json (232989 bytes)
+[EvolutionLoop] 馃搳 Quality report saved: C:\workspace\WorkFlowAgent\output\quality-report.md (17289 bytes)
+[EvolutionLoop] 鉁?All 2 output file(s) verified
+[Orchestrator] 鉁?Output files verified: 2 file(s)
+[Orchestrator] 馃搫 Evolution log: C:\workspace\WorkFlowAgent\output\evolution-log.json (鉁?232989 bytes)
+[Orchestrator] 馃搳 Quality report: C:\workspace\WorkFlowAgent\output\quality-report.md (鉁?17289 bytes)
+{
+  "success": true,
+  "subcommand": "run",
+  "data": {
+    "requirement": "楠岃瘉宸ヤ綔娴佷慨澶?,
+    "projectRoot": "C:\\workspace\\WorkFlowAgent",
+    "duration": "1.47s",
+    "stages": [
+      {
+        "stage": "ANALYSE",
+        "success": true,
+        "duration": 190,
+        "artifact": "C:\\workspace\\WorkFlowAgent\\output\\requirement.md",
+        "confidence": 0,
+        "challengeQuestions": [
+          "[鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?,
+          "[骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?,
+          "[娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?,
+          "[閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵",
+          "[娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?,
+          "[绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?
+        ],
+        "blindSpots": [
+          "[閫昏緫鎬 鏈秹鍙? reasoning chain valid",
+          "[閫昏緫鎬 鏈秹鍙? premises consistent with conclusion",
+          "[閫昏緫鎬 鏈秹鍙? no logical fallacies",
+          "[閫昏緫鎬 鏈秹鍙? causality established",
+          "[閫昏緫鎬 鏈秹鍙? counter-arguments addressed",
+          "[閫昏緫鎬[ANALYSE] 缂哄皯: 闇€姹傞€昏緫涓€鑷存€?,
+          "[閫昏緫鎬[ANALYSE] 缂哄皯: 鍥犳灉閾惧垎鏋?,
+          "[娓呮櫚搴 鏈秹鍙? terms clearly defined",
+          "[娓呮櫚搴 鏈秹鍙? no ambiguous language",
+          "[娓呮櫚搴 鏈秹鍙? concepts explained",
+          "[娓呮櫚搴 鏈秹鍙? examples provided",
+          "[娓呮櫚搴 鏈秹鍙? scope unambiguous",
+          "[娓呮櫚搴[ANALYSE] 缂哄皯: 鏈瀹氫箟",
+          "[娓呮櫚搴[ANALYSE] 缂哄皯: 闇€姹傛竻鏅板害"
+        ]
+      },
+      {
+        "stage": "ARCHITECT",
+        "success": true,
+        "duration": 46,
+        "artifact": "C:\\workspace\\WorkFlowAgent\\output\\architecture.md",
+        "confidence": 0,
+        "challengeQuestions": [
+          "[鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?,
+          "[骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?,
+          "[娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?,
+          "[閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵",
+          "[娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?,
+          "[绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?
+        ],
+        "blindSpots": [
+          "[閫昏緫鎬 鏈秹鍙? reasoning chain valid",
+          "[閫昏緫鎬 鏈秹鍙? premises consistent with conclusion",
+          "[閫昏緫鎬 鏈秹鍙? no logical fallacies",
+          "[閫昏緫鎬 鏈秹鍙? causality established",
+          "[閫昏緫鎬 鏈秹鍙? counter-arguments addressed",
+          "[閫昏緫鎬[ARCHITECT] 缂哄皯: 鏋舵瀯鎺ㄧ悊閾?,
+          "[閫昏緫鎬[ARCHITECT] 缂哄皯: 璁捐鍐崇瓥閫昏緫",
+          "[娓呮櫚搴 鏈秹鍙? terms clearly defined",
+          "[娓呮櫚搴 鏈秹鍙? no ambiguous language",
+          "[娓呮櫚搴 鏈秹鍙? concepts explained",
+          "[娓呮櫚搴 鏈秹鍙? examples provided",
+          "[娓呮櫚搴 鏈秹鍙? scope unambiguous",
+          "[娓呮櫚搴[ARCHITECT] 缂哄皯: 鏋舵瀯鎻忚堪娓呮櫚",
+          "[娓呮櫚搴[ARCHITECT] 缂哄皯: 鎺ュ彛瀹氫箟鏄庣‘"
+        ]
+      },
+      {
+        "stage": "PLAN",
+        "success": true,
+        "duration": 17,
+        "artifact": "C:\\workspace\\WorkFlowAgent\\output\\execution-plan.md",
+        "confidence": 0,
+        "challengeQuestions": [
+          "[鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?,
+          "[骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?,
+          "[娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?,
+          "[閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵",
+          "[娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?,
+          "[绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?
+        ],
+        "blindSpots": [
+          "[閫昏緫鎬 鏈秹鍙? reasoning chain valid",
+          "[閫昏緫鎬 鏈秹鍙? premises consistent with conclusion",
+          "[閫昏緫鎬 鏈秹鍙? no logical fallacies",
+          "[閫昏緫鎬 鏈秹鍙? causality established",
+          "[閫昏緫鎬 鏈秹鍙? counter-arguments addressed",
+          "[閫昏緫鎬[PLAN] 缂哄皯: 浠诲姟椤哄簭閫昏緫",
+          "[閫昏緫鎬[PLAN] 缂哄皯: 渚濊禆鍏崇郴姝ｇ‘",
+          "[娓呮櫚搴 鏈秹鍙? terms clearly defined",
+          "[娓呮櫚搴 鏈秹鍙? no ambiguous language",
+          "[娓呮櫚搴 鏈秹鍙? concepts explained",
+          "[娓呮櫚搴 鏈秹鍙? examples provided",
+          "[娓呮櫚搴 鏈秹鍙? scope unambiguous",
+          "[娓呮櫚搴[PLAN] 缂哄皯: 浠诲姟鎻忚堪娓呮櫚",
+          "[娓呮櫚搴[PLAN] 缂哄皯: 楠屾敹鏍囧噯鏄庣‘"
+        ]
+      },
+      {
+        "stage": "CODE",
+        "success": true,
+        "duration": 641,
+        "artifact": "C:\\workspace\\WorkFlowAgent\\output\\code.diff",
+        "confidence": 0,
+        "challengeQuestions": [
+          "[鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?,
+          "[骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?,
+          "[娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?,
+          "[閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵",
+          "[娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?,
+          "[绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?
+        ],
+        "blindSpots": [
+          "[閫昏緫鎬 鏈秹鍙? reasoning chain valid",
+          "[閫昏緫鎬 鏈秹鍙? premises consistent with conclusion",
+          "[閫昏緫鎬 鏈秹鍙? no logical fallacies",
+          "[閫昏緫鎬 鏈秹鍙? causality established",
+          "[閫昏緫鎬 鏈秹鍙? counter-arguments addressed",
+          "[閫昏緫鎬[CODE] 缂哄皯: 浠ｇ爜閫昏緫姝ｇ‘",
+          "[閫昏緫鎬[CODE] 缂哄皯: 鏉′欢鍒嗘敮瀹屽",
+          "[娓呮櫚搴 鏈秹鍙? terms clearly defined",
+          "[娓呮櫚搴 鏈秹鍙? no ambiguous language",
+          "[娓呮櫚搴 鏈秹鍙? concepts explained",
+          "[娓呮櫚搴 鏈秹鍙? examples provided",
+          "[娓呮櫚搴 鏈秹鍙? scope unambiguous",
+          "[娓呮櫚搴[CODE] 缂哄皯: 鍛藉悕娓呮櫚",
+          "[娓呮櫚搴[CODE] 缂哄皯: 娉ㄩ噴瀹屾暣"
+        ]
+      },
+      {
+        "stage": "TEST",
+        "success": true,
+        "duration": 346,
+        "artifact": "C:\\workspace\\WorkFlowAgent\\output\\test-report.md",
+        "confidence": 0,
+        "challengeQuestions": [
+          "[鐩稿叧鎬 杩欎釜闂鐨勮В鍐虫ā寮忚兘鍚﹀鐢ㄥ埌鍏朵粬鍦烘櫙锛?,
+          "[骞垮害] 鏈夋病鏈夎€冭檻闈炲姛鑳芥€ч渶姹傦紙鎬ц兘銆佸畨鍏ㄣ€佸彲缁存姢鎬э級锛?,
+          "[娣卞害] 浣犲浣曠‘淇濊繖涓柟妗堣兘瑙ｅ喅鏍规湰闂鑰岄潪琛ㄩ潰鐥囩姸锛?,
+          "[閫昏緫鎬 濡傛灉鎺ュ彈杩欎釜缁撹锛屼細瀵艰嚧浠€涔堢煕鐩撅紵",
+          "[娓呮櫚搴 鏈夋病鏈夊彲鑳借璇В鐨勫湴鏂癸紵濡備綍閬垮厤锛?,
+          "[绮剧‘鎬 鏈夋病鏈夌簿纭殑楠屾敹鏍囧噯锛?
+        ],
+        "blindSpots": [
+          "[閫昏緫鎬 鏈秹鍙? reasoning chain valid",
+          "[閫昏緫鎬 鏈秹鍙? premises consistent with conclusion",
+          "[閫昏緫鎬 鏈秹鍙? no logical fallacies",
+          "[閫昏緫鎬 鏈秹鍙? causality established",
+          "[閫昏緫鎬 鏈秹鍙? counter-arguments addressed",
+          "[閫昏緫鎬[TEST] 缂哄皯: 娴嬭瘯閫昏緫瑕嗙洊",
+          "[閫昏緫鎬[TEST] 缂哄皯: 鏂█姝ｇ‘鎬?,
+          "[娓呮櫚搴 鏈秹鍙? terms clearly defined",
+          "[娓呮櫚搴 鏈秹鍙? no ambiguous language",
+          "[娓呮櫚搴 鏈秹鍙? concepts explained",
+          "[娓呮櫚搴 鏈秹鍙? examples provided",
+          "[娓呮櫚搴 鏈秹鍙? scope unambiguous",
+          "[娓呮櫚搴[TEST] 缂哄皯: 娴嬭瘯鎻忚堪娓呮櫚",
+          "[娓呮櫚搴[TEST] 缂哄皯: 棰勬湡缁撴灉鏄庣‘"
+        ]
+      }
+    ],
+    "totalDuration": 1240,
+    "pipeline": "ANALYSE 鈫?ARCHITECT 鈫?PLAN 鈫?CODE 鈫?TEST"
+  }
+}

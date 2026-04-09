@@ -29,6 +29,22 @@ const MAX_DEP_SKILL_TOKENS = 200;
 /** Max dependency resolution depth to prevent infinite recursion */
 const MAX_DEP_DEPTH = 2;
 
+/** Risk-driven skill pack token cap per skill (P1.5) */
+const RISK_SKILL_TOKEN_CAP = 420;
+
+/** Max number of risk-pack skills to load per prompt (P1.5) */
+const RISK_SKILL_MAX_COUNT = 3;
+
+/**
+ * Risk profile → skill pack mapping (P1.5)
+ * Used by ContextLoader to pre-load focused review skills based on diff risk.
+ */
+const RISK_SKILL_PACKS = {
+  security: ['review-security', 'security-audit'],
+  performance: ['review-performance', 'bp-performance-optimization'],
+  interface: ['review-interface-contract', 'api-design'],
+};
+
 // ─── Three-Layer Load Levels ──────────────────────────────────────────────────
 // Skills are loaded in three priority tiers:
 //   Level 1 – Global:  Always loaded for every task (safety, coding standards)
@@ -81,6 +97,10 @@ const BUILTIN_SKILL_KEYWORDS = {
   'security-audit':            ['security', 'audit', 'vulnerability', 'penetration', 'cve', 'owasp', 'injection', 'xss', 'csrf', 'auth', 'encrypt', 'secret', 'token', 'credential'],
   'database-design':           ['database', 'db', 'sql', 'nosql', 'migration', 'schema', 'index', 'query', 'table', 'column', 'foreign key', 'orm', 'model', 'entity', 'transaction', 'mongodb', 'postgresql', 'mysql', 'redis', 'sqlite'],
   'frontend-review':           ['frontend', 'react', 'vue', 'angular', 'svelte', 'css', 'html', 'dom', 'browser', 'webpack', 'vite', 'accessibility', 'a11y', 'responsive', 'spa', 'component', 'render', 'state management', 'hook', 'redux', 'zustand'],
+  // ── P1.5 Review Skill Packs (split) ─────────────────────────────────────
+  'review-security':           ['security', 'vulnerability', 'injection', 'xss', 'csrf', 'auth', 'authorization', 'secret', 'token', 'credential', 'sql injection', 'audit'],
+  'review-performance':        ['performance', 'latency', 'throughput', 'n+1', 'blocking', 'memory leak', 'hot path', 'cache', 'optimize'],
+  'review-interface-contract': ['interface', 'contract', 'schema', 'api contract', 'type mismatch', 'breaking change', 'compatibility', 'export', 'signature'],
 };
 
 // ─── Role → architecture-constraints.md section filtering ─────────────────────
@@ -135,6 +155,15 @@ const ROLE_CONSTRAINT_SECTIONS = {
     'Core Module Contracts',
   ],
 
+  // reviewer: review-focused constraints for quality and contract checks
+  reviewer: [
+    'File Size Limits',
+    'Module Boundaries',
+    'Communication Protocol',
+    'Core Module Contracts',
+    'Dual-Path Unification Rule',
+  ],
+
   // coding-agent: same as developer (direct code generation)
   'coding-agent': [
     'File Size Limits',
@@ -163,6 +192,7 @@ const ROLE_MANDATORY_DOCS = {
   planner:    ['docs/architecture-constraints.md', 'output/spec.md', 'output/architecture.md', 'output/project-profile.md'],
   developer:  ['docs/architecture-constraints.md', 'output/code-graph.md', 'output/spec.md', 'output/project-profile.md'],
   tester:     ['docs/architecture-constraints.md', 'output/spec.md', 'output/project-profile.md'],
+  reviewer:   ['docs/architecture-constraints.md', 'output/spec.md', 'output/project-profile.md'],
   'coding-agent': ['docs/architecture-constraints.md', 'output/code-graph.md', 'output/project-profile.md'],
   'init-agent':   [],
 };
@@ -177,6 +207,9 @@ module.exports = {
   MAX_GRAPH_TOKENS,
   MAX_DEP_SKILL_TOKENS,
   MAX_DEP_DEPTH,
+  RISK_SKILL_TOKEN_CAP,
+  RISK_SKILL_MAX_COUNT,
+  RISK_SKILL_PACKS,
   // Load levels
   LOAD_LEVEL,
   // Skill keywords

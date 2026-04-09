@@ -47,15 +47,19 @@ class TesterAgent extends BaseAgent {
     // P0-NEW-1: inject structured JSON output instruction
     const jsonInstruction = buildJsonBlockInstruction('tester');
 
-    // Inject requirements.md and architecture.md so the tester can verify
+    // Inject requirement.md (canonical) and architecture.md so the tester can verify
     // acceptance criteria coverage and architecture compliance – without these,
     // the "Coverage Analysis" section would be based on guesswork.
-    const requirementsPath = path.join(this._outputDir, 'requirements.md');
+    // Backward compatibility: if old requirements.md exists, use it as fallback.
+    const requirementPath = path.join(this._outputDir, 'requirement.md');
+    const legacyRequirementsPath = path.join(this._outputDir, 'requirements.md');
     const architecturePath = path.join(this._outputDir, 'architecture.md');
 
-    const requirementsContent = fs.existsSync(requirementsPath)
-      ? fs.readFileSync(requirementsPath, 'utf-8')
-      : null;
+    const requirementsContent = fs.existsSync(requirementPath)
+      ? fs.readFileSync(requirementPath, 'utf-8')
+      : (fs.existsSync(legacyRequirementsPath)
+        ? fs.readFileSync(legacyRequirementsPath, 'utf-8')
+        : null);
     const architectureContent = fs.existsSync(architecturePath)
       ? fs.readFileSync(architecturePath, 'utf-8')
       : null;
@@ -144,7 +148,7 @@ Produce a Markdown test report with the following sections:
 1. **Test Summary** – Overall pass/fail verdict with confidence score (0-100%)
 2. **Test Cases Executed** – Table with columns: ID | Description | Input | Expected | Actual | Status
 3. **Defects Found** – Numbered list with: Severity (Critical/High/Medium/Low) | Location | Description | Reproduction Steps
-4. **Coverage Analysis** – Map each acceptance criterion from requirements.md to: ✅ Covered / ❌ Missing / ⚠️ Partial
+4. **Coverage Analysis** – Map each acceptance criterion from requirement.md to: ✅ Covered / ❌ Missing / ⚠️ Partial
 5. **Architecture Compliance** – Verify each component/interface from architecture.md is correctly implemented
 6. **Risk Assessment** – Areas of the code that carry the highest risk of failure
 7. **Recommendations** – Specific, actionable fixes for each defect found
@@ -199,7 +203,7 @@ Pay special attention to Coverage Analysis – every acceptance criterion must b
       if (!check.valid) {
         console.warn(`[TesterAgent] ⚠️  JSON block validation failed: ${check.reason}`);
       } else {
-        console.log(`[TesterAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
+        console.error(`[TesterAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
       }
     }
 
@@ -225,7 +229,7 @@ Pay special attention to Coverage Analysis – every acceptance criterion must b
     if (missingMandatory.length > 0) {
       console.warn(`[TesterAgent] ⚠️  COMPLIANCE: Missing mandatory section(s): ${missingMandatory.map(s => s.en).join(', ')}. The agent output specification requires these sections.`);
     } else {
-      console.log(`[TesterAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan.`);
+      console.error(`[TesterAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan.`);
     }
 
     // Verify that pre-planned test case IDs appear in the report
@@ -243,7 +247,7 @@ Pay special attention to Coverage Analysis – every acceptance criterion must b
         if (coverageRate < this._coverageThreshold) {
           console.warn(`[TesterAgent] WARNING: Only ${coveredIds.length}/${plannedIds.length} pre-planned test case IDs (${coverageRate}%) appear in the report. Threshold: ${this._coverageThreshold}%. The tester may have ignored the test checklist.`);
         } else {
-          console.log(`[TesterAgent] ✅ Test case coverage: ${coveredIds.length}/${plannedIds.length} IDs referenced in report (${coverageRate}%). Threshold: ${this._coverageThreshold}%.`);
+          console.error(`[TesterAgent] ✅ Test case coverage: ${coveredIds.length}/${plannedIds.length} IDs referenced in report (${coverageRate}%). Threshold: ${this._coverageThreshold}%.`);
         }
       }
     }

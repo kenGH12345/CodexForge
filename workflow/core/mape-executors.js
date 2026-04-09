@@ -351,7 +351,7 @@ function _execPromptEvolution(action) {
  *
  * @returns {object}
  */
-function _execExperienceDistill() {
+async function _execExperienceDistill() {
   if (!this._orch?.experienceStore) return { detail: 'ExperienceStore not available', distilled: false };
 
   try {
@@ -362,7 +362,7 @@ function _execExperienceDistill() {
       return { detail: `Only ${count} experience(s) — too few to distill`, distilled: false };
     }
 
-    const result = store.distill({
+    const result = await store.distill({
       similarityThreshold: 0.65,
       minClusterSize: 2,
       dryRun: false,

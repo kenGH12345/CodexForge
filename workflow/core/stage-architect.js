@@ -13,12 +13,13 @@ const { PATHS, HOOK_EVENTS } = require('./constants');
 const { AgentRole, WorkflowState } = require('./types');
 const { ExperienceType, ExperienceCategory } = require('./experience-store');
 const { CoverageChecker } = require('./coverage-checker');
-const { ArchitectureReviewAgent } = require('./architecture-review-agent');
+const { CodeReviewAgent } = require('./code-review-agent');
+const { ARCHITECTURE_CHECKLIST } = require('./review-checklists');
 const { DECISION_QUESTIONS } = require('./socratic-engine');
 const { RollbackCoordinator } = require('./rollback-coordinator');
 const { QualityGate } = require('./quality-gate');
 const { translateMdFile } = require('./i18n-translator');
-const { runEvoMapFeedback } = require('./stage-runner-utils');
+const { runEvoMapFeedback, recordSelfReport, runStageMetricsGate } = require('./stage-runner-utils');
 const { _recordPromptABOutcome } = require('./stage-analyst');
 const {
   buildArchitectUpstreamCtx,
@@ -30,6 +31,7 @@ const {
 } = require('./orchestrator-stage-helpers');
 const { runModuleAwareArchitect } = require('./module-architect-runner');
 const { buildRetryContext, compareOutputFingerprint } = require('./retry-divergence-guard');
+const { buildAgentPrompt } = require('./prompt-builder');
 
 // Forward reference: _runAnalyst is needed for rollback. Lazy-loaded to avoid circular deps.
 let _runAnalyst = null;
@@ -49,11 +51,12 @@ function _getRunAnalyst() {
  * @returns {Promise<string>} Path to the generated architecture.md
  */
 async function _runArchitect() {
+  const _archStageStartTime = Date.now();
   // Print stage header via handoffLog if available
   if (this.handoffLog) {
     this.handoffLog.printStageHeader('ARCHITECT', 'ArchitectAgent');
   } else {
-    console.log(`\n[Orchestrator] Stage: ARCHITECT (ArchitectAgent)`);
+    console.error(`\n[Orchestrator] Stage: ARCHITECT (ArchitectAgent)`);
   }  const inputPath = this.bus.consume(AgentRole.ARCHITECT);
 
   // ── Inject upstream cross-stage context ───────────────────────────────────
@@ -62,7 +65,7 @@ async function _runArchitect() {
   let techStackPrefix = '';
   try {
     const techDecision = this.socratic.askAsync(DECISION_QUESTIONS.TECH_STACK_PREFERENCE, 0);
-    console.log(`[Orchestrator] ⚡ Tech stack preference (non-blocking): "${techDecision.optionText}"`);
+    console.error(`[Orchestrator] ⚡ Tech stack preference (non-blocking): "${techDecision.optionText}"`);
     if (techDecision.optionIndex === 1) {
       techStackPrefix = '[Tech Stack: Minimal/Lightweight – prefer simple, low-dependency solutions]\n\n';
     } else if (techDecision.optionIndex === 2) {
@@ -116,14 +119,14 @@ async function _runArchitect() {
             }
           }
         }
-        console.log(`[Orchestrator] 📋 ProjectProfile enrichment injected into ArchitectAgent.${profile.lspEnhanced ? ' (LSP-enhanced)' : ''}`);
+        console.error(`[Orchestrator] 📋 ProjectProfile enrichment injected into ArchitectAgent.${profile.lspEnhanced ? ' (LSP-enhanced)' : ''}`);
       }
     }
   } catch (_) { /* non-fatal: projectProfile enrichment is optional */ }
 
   const analystMeta = this.bus.getMeta(AgentRole.ARCHITECT);
   if (analystMeta && !analystMeta.skipped && analystMeta.clarificationRounds > 0) {
-    console.log(`[Orchestrator] ℹ️  Requirement was clarified in ${analystMeta.clarificationRounds} round(s) (${analystMeta.signalCount} signal(s) resolved). Architect should read requirements.md carefully.`);
+    console.error(`[Orchestrator] ℹ️  Requirement was clarified in ${analystMeta.clarificationRounds} round(s) (${analystMeta.signalCount} signal(s) resolved). Architect should read requirements.md carefully.`);
   }
 
   // A-3 fix: buildArchitectContextBlock now returns { content, injectedExpIds } struct
@@ -150,7 +153,7 @@ async function _runArchitect() {
     if (moduleSplitResult.used) {
       outputPath = moduleSplitResult.outputPath;
       _moduleSplitMeta = moduleSplitResult.meta;
-      console.log(`[Orchestrator] 🗺️  Module-split architecture completed: ${moduleSplitResult.moduleCount} module(s) designed.`);
+      console.error(`[Orchestrator] 🗺️  Module-split architecture completed: ${moduleSplitResult.moduleCount} module(s) designed.`);
     }
   } catch (msErr) {
     console.warn(`[Orchestrator] ⚠️  Module-split architecture failed (non-fatal): ${msErr.message}. Falling back to standard single-pass.`);
@@ -162,28 +165,18 @@ async function _runArchitect() {
 outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExpContext, this.handoffLog);
   }
 
-  // ── Adapter Telemetry ─────────────────────────────────────────────────────
+  // ── Adapter Telemetry ─────────────────────────────────────────────────────────
   if (this._adapterTelemetry && outputPath && fs.existsSync(outputPath)) {
     try {
       const archOutput = fs.readFileSync(outputPath, 'utf-8');
       this._adapterTelemetry.scanReferences(archOutput, 'ARCHITECT');
+      // ── Agent Self-Report: extract self-report from ARCHITECT output ──
+      recordSelfReport('ARCHITECT', archOutput, { agentRole: AgentRole.ARCHITECT });
     } catch (_) { /* non-fatal */ }
   }
-
-  const requirementPath = path.join(PATHS.OUTPUT_DIR, 'requirements.md');
-
-  const coverageChecker = new CoverageChecker(this._rawLlmCall, { verbose: true });
-  const archReviewer = new ArchitectureReviewAgent(
-    this._rawLlmCall,
-    {
-      maxRounds: 2,
-      verbose: true,
-      outputDir: PATHS.OUTPUT_DIR,
-      investigationTools: this._buildInvestigationTools('Architecture'),
-    }
-  );
-
   // ── Optimization 5: Tech Stack Selection Validation ─────────────────────
+  // Collect extra context for architecture review (before instantiating reviewer)
+  let extraContext = '';
   try {
     if (fs.existsSync(outputPath)) {
       const archDoc = fs.readFileSync(outputPath, 'utf-8');
@@ -191,13 +184,13 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
       const techMentions = [...new Set((archDoc.match(techPattern) || []).map(t => t.trim()))].slice(0, 6);
       if (techMentions.length > 0) {
         const validationQuery = `${techMentions.join(' ')} latest version known issues deprecation 2024 2025`.slice(0, 200);
-        console.log(`[Orchestrator] \uD83C\uDF10 Tech stack validation: searching for: "${validationQuery.slice(0, 80)}..."`);
+        console.error(`[Orchestrator] 🌐 Tech stack validation: searching for: "${validationQuery.slice(0, 80)}..."`);
         const validationResult = await webSearchHelper(this, validationQuery, {
           maxResults: 4,
           label: 'Tech Stack Validation (ArchReview)',
         });
         if (validationResult) {
-          archReviewer.techStackValidationCtx = formatWebSearchBlock(validationResult, {
+          extraContext = formatWebSearchBlock(validationResult, {
             title: 'Tech Stack Validation (Live Web Data)',
             guidance: 'These web search results provide the latest status of technologies used in this architecture. **Check for version mismatches, deprecated APIs, known security issues, or end-of-life announcements**. Flag any technology choice that conflicts with this real-time data.',
           });
@@ -205,7 +198,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
       }
     }
   } catch (err) {
-    console.warn(`[Orchestrator] \uD83C\uDF10 Tech stack validation web search failed (non-fatal): ${err.message}`);
+    console.warn(`[Orchestrator] 🌐 Tech stack validation web search failed (non-fatal): ${err.message}`);
   }
 
   // ── Security CVE Audit ────────────────────────────────────────────────────
@@ -215,9 +208,8 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
       label: 'Security Audit (ArchReview)',
     });
     if (cveResult && cveResult.totalVulns > 0) {
-      const existingCtx = archReviewer.techStackValidationCtx || '';
-      archReviewer.techStackValidationCtx = existingCtx
-        ? `${existingCtx}\n\n${cveResult.block}`
+      extraContext = extraContext
+        ? `${extraContext}\n\n${cveResult.block}`
         : cveResult.block;
       if (cveResult.criticalCount > 0) {
         this.stateMachine.recordRisk('high',
@@ -227,8 +219,53 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
       }
     }
   } catch (err) {
-    console.warn(`[Orchestrator] \uD83D\uDEE1\uFE0F Security CVE audit failed (non-fatal): ${err.message}`);
+    console.warn(`[Orchestrator] 🛡️ Security CVE audit failed (non-fatal): ${err.message}`);
   }
+
+  const coverageChecker = new CoverageChecker(this._rawLlmCall, { verbose: true });
+  const reviewRiskProfile = (() => {
+    const corpus = `${extraContext || ''}\n${outputPath && fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : ''}`.toLowerCase();
+    const score = (regex) => (regex.test(corpus) ? 0.75 : 0);
+    return {
+      security: score(/\b(auth|xss|csrf|inject|sql|secret|token|credential|vulnerab|cve)\b/i),
+      performance: score(/\b(perf|latency|throughput|n\+1|memory|blocking|cache|optimi)\b/i),
+      interface: score(/\b(interface|contract|schema|export|signature|breaking|compatib)\b/i),
+    };
+  })();
+  const reviewLlmCall = async (prompt) => {
+    let optimisedPrompt = prompt;
+    try {
+      const result = await buildAgentPrompt('reviewer', prompt, [], {
+        projectRoot: this.projectRoot,
+        riskProfile: reviewRiskProfile,
+      });
+      if (result && result.prompt) {
+        optimisedPrompt = result.prompt;
+      }
+      const injectedSkillNames = result?.meta?.injectedSkillNames || [];
+      if (injectedSkillNames.length > 0) {
+        this.obs.recordSkillUsage(injectedSkillNames);
+      }
+    } catch (err) {
+      console.warn(`[Orchestrator] ⚠️  Reviewer prompt optimisation failed (non-fatal): ${err.message}`);
+    }
+    return this._rawLlmCall(optimisedPrompt);
+  };
+  const archReviewer = new CodeReviewAgent(
+    reviewLlmCall,
+    {
+      maxRounds: 2,
+      verbose: true,
+      outputDir: PATHS.OUTPUT_DIR,
+      investigationTools: this._buildInvestigationTools('Architecture'),
+      checklist: ARCHITECTURE_CHECKLIST,
+      reportFileName: 'architecture-review.md',
+      extraContext,
+    }
+  );
+
+  // FIX: requirementPath should point to the requirement document (inputPath from ANALYSE)
+  const requirementPath = inputPath;
 
   const [coverageSettled, archReviewSettled] = await this.stateMachine.runParallel([
     { name: 'CoverageCheck', fn: () => coverageChecker.check(requirementPath, outputPath) },
@@ -239,7 +276,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
     throw new Error(`[_runArchitect] CoverageChecker failed: ${coverageSettled.reason?.message ?? coverageSettled.reason}`);
   }
   if (archReviewSettled.status === 'rejected') {
-    throw new Error(`[_runArchitect] ArchitectureReviewAgent failed: ${archReviewSettled.reason?.message ?? archReviewSettled.reason}`);
+throw new Error(`[_runArchitect] CodeReviewAgent (architecture mode) failed: ${archReviewSettled.reason?.message ?? archReviewSettled.reason}`);
   }
   const coverageResult   = coverageSettled.value;
   const archReviewResult = archReviewSettled.value;
@@ -252,7 +289,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
     const coverageReport = coverageChecker.formatReport(coverageResult);
     fs.appendFileSync(outputPath, `\n\n---\n${coverageReport}`, 'utf-8');
     const evaluatedItems = coverageResult.covered + coverageResult.uncovered;
-    console.log(`[Orchestrator] 📊 Coverage: ${coverageResult.covered}/${evaluatedItems} evaluated (${coverageResult.coverageRate}%) | total parsed: ${coverageResult.total}`);
+    console.error(`[Orchestrator] 📊 Coverage: ${coverageResult.covered}/${evaluatedItems} evaluated (${coverageResult.coverageRate}%) | total parsed: ${coverageResult.total}`);
   }
 
   for (const note of coverageResult.riskNotes) {
@@ -278,9 +315,9 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
         throw new Error(abortMsg);
       } else if (socraticDecision.optionIndex === 2) {
         this.stateMachine.recordRisk('medium', '[SocraticEngine] User approved architecture with reservations. Proceeding to code generation.');
-        console.log(`[Orchestrator] ⚠️  Architecture approved with reservations. Proceeding.`);
+        console.error(`[Orchestrator] ⚠️  Architecture approved with reservations. Proceeding.`);
       } else {
-        console.log(`[Orchestrator] ✅ Architecture approved by user. Proceeding to code generation.`);
+        console.error(`[Orchestrator] ✅ Architecture approved by user. Proceeding to code generation.`);
       }
     } catch (err) {
       if (err.message.includes('User rejected architecture')) throw err;
@@ -295,7 +332,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
         DECISION_QUESTIONS.ARCHITECTURE_FAILURE_ACTION || DECISION_QUESTIONS.ARCHITECTURE_APPROVAL,
         0
       );
-      console.log(`[Orchestrator] ⚡ Architecture failure action (non-blocking): "${failureDecision.optionText}"`);
+      console.error(`[Orchestrator] ⚡ Architecture failure action (non-blocking): "${failureDecision.optionText}"`);
       if (failureDecision.optionIndex === 1) {
         const proceedMsg = `[SocraticEngine] User chose to proceed despite architecture failure (${archReviewResult.failed} issue(s)): ${failedSummary}`;
         this.stateMachine.recordRisk('high', proceedMsg);
@@ -309,7 +346,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
   }
 
   if (archReviewResult.failed === 0) {
-    console.log(`[Orchestrator] ✅ Architecture review passed.`);
+    console.error(`[Orchestrator] ✅ Architecture review passed.`);
   }
 
   // ── Quality gate decision ───────────────────────────────────────────────
@@ -324,6 +361,15 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
     skill: 'architecture-design',
     category: ExperienceCategory.ARCHITECTURE,
   });
+
+  if (this.obs && this.obs._skillInjectedCounts && this.obs._skillInjectedCounts.size > 0) {
+    const injectedNames = [...this.obs._skillInjectedCounts.keys()];
+    const falsePositiveSignals = Math.max(0, Number(archReviewResult?.failed || 0) - Number(archReviewResult?.rounds || 0));
+    this.obs.recordSkillGateOutcome(injectedNames, {
+      passed: !!archDecision.pass,
+      falsePositiveSignals,
+    });
+  }
 
   _recordPromptABOutcome('architect', archDecision.pass, archReviewResult.rounds ?? 0);
 
@@ -352,15 +398,17 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
       );
 
       if (strategy.type === 'SUBTASK_RETRY' && strategy.cachedResults) {
-        console.log(`[Orchestrator] 🎯 Defect C: Subtask-level retry for ARCHITECT. ${strategy.reason}`);
+        console.error(`[Orchestrator] 🎯 Defect C: Subtask-level retry for ARCHITECT. ${strategy.reason}`);
 
-        const retryReviewer = new ArchitectureReviewAgent(
-          this._rawLlmCall,
+        const retryReviewer = new CodeReviewAgent(
+          reviewLlmCall,
           {
             maxRounds: 2,
             verbose: true,
             outputDir: PATHS.OUTPUT_DIR,
             investigationTools: this._buildInvestigationTools('Architecture'),
+            checklist: ARCHITECTURE_CHECKLIST,
+            reportFileName: 'architecture-review.md',
           }
         );
         const requirementPathRetry = path.join(PATHS.OUTPUT_DIR, 'requirements.md');
@@ -375,7 +423,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
         const retryDecision = retryGate.evaluate(retryReviewResult, WorkflowState.ARCHITECT, rollbackCount + 1);
 
         if (retryDecision.pass) {
-          console.log(`[Orchestrator] ✅ Subtask-level retry succeeded: ArchReview passed on retry.`);
+          console.error(`[Orchestrator] ✅ Subtask-level retry succeeded: ArchReview passed on retry.`);
           coordinator.cacheSubtaskResult(WorkflowState.ARCHITECT, 'ArchReview', retryReviewResult);
 
           if (this.stageCtx) {
@@ -389,7 +437,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
               meta: { ...(existingArch.meta || {}), _archRollbackCount: rollbackCount + 1, subtaskRetry: true },
             });
           }
-          const archOutputCtx = storeArchitectContext(this, outputPath, retryReviewResult, cachedCoverage || coverageResult);
+          const archOutputCtx = await storeArchitectContext(this, outputPath, retryReviewResult, cachedCoverage || coverageResult);
   this.bus.publish(AgentRole.ARCHITECT, AgentRole.PLANNER, outputPath, {
             reviewRounds:   retryReviewResult.rounds ?? 0,
             failedItems:    retryReviewResult.failed ?? 0,
@@ -399,7 +447,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
           return outputPath;
         }
 
-        console.log(`[Orchestrator] ⚠️  Subtask-level retry failed. Falling through to full-stage rollback.`);
+        console.error(`[Orchestrator] ⚠️  Subtask-level retry failed. Falling through to full-stage rollback.`);
         coordinator.invalidateSubtaskCache(WorkflowState.ARCHITECT);
       }
 
@@ -421,7 +469,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
         if (fs.existsSync(archPath)) previousArchOutput = fs.readFileSync(archPath, 'utf-8');
       } catch (_) { /* non-fatal */ }
 
-      const failureContext = buildRetryContext({
+      const failureContext = await buildRetryContext({
         previousOutput: previousArchOutput,
         failureReason: failedNotes,
         retryCount: rollbackCount + 1,
@@ -429,7 +477,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
       });
       const reanalysedPath = await _getRunAnalyst().call(this, failureContext);
       await this.stateMachine.transition(reanalysedPath, `ANALYSE → ARCHITECT (post-rollback retry ${rollbackCount + 1})`);
-      console.log(`[Orchestrator] ✅ State machine advanced to ARCHITECT after post-rollback re-analysis.`);
+      console.error(`[Orchestrator] ✅ State machine advanced to ARCHITECT after post-rollback re-analysis.`);
       if (this.stageCtx) {
         const existingArch = this.stageCtx.get(WorkflowState.ARCHITECT) || {};
         this.stageCtx.set(WorkflowState.ARCHITECT, {
@@ -456,9 +504,9 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
       .slice(0, 3)
       .join('; ');
     this.stateMachine.recordRisk('low', `[ArchReview] ${archReviewResult.failed} low-severity issue(s) remain (no rollback): ${lowSeverityNotes}`);
-    console.log(`[Orchestrator] ℹ️  ${archReviewResult.failed} minor architecture issue(s) remain (recorded as low-risk). Proceeding automatically.`);
+    console.error(`[Orchestrator] ℹ️  ${archReviewResult.failed} minor architecture issue(s) remain (recorded as low-risk). Proceeding automatically.`);
   } else {
-    console.log(`[Orchestrator] ℹ️  Architecture review: no issues. Proceeding automatically.`);
+    console.error(`[Orchestrator] ℹ️  Architecture review: no issues. Proceeding automatically.`);
   }
 
   // ── EvoMap feedback loop ────────────────────────────────────────────────
@@ -471,7 +519,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
   }
 
   // ── Store ARCHITECT stage context ──────────────────────────────────────
-  const archOutputCtx = storeArchitectContext(this, outputPath, archReviewResult, coverageResult, { moduleSplitMeta: _moduleSplitMeta });
+  const archOutputCtx = await storeArchitectContext(this, outputPath, archReviewResult, coverageResult, { moduleSplitMeta: _moduleSplitMeta });
 
   this.bus.publish(AgentRole.ARCHITECT, AgentRole.PLANNER, outputPath, {
     reviewRounds:   archReviewResult.rounds ?? 0,
@@ -516,6 +564,14 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
       meta: { ...existingMeta, _previousOutputDigest: currentDigest },
     });
   }
+
+  // ── Metrics Quality Gate: validate ARCHITECT stage runtime metrics ──────
+  runStageMetricsGate(this, {
+    stageName: 'ARCHITECT',
+    durationMs: Date.now() - _archStageStartTime,
+    errorCount: (archReviewResult?.failed || 0),
+    llmCalls: (this.obs && this.obs._llmCallCount) ? this.obs._llmCallCount : 0,
+  });
 
   return outputPath;
 }

@@ -1,41 +1,608 @@
 {
-  "generatedAt": "2026-03-15T09:40:38.656Z",
-  "filesScanned": 39,
+  "generatedAt": "2026-04-02T12:48:15.552Z",
+  "filesScanned": 368,
   "violations": [
     {
       "type": "FILE_TOO_LARGE",
-      "severity": "medium",
-      "file": "core\\architecture-review-agent.js",
-      "detail": "743 lines (limit: 600)",
+      "severity": "high",
+      "file": "examples\\demo-functionality-evaluation.js",
+      "detail": "1115 lines (limit: 600)",
       "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
     },
     {
       "type": "FILE_TOO_LARGE",
       "severity": "medium",
-      "file": "core\\clarification-engine.js",
+      "file": "workflow\\commands\\commands-devtools-evolution.js",
+      "detail": "747 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\commands\\commands-workflow.js",
+      "detail": "737 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\agent-feedback-system.js",
+      "detail": "619 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\agent-generator.js",
+      "detail": "1376 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\agent-handoff-log.js",
+      "detail": "981 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\api-endpoint-extractor.js",
+      "detail": "781 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\ast-transform-engine.js",
+      "detail": "782 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\benchmark-runner.js",
+      "detail": "789 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\code-generator-templates.js",
+      "detail": "854 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\code-graph-builder.js",
+      "detail": "710 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\code-graph-parsers.js",
+      "detail": "946 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\code-graph-query.js",
+      "detail": "697 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\code-review-agent.js",
+      "detail": "887 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\consistency-validator.js",
+      "detail": "694 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\context-loader.js",
+      "detail": "1106 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\deep-audit-checks.js",
+      "detail": "838 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\duplicate-pattern-detector.js",
+      "detail": "927 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\event-journal.js",
+      "detail": "608 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\evolution-loop.js",
+      "detail": "852 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\execution-log-validator.js",
+      "detail": "965 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\experience-abstraction-mixin.js",
       "detail": "624 lines (limit: 600)",
       "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
     },
     {
       "type": "FILE_TOO_LARGE",
       "severity": "medium",
-      "file": "core\\code-review-agent.js",
+      "file": "workflow\\core\\experience-distillation.js",
+      "detail": "843 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\experience-evolution.js",
+      "detail": "676 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\experience-store.js",
+      "detail": "1010 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\expert-knowledge-channel.js",
+      "detail": "822 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\functionality-evaluator.js",
+      "detail": "688 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\git-integration.js",
+      "detail": "760 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\ide-detection.js",
       "detail": "668 lines (limit: 600)",
       "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
     },
     {
       "type": "FILE_TOO_LARGE",
       "severity": "high",
-      "file": "index.js",
-      "detail": "1257 lines (limit: 600)",
+      "file": "workflow\\core\\integration-agent-fusion.test.js",
+      "detail": "1138 lines (limit: 600)",
       "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
     },
     {
       "type": "FILE_TOO_LARGE",
       "severity": "high",
-      "file": "init-project.js",
-      "detail": "1221 lines (limit: 600)",
+      "file": "workflow\\core\\integration-framework-fusion.test.js",
+      "detail": "1144 lines (limit: 600)",
       "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\integration-pipeline-flow.test.js",
+      "detail": "831 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\knowledge-pipeline.js",
+      "detail": "718 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\lsp-router.js",
+      "detail": "881 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\mape-engine.js",
+      "detail": "694 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\mape-executors.js",
+      "detail": "764 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\mcp-server.js",
+      "detail": "2015 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\memory-manager.js",
+      "detail": "1030 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\observability-strategy.js",
+      "detail": "602 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\observability.js",
+      "detail": "821 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\orchestrator-run.js",
+      "detail": "795 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\orchestrator-teardown-impl.js",
+      "detail": "1128 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\problem-abstraction-engine.js",
+      "detail": "989 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\profiler-detection.js",
+      "detail": "620 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\prompt-auto-optimizer.js",
+      "detail": "676 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\prompt-builder.js",
+      "detail": "1110 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\prompt-pattern-library.js",
+      "detail": "720 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\quality-gate.js",
+      "detail": "753 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\rollback-coordinator.js",
+      "detail": "630 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\semantic-compressor.js",
+      "detail": "768 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\skill-discovery.js",
+      "detail": "657 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\skill-enrichment.js",
+      "detail": "602 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\skill-evolution-triggers.js",
+      "detail": "682 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\skill-evolution.js",
+      "detail": "1135 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\smart-context-selector.js",
+      "detail": "717 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\socratic-challenger.js",
+      "detail": "1959 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\stage-context-store.js",
+      "detail": "809 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\core\\stage-tester.js",
+      "detail": "962 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\state-machine.js",
+      "detail": "784 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\task-batcher.js",
+      "detail": "632 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\test-case-executor.js",
+      "detail": "864 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\test-case-generator.js",
+      "detail": "632 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\token-budget.js",
+      "detail": "696 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\core\\unified-trace-collector.js",
+      "detail": "809 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\gen-experiences.js",
+      "detail": "659 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\hooks\\adapters\\code-quality-adapter.js",
+      "detail": "644 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\hooks\\adapters\\lsp-adapter.js",
+      "detail": "916 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\index.js",
+      "detail": "1215 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\init-project.js",
+      "detail": "998 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\tests\\dual-mode-e2e.test.js",
+      "detail": "719 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\tests\\e2e.test.js",
+      "detail": "601 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\tests\\integration.test.js",
+      "detail": "614 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\tests\\smoke-runtime.test.js",
+      "detail": "753 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\tests\\test-connectivity.js",
+      "detail": "697 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\tests\\unit.test.js",
+      "detail": "2240 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\tools\\generate-health-report.js",
+      "detail": "819 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "high",
+      "file": "workflow\\tools\\ide-workflow-bridge.js",
+      "detail": "5480 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "FILE_TOO_LARGE",
+      "severity": "medium",
+      "file": "workflow\\workflow.config.js",
+      "detail": "799 lines (limit: 600)",
+      "suggestion": "Split into smaller modules. Consider extracting helpers or sub-components."
+    },
+    {
+      "type": "STALE_DOC",
+      "severity": "low",
+      "file": "docs\\architecture.md",
+      "detail": "Last modified 14 days ago (threshold: 14 days)",
+      "suggestion": "Review and update this document to reflect current project state."
+    },
+    {
+      "type": "HIGH_COMPLEXITY",
+      "severity": "high",
+      "file": "workflow\\tools\\ide-workflow-bridge.js",
+      "detail": "Cyclomatic complexity: 913 (threshold: 20)",
+      "suggestion": "Split into smaller functions. Extract complex conditionals into named helpers."
+    },
+    {
+      "type": "HIGH_COMPLEXITY",
+      "severity": "high",
+      "file": "workflow\\core\\socratic-challenger.js",
+      "detail": "Cyclomatic complexity: 359 (threshold: 20)",
+      "suggestion": "Split into smaller functions. Extract complex conditionals into named helpers."
+    },
+    {
+      "type": "HIGH_COMPLEXITY",
+      "severity": "high",
+      "file": "workflow\\core\\code-graph-parsers.js",
+      "detail": "Cyclomatic complexity: 323 (threshold: 20)",
+      "suggestion": "Split into smaller functions. Extract complex conditionals into named helpers."
+    },
+    {
+      "type": "HIGH_COMPLEXITY",
+      "severity": "high",
+      "file": "workflow\\core\\orchestrator-teardown-impl.js",
+      "detail": "Cyclomatic complexity: 323 (threshold: 20)",
+      "suggestion": "Split into smaller functions. Extract complex conditionals into named helpers."
+    },
+    {
+      "type": "HIGH_COMPLEXITY",
+      "severity": "high",
+      "file": "workflow\\core\\mcp-server.js",
+      "detail": "Cyclomatic complexity: 321 (threshold: 20)",
+      "suggestion": "Split into smaller functions. Extract complex conditionals into named helpers."
+    },
+    {
+      "type": "QUALITY_GATE_FAILED",
+      "severity": "high",
+      "file": "(project)",
+      "detail": "Quality gate FAILED: code_smells=4574, high_complexity_files=257",
+      "suggestion": "Address the failing quality gate conditions before release."
+    },
+    {
+      "type": "CODE_SMELL_DENSITY",
+      "severity": "medium",
+      "file": "(project-wide)",
+      "detail": "4574 code smell(s) detected",
+      "suggestion": "Schedule a cleanup sprint to reduce code smell density."
     }
   ]
 }

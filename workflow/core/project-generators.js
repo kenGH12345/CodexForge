@@ -11,9 +11,12 @@ const { TECH_PROFILES, _generateDirectoryTree } = require('./tech-profiles');
  * @param {string} projectRoot
  * @param {object} profile
  * @param {string} projectName
+ * @param {object} [options]
+ * @param {string} [options.workflowSource] - Path to remote workflow source
  * @returns {string} Path of the written config file
  */
-function generateConfigFromProfile(projectRoot, profile, projectName) {
+function generateConfigFromProfile(projectRoot, profile, projectName, options = {}) {
+  const { workflowSource } = options;
   const skillsJson = JSON.stringify(profile.skills, null, 4)
     .replace(/"name"/g, 'name')
     .replace(/"description"/g, 'description')
@@ -61,8 +64,15 @@ module.exports = {
     scopeDirs: [],             // Large monorepo only: ['packages/core', 'lua']. Empty = full scan
   },
 
+  // ─── Remote Workflow Reference ──────────────────────────────────────────────
+  // Point to an external WorkFlowAgent installation instead of copying workflow/
+  // into this project. All IDE Agent Bridge commands will use this path.
+  // Leave as null to use the local workflow/ directory inside this project.
+  workflowSource: ${workflowSource ? `'${workflowSource.replace(/\\/g, '/')}'` : 'null'},
+
   // ─── Automated Verification Loop ─────────────────────────────────────────
   ${testCommandLine}
+  testProfile: 'fast', // P0: fast=smoke+unit, full=smoke+unit+integration
 
   autoFixLoop: {
     enabled: true,
@@ -84,6 +94,33 @@ module.exports = {
 
   // ─── Classification Rules ─────────────────────────────────────────────────
   classificationRules: [],
+
+  // ─── IDE Configuration (ADR-37) ────────────────────────────────────────────
+  // IDE-First strategy: prefer IDE-native tools over self-built ones
+  // When running inside an IDE (Cursor, VS Code:, Claude Code:, Windsurf),
+  // the system will automatically detect and use IDE capabilities.
+  // Self-built modules (CodeGraph, LSPAdapter) serve as fallback only.
+  ide: {
+    // Force IDE detection (optional)
+    // forceIDE: 'vscode',        // Force specific IDE: 'vscode', 'cursor', 'claude', 'windsurf'
+    // forceStandalone: false,    // Force standalone mode (no IDE) - default: false
+
+    // Enable IDE-first routing (default: true)
+    // When true, prefers IDE tools: codebase_search, grep_search, view_code_item
+    // When false, uses self-built modules as primary
+    ideFirstRouting: true,
+
+    // IDE capabilities configuration (auto-detected if null)
+    // Manually specify which IDE capabilities to use
+    capabilities: null,
+    // Example:
+    // capabilities: {
+    //   codebaseSearch: true,
+    //   grepSearch: true,
+    //   viewCodeItem: true,
+    //   builtinLSP: true,
+    // }
+  },
 };
 `;
 

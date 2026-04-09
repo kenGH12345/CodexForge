@@ -8,7 +8,7 @@ load_level: task
 max_tokens: 1200
 triggers:
   keywords: [review, refactor, clean code, lint, quality, smell, audit, vulnerability, security]
-  roles: [developer, architect, coding-agent]
+  roles: [developer, architect, reviewer, coding-agent]
 description: "Code review checklist, anti-hallucination rules, and security audit best practices"
 ---
 # Skill: code-review

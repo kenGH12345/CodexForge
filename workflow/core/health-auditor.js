@@ -19,11 +19,15 @@ class HealthAuditor {
    * @param {string}   options.outputDir        - Directory for observability data
    * @param {Function} options.recordIssue       - Callback: (opts) => ReflectionEntry
    * @param {object}   [options.skillEvolution]  - SkillEvolutionEngine instance (injected, not created)
+   * @param {Function} [options.cheapLlmCall]    - Cheap LLM call function (GPT-4o-mini / Gemini Flash tier)
+   *                                              When provided, audit() generates a human-readable
+   *                                              summary via LLM in addition to structured findings.
    */
   constructor(options = {}) {
     this._outputDir = options.outputDir;
     this._recordIssue = options.recordIssue;
     this._skillEvolution = options.skillEvolution || null;
+    this._cheapLlmCall = typeof options.cheapLlmCall === 'function' ? options.cheapLlmCall : null;
   }
 
   /**
@@ -50,9 +54,9 @@ class HealthAuditor {
    *   8. Skill content staleness (not evolved in >90 days)
    *   9. Skill keyword overlap / conflict detection
    *
-   * @returns {{ findings: object[], summary: string }}
+   * @returns {Promise<{ findings: object[], summary: string, llmSummary: string|null }>}
    */
-  audit() {
+  async audit() {
     const ObsStrategy = require('./observability-strategy');
     const history = ObsStrategy.loadHistory(this._outputDir);
 
@@ -226,7 +230,61 @@ class HealthAuditor {
       : `⚠️ Health audit found ${findings.length} issue(s):\n${findings.map(f => `  - [${f.severity}] ${f.title}`).join('\n')}`;
 
     console.log(`[HealthAuditor] 📊 Health audit complete: ${findings.length} finding(s) from ${history.length} sessions.`);
-    return { findings, summary };
+
+    // LLM-enhanced human-readable summary (non-blocking, non-fatal)
+    // Uses cheapLlmCall (~$0.003/call) to generate a narrative summary
+    // that is easier to read than structured findings.
+    let llmSummary = null;
+    if (this._cheapLlmCall && findings.length > 0) {
+      try {
+        llmSummary = await this._generateLlmSummary(findings, history.length);
+      } catch (err) {
+        console.warn(`[HealthAuditor] ⚠️  LLM summary generation failed (non-fatal): ${err.message}`);
+      }
+    }
+
+    return { findings, summary, llmSummary };
+  }
+
+  /**
+   * Generates a human-readable narrative summary of health audit findings
+   * using a cheap LLM call.
+   *
+   * Cost: ~$0.003/call (GPT-4o-mini / Gemini Flash tier)
+   *
+   * @param {object[]} findings - Array of finding objects
+   * @param {number}   sessionCount - Number of sessions analyzed
+   * @returns {Promise<string|null>} Human-readable summary, or null on failure
+   * @private
+   */
+  async _generateLlmSummary(findings, sessionCount) {
+    const findingsSummary = findings.map(f => {
+      const title = f.title || 'Unknown issue';
+      const severity = f.severity || 'medium';
+      const fix = f.suggestedFix || '';
+      return `- [${severity}] ${title}${fix ? ` → Fix: ${fix}` : ''}`;
+    }).join('\n');
+
+    const prompt = `You are a DevOps health analyst. Summarize these workflow health audit findings into a concise, actionable report for the development team.
+
+Audit scope: ${sessionCount} recent sessions analyzed.
+
+Findings:
+${findingsSummary}
+
+Write a brief narrative summary (3-5 sentences) that:
+1. Highlights the most critical issue
+2. Identifies the common theme across findings
+3. Recommends the single most impactful action to take
+
+Keep output under 400 characters. Use plain language, no bullet points.`;
+
+    const result = await this._cheapLlmCall(prompt);
+    if (result && result.trim().length > 20) {
+      console.log(`[HealthAuditor] 🤖 LLM narrative summary generated (${result.trim().length} chars).`);
+      return result.trim();
+    }
+    return null;
   }
 
   // ─── Private: Skill Staleness (Check 8) ─────────────────────────────────

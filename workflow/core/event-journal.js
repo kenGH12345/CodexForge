@@ -75,6 +75,8 @@ const EVENT_CATEGORY_MAP = {
   stage_heartbeat:            EventCategory.STAGE,
   stage_timeout:              EventCategory.STAGE,
   llm_call_recorded:          EventCategory.LLM,
+  router_decision_made:       EventCategory.LLM,
+  router_fallback_triggered:  EventCategory.LLM,
   task_claimed:               EventCategory.AGENT,
   task_completed:             EventCategory.AGENT,
   task_failed:                EventCategory.AGENT,
@@ -153,6 +155,9 @@ class EventJournal {
       flushCount: 0,
       errors: 0,
     };
+
+    // Live stream subscribers (P0: event stream loop)
+    this._subscribers = new Set();
 
     if (this._enabled) {
       this._ensureOutputDir();
@@ -294,6 +299,19 @@ class EventJournal {
   }
 
   /**
+   * Subscribes to live event stream.
+   * @param {(entry: object) => void} callback
+   * @returns {() => void} Unsubscribe function
+   */
+  subscribe(callback) {
+    if (typeof callback !== 'function') return () => {};
+    this._subscribers.add(callback);
+    return () => {
+      this._subscribers.delete(callback);
+    };
+  }
+
+  /**
    * Flushes the in-memory buffer to disk and stops the flush timer.
    * Must be called during workflow shutdown.
    */
@@ -355,6 +373,15 @@ class EventJournal {
     };
 
     this._buffer.push(entry);
+
+    // Push to in-process stream subscribers (best effort, non-blocking)
+    if (this._subscribers.size > 0) {
+      for (const cb of this._subscribers) {
+        try {
+          cb(entry);
+        } catch (_) { /* subscriber errors must not affect journal */ }
+      }
+    }
 
     // Update stats
     this._stats.totalEvents++;

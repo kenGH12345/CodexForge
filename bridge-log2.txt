@@ -1,0 +1,34 @@
+﻿node : [runWorkflow] Error: Cannot find module './manifest-migration'
+所在位置 行:1 字符: 33
++ ... kFlowAgent; node workflow/tools/ide-workflow-bridge.js run --requirem ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([runWorkflow] E...fest-migration':String) [ 
+   ], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Require stack:
+- C:\workspace\WorkFlowAgent\workflow\core\state-machine.js
+- C:\workspace\WorkFlowAgent\workflow\index.js
+- C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js
+Error: Cannot find module './manifest-migration'
+Require stack:
+- C:\workspace\WorkFlowAgent\workflow\core\state-machine.js
+- C:\workspace\WorkFlowAgent\workflow\index.js
+- C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js
+    at Function._resolveFilename (node:internal/modules/cjs/loader:1365:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1021:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1026:22)
+    at Function._load (node:internal/modules/cjs/loader:1175:37)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
+    at Module.require (node:internal/modules/cjs/loader:1445:12)
+    at require (node:internal/modules/helpers:135:16)
+    at Object.<anonymous> (C:\workspace\WorkFlowAgent\workflow\core\state-machine.js:20:4
+6)
+    at Module._compile (node:internal/modules/cjs/loader:1688:14)
+{
+  "success": false,
+  "subcommand": "run",
+  "error": "Cannot find module './manifest-migration'\nRequire stack:\n- C:\\workspace\\WorkFlowAgent\\workflow\\core\\state-machine.js\n- C:\\workspace\\WorkFlowAgent\\workflow\\index.js\n- C:\\workspace\\WorkFlowAgent\\workflow\\tools\\ide-workflow-bridge.js",
+  "stack": "Error: Cannot find module './manifest-migration'\nRequire stack:\n- C:\\workspace\\WorkFlowAgent\\workflow\\core\\state-machine.js\n- C:\\workspace\\WorkFlowAgent\\workflow\\index.js\n- C:\\workspace\\WorkFlowAgent\\workflow\\tools\\ide-workflow-bridge.js\n    at Function._resolveFilename (node:internal/modules/cjs/loader:1365:15)\n    at defaultResolveImpl (node:internal/modules/cjs/loader:1021:19)\n    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1026:22)\n    at Function._load (node:internal/modules/cjs/loader:1175:37)\n    at TracingChannel.traceSync (node:diagnostics_channel:322:14)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)\n    at Module.require (node:internal/modules/cjs/loader:1445:12)\n    at require (node:internal/modules/helpers:135:16)\n    at Object.<anonymous> (C:\\workspace\\WorkFlowAgent\\workflow\\core\\state-machine.js:20:46)\n    at Module._compile (node:internal/modules/cjs/loader:1688:14)"
+}

@@ -107,26 +107,23 @@ description: "Mobile app testing patterns: UI automation, device compatibility, 
 
 5. **Accessibility as a bonus**: Adding accessibility IDs for testing also enables VoiceOver/TalkBack support. Accessibility trees are often cleaner for test automation than visible text.
 
-## Integration: Using with WorkFlowAgent
+## Integration Guide
 
-### When `mobile-testing` Loads
+### When This Skill Activates
 
-| Phase | Trigger | Purpose |
-|-------|---------|---------|
-| TEST | Writing mobile app tests | UI automation guidance |
-| TEST | Debugging flaky mobile tests | Root cause analysis |
-| OPTIMIZE | CI speed issues | Sharding/parallelization strategy |
+| Context | Trigger | Application |
+|---------|---------|-------------|
+| Testing | Writing mobile app tests | UI automation guidance |
+| Debugging | Flaky mobile tests | Root cause analysis |
+| Optimization | CI speed issues | Sharding/parallelization strategy |
 
-### Interaction with Other Skills
+### Related Patterns
 
-```
-mobile-testing (this skill)
-├── ios-dev (iOS-specific testing hooks)
-├── android-dev (Android-specific testing setup)
-├── flutter-dev (Flutter widget testing)
-├── test-report (general test structure)
-└── performance-optimization (mobile performance profiling)
-```
+- **iOS Development**: Platform-specific testing hooks
+- **Android Development**: Platform-specific test setup
+- **Flutter**: Widget testing for cross-platform apps
+- **Reporting**: Test structure and documentation
+- **Performance**: Mobile performance profiling
 
 ## Evolution History
 

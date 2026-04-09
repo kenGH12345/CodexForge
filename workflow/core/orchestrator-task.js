@@ -13,6 +13,12 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+const { UnifiedTraceCollector } = require('./unified-trace-collector');
+const { resolveHealthPaths } = require('./health-observability');
+
 // Import refactored modules
 const {
   extractSignificantWords,
@@ -114,23 +120,73 @@ const OrchestratorTaskMixin = {
       maxRetries = 2,
       validateDecomposition: shouldValidate = true,
       dryRun = false,
+      taskDefs: providedTaskDefs = null,
     } = options;
+
+    const traceRunCategory = this._runCategory || 'prod';
+    const traceCollector = new UnifiedTraceCollector({
+      outputDir: this._outputDir,
+      runCategory: traceRunCategory,
+      sessionId: this._sessionId || `task-${Date.now()}`,
+      captureArtifactContent: true,
+      maxContentLength: 5000,
+      verbose: true,
+    });
+    traceCollector.start();
+    traceCollector.recordWorkflowStart({
+      requirement: rawRequirement,
+      mode: 'task-based',
+      userInput: `/wf ${rawRequirement}`,
+      runCategory: traceRunCategory,
+    });
+
+    // P2-I: Record requirement data for completeness gate
+    const { _extractRequirementData } = require('../orchestrator-auto');
+    const reqData = _extractRequirementData(rawRequirement);
+    if (this.stateMachine && typeof this.stateMachine.recordRequirementData === 'function') {
+      this.stateMachine.recordRequirementData(reqData);
+    }
 
     this._emit('task:start', { requirement: rawRequirement });
 
-    // 1. Decompose requirement into tasks
-    const decomposition = await this._decomposeRequirement(rawRequirement, options);
-    if (!decomposition.success) {
-      return {
-        success: false,
-        error: decomposition.error,
-        phase: 'decomposition',
-      };
+    // 1. Decompose requirement into tasks (or use provided taskDefs)
+    traceCollector.recordStageStart('ANALYSE', {
+      context: {
+        mode: 'task-based',
+        hasProvidedTaskDefs: Array.isArray(providedTaskDefs) && providedTaskDefs.length > 0,
+      },
+    });
+
+    let taskDefs = null;
+    if (Array.isArray(providedTaskDefs) && providedTaskDefs.length > 0) {
+      taskDefs = providedTaskDefs;
+    } else {
+      const decomposition = await this._decomposeRequirement(rawRequirement, options);
+      if (!decomposition.success) {
+        traceCollector.recordStageEnd('ANALYSE', {
+          success: false,
+          duration: 0,
+          error: decomposition.error,
+        });
+        traceCollector.recordWorkflowEnd({ success: false, stage: 'ANALYSE', error: decomposition.error });
+        await traceCollector.end();
+        this._generateTaskBasedHealthReport(traceCollector);
+        return {
+          success: false,
+          error: decomposition.error,
+          phase: 'decomposition',
+        };
+      }
+      taskDefs = decomposition.tasks;
     }
 
-    const taskDefs = decomposition.tasks;
+    traceCollector.recordStageEnd('ANALYSE', {
+      success: true,
+      duration: 0,
+    });
 
     // 2. Validate decomposition
+    traceCollector.recordStageStart('PLAN', { context: { mode: 'task-validation' } });
     if (shouldValidate) {
       const validation = validateDecomposition(taskDefs, rawRequirement);
       if (validation.issues.length > 0) {
@@ -146,9 +202,13 @@ const OrchestratorTaskMixin = {
 
     // 3. Initialize tasks in TaskManager
     await this.taskManager.initTasks(taskDefs);
+    traceCollector.recordStageEnd('PLAN', { success: true, duration: 0 });
 
     // 4. Execute tasks
     if (dryRun) {
+      traceCollector.recordWorkflowEnd({ success: true, mode: 'task-based', dryRun: true, tasks: taskDefs.length });
+      await traceCollector.end();
+      this._generateTaskBasedHealthReport(traceCollector);
       return {
         success: true,
         dryRun: true,
@@ -157,13 +217,44 @@ const OrchestratorTaskMixin = {
       };
     }
 
+    traceCollector.recordStageStart('CODE', {
+      context: { mode: 'task-execution', maxWorkers, maxRetries, taskCount: taskDefs.length },
+    });
     const result = await this._executeTasksConcurrently({
       maxWorkers,
       maxRetries,
     });
+    traceCollector.recordStageEnd('CODE', {
+      success: !!result.success,
+      duration: result.metrics?.executionMs || 0,
+      outputArtifactContent: JSON.stringify({
+        totalTasks: result.metrics?.totalTasks || 0,
+        completed: result.metrics?.completed || 0,
+        failed: result.metrics?.failed || 0,
+      }),
+    });
 
     // 5. Check final coverage
+    traceCollector.recordStageStart('TEST', { context: { mode: 'coverage-check' } });
     const coverage = checkRequirementCoverage(rawRequirement, result.completedTasks || []);
+    traceCollector.recordStageEnd('TEST', {
+      success: true,
+      duration: 0,
+      outputArtifactContent: JSON.stringify({
+        coverage: coverage.coverage,
+        gaps: coverage.gaps,
+      }),
+    });
+
+    traceCollector.recordWorkflowEnd({
+      success: !!result.success,
+      mode: 'task-based',
+      totalTasks: result.metrics?.totalTasks || 0,
+      completedTasks: result.metrics?.completed || 0,
+      failedTasks: result.metrics?.failed || 0,
+    });
+    await traceCollector.end();
+    this._generateTaskBasedHealthReport(traceCollector);
 
     return {
       success: result.success,
@@ -172,7 +263,47 @@ const OrchestratorTaskMixin = {
       coverage: coverage.coverage,
       gaps: coverage.gaps,
       metrics: result.metrics,
+      healthMonitoring: {
+        sessionId: traceCollector.sessionId,
+        runCategory: traceCollector.runCategory,
+        tracePath: traceCollector.tracePath,
+      },
     };
+  },
+
+  _generateTaskBasedHealthReport(traceCollector) {
+    try {
+      const reportScriptPath = path.join(__dirname, '../tools/generate-health-report.js');
+      const outputDirArg = path.resolve(this._outputDir || 'output');
+      const runCategoryArg = traceCollector?.runCategory || this._runCategory || 'prod';
+      const sessionId = traceCollector?.sessionId || this._sessionId || null;
+      const healthPaths = resolveHealthPaths({ outputDir: outputDirArg, runCategory: runCategoryArg });
+      const tracePath = healthPaths.tracePath;
+
+      if (!fs.existsSync(tracePath)) {
+        console.warn(`[Orchestrator:Task] ⚠️ Health report skipped: trace not found (${tracePath})`);
+        return;
+      }
+
+      const cmdArgs = [
+        reportScriptPath,
+        '--output-dir', outputDirArg,
+        '--run-category', runCategoryArg,
+        '--project-root', this.projectRoot || process.cwd(),
+      ];
+      if (sessionId) cmdArgs.push('--session', sessionId);
+
+      execFileSync(process.execPath, cmdArgs, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 10000,
+      });
+
+      console.log(`[Orchestrator:Task] 🧭 Run Category: ${healthPaths.runCategory}`);
+      console.log(`[Orchestrator:Task] 📁 Trace path: ${healthPaths.tracePath}`);
+      console.log(`[Orchestrator:Task] 📄 Health report path: ${healthPaths.healthReportPath}`);
+    } catch (err) {
+      console.warn(`[Orchestrator:Task] ⚠️ Health report generation failed: ${err.message}`);
+    }
   },
 
   /**

@@ -19,7 +19,14 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { HOOK_EVENTS } = require('../core/constants');
+const { evaluateToolPermission, DEFAULT_RULES } = require('../core/tool-permission-converger');
+
+const TOOL_RESULT_PERSIST_THRESHOLD = 16 * 1024;
+const TOOL_RESULT_PREVIEW_CHARS = 2000;
+let _toolResultSessionId = `tool-session-${Date.now()}`;
 
 // Module-level hook system reference (set at initialization)
 let _hookSystem = null;
@@ -27,6 +34,23 @@ let _isEnabled = true;
 
 // Tool registry for metadata
 const _toolRegistry = new Map();
+
+// Tool Safety Configuration
+// Defines dangerous operations that require pre-execution validation
+const TOOL_SAFETY_CONFIG = {
+  PATTERNS: DEFAULT_RULES.map(rule => ({
+    id: rule.id,
+    name: rule.name,
+    patterns: rule.patterns,
+    dangerLevel: rule.severity,
+    blocking: rule.blocking,
+    description: rule.description,
+  })),
+};
+
+// Store for safety check results
+const _safetyCheckHistory = [];
+let _safetyCheckEnabled = true;
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -41,6 +65,9 @@ const _toolRegistry = new Map();
 function initializeToolHookExecutor(hookSystem, options = {}) {
   _hookSystem = hookSystem;
   _isEnabled = options.enabled !== false;
+  if (options.sessionId && String(options.sessionId).trim()) {
+    _toolResultSessionId = String(options.sessionId).trim();
+  }
   console.log(`[ToolHookExecutor] Initialized (enabled: ${_isEnabled})`);
 }
 
@@ -104,6 +131,59 @@ function withToolHooks(toolFn, toolName, metadata = {}) {
         }
       }
 
+      // ─── PRE-EXECUTION SAFETY CHECK (PreToolUse) ────────────────────────────
+      // Validates tool arguments to prevent dangerous operations
+      const safetyCheck = runPreToolUseSafetyCheck(toolName, modifiedArgs);
+      if (!safetyCheck.passed) {
+        const fatalViolations = safetyCheck.violations.filter(v => v.blocking);
+        const nonFatalViolations = safetyCheck.violations.filter(v => !v.blocking);
+
+        // Log all violations
+        for (const violation of safetyCheck.violations) {
+          const icon = violation.blocking ? '🚫' : '⚠️';
+          const level = violation.level.toUpperCase();
+          console.warn(`[SafetyCheck] ${icon} [${level}] ${violation.name}: ${violation.description}`);
+          if (violation.matched) {
+            console.warn(`[SafetyCheck]    Matched: ${violation.matched}`);
+          }
+        }
+
+        // Block execution if there are blocking violations
+        if (safetyCheck.shouldBlock) {
+          const error = new Error(
+            `SAFETY_INTERCEPT: Execution blocked due to ${fatalViolations.length} critical violation(s). ` +
+            `Violations: ${fatalViolations.map(v => v.name).join(', ')}.` +
+            `Review the operation and modify to remove dangerous patterns.`
+          );
+          error.safetyViolations = safetyCheck.violations;
+          error.safetyIntercepted = true;
+
+          // Emit safety violation event through hook system
+          if (_hookSystem) {
+            await _hookSystem.emit('tool_safety_violation', {
+              toolName,
+              violations: safetyCheck.violations,
+              shouldBlock: true,
+              timestamp: new Date().toISOString(),
+              permissionDecision: safetyCheck.permissionDecision || null,
+              evidence: safetyCheck.permissionDecision?.evidence || null,
+            });
+          }
+
+          throw error;
+        }
+
+        // Non-blocking violations: warn but continue
+        if (_hookSystem) {
+          await _hookSystem.emit('tool_safety_warning', {
+            toolName,
+            violations: nonFatalViolations,
+            shouldBlock: false,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+
       // ─── EXECUTION STARTED HOOK ─────────────────────────────────────────────
       if (_isEnabled && _hookSystem) {
         await _hookSystem.emit(HOOK_EVENTS.TOOL_EXECUTION_STARTED, {
@@ -140,6 +220,12 @@ function withToolHooks(toolFn, toolName, metadata = {}) {
 
         await _hookSystem.emit(HOOK_EVENTS.TOOL_AFTER_EXECUTION, afterPayload);
       }
+
+      // L1: Persist large tool output to disk and keep only preview in context
+      result = _persistLargeToolResultIfNeeded(result, {
+        toolName,
+        timestamp: executionContext.timestamp,
+      });
 
       return result;
 
@@ -244,6 +330,91 @@ function _registerBuiltinToolHooks(hookSystem) {
   });
 }
 
+/**
+ * PreToolUse Safety Check
+ * Validates tool arguments before execution to prevent dangerous operations
+ *
+ * @param {string} toolName - Name of the tool being executed
+ * @param {Array} args - Arguments passed to the tool
+ * @returns {{ passed: boolean, violations: Array, shouldBlock: boolean }}
+ */
+function runPreToolUseSafetyCheck(toolName, args) {
+  if (!_safetyCheckEnabled) {
+    return { passed: true, violations: [], shouldBlock: false };
+  }
+
+  const decision = evaluateToolPermission({
+    toolName,
+    args,
+    mode: 'node',
+  });
+
+  const violations = (decision.violations || []).map(v => ({
+    id: v.id,
+    name: v.name,
+    level: v.severity,
+    blocking: v.blocking,
+    description: v.description,
+    matched: v.matched,
+    tool: toolName,
+    timestamp: decision.evidence?.timestamp || new Date().toISOString(),
+  }));
+
+  const shouldBlock = !decision.allow;
+
+  if (violations.length > 0) {
+    _safetyCheckHistory.push({
+      toolName,
+      violations,
+      shouldBlock,
+      timestamp: new Date().toISOString(),
+      permissionDecision: {
+        decision: decision.decision,
+        riskScore: decision.riskScore,
+        confidence: decision.confidence,
+        policyVersion: decision.policyVersion,
+        reason: decision.reason,
+      },
+      evidence: decision.evidence,
+    });
+
+    if (_safetyCheckHistory.length > 100) {
+      _safetyCheckHistory.shift();
+    }
+  }
+
+  return {
+    passed: decision.allow,
+    violations,
+    shouldBlock,
+    permissionDecision: decision,
+  };
+}
+
+/**
+ * Sets whether PreToolUse safety checks are enabled
+ * @param {boolean} enabled
+ */
+function setSafetyCheckEnabled(enabled) {
+  _safetyCheckEnabled = enabled;
+  console.log(`[ToolHookExecutor] Safety checks ${enabled ? 'enabled' : 'disabled'}`);
+}
+
+/**
+ * Gets the safety check history
+ * @returns {Array}
+ */
+function getSafetyCheckHistory() {
+  return [..._safetyCheckHistory];
+}
+
+/**
+ * Clears the safety check history
+ */
+function clearSafetyCheckHistory() {
+  _safetyCheckHistory.length = 0;
+}
+
 // ─── Utility Functions ────────────────────────────────────────────────────────
 
 /**
@@ -295,6 +466,57 @@ function _sanitizeResult(result) {
   return result;
 }
 
+/**
+ * Persists large tool results to output/tool-results/<sessionId>/ and returns preview envelope.
+ * Keeps prompt/context lean while preserving full traceability.
+ */
+function _persistLargeToolResultIfNeeded(result, meta = {}) {
+  try {
+    if (result == null) return result;
+
+    const raw = _serialiseToolResult(result);
+    if (!raw || raw.length < TOOL_RESULT_PERSIST_THRESHOLD) {
+      return result;
+    }
+
+    const safeToolName = String(meta.toolName || 'unknown-tool').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const tsPart = Date.now();
+    const outDir = path.join(process.cwd(), 'output', 'tool-results', _toolResultSessionId);
+    if (!fs.existsSync(outDir)) {
+      fs.mkdirSync(outDir, { recursive: true });
+    }
+
+    const outPath = path.join(outDir, `${safeToolName}-${tsPart}.txt`);
+    fs.writeFileSync(outPath, raw, 'utf-8');
+
+    const preview = raw.slice(0, TOOL_RESULT_PREVIEW_CHARS);
+    const envelope = {
+      persisted: true,
+      tool: safeToolName,
+      sessionId: _toolResultSessionId,
+      fullResultPath: outPath,
+      fullSizeChars: raw.length,
+      preview,
+      note: 'Large tool result persisted to disk. Use read_file on fullResultPath to inspect complete output.',
+    };
+
+    console.log(`[ToolHookExecutor] 💾 Persisted large result for ${safeToolName}: ${raw.length} chars → ${outPath}`);
+    return envelope;
+  } catch (err) {
+    console.warn(`[ToolHookExecutor] ⚠️  Persist large tool result failed (non-fatal): ${err.message}`);
+    return result;
+  }
+}
+
+function _serialiseToolResult(result) {
+  if (typeof result === 'string') return result;
+  try {
+    return JSON.stringify(result, null, 2);
+  } catch (_) {
+    return String(result);
+  }
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -305,4 +527,9 @@ module.exports = {
   _registerBuiltinToolHooks,
   _sanitizeArgs,
   _sanitizeResult,
+  _persistLargeToolResultIfNeeded,
+  runPreToolUseSafetyCheck,
+  setSafetyCheckEnabled,
+  getSafetyCheckHistory,
+  clearSafetyCheckHistory,
 };

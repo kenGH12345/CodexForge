@@ -75,6 +75,14 @@ Produce a Markdown document with the following sections:
     - Dependencies between phases (what must be done before what)
     - Estimated complexity for each phase (Low / Medium / High)
     - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
+11. **Traceability Coverage** *(mandatory)* – Requirement-to-architecture coverage check:
+   - For each requirement ID ('REQ-xxx') and acceptance criterion ID ('AC-xxx') found in the input, provide explicit mapping to architecture artifacts.
+   - Each item must map to at least one of: module ID, API contract, data model, or decision ID.
+   - Explicitly mark uncovered items as 'UNMAPPED' with reason.
+12. **ADR Linkage** *(mandatory)* – Lightweight requirement-to-decision linkage:
+   - Provide linkage entries in JSON field 'adrLinkage.links' using shape: { "reqId": "REQ-001", "adrId": "ADR-001", "decisionRef": "<short decision title or id>" }.
+   - 'reqId' can be either 'REQ-xxx' or 'AC-xxx'.
+   - Keep linkage lightweight and deterministic (avoid free-form prose in JSON values).
 
 ${jsonInstruction}
 
@@ -122,7 +130,7 @@ Remember: NO code, NO implementation, design decisions ONLY.
       if (!check.valid) {
         console.warn(`[ArchitectAgent] ⚠️  JSON block validation failed: ${check.reason}`);
       } else {
-        console.log(`[ArchitectAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
+        console.error(`[ArchitectAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
       }
     }
 
@@ -145,12 +153,69 @@ Remember: NO code, NO implementation, design decisions ONLY.
     const mandatorySections = [
       { en: 'Architecture Design', zh: '架构设计' },
       { en: 'Execution Plan', zh: '执行计划' },
+      { en: 'Traceability Coverage', zh: '追溯覆盖' },
+      { en: 'ADR Linkage', zh: 'ADR 关联' },
     ];
     const missingSections = mandatorySections.filter(s => !llmResponse.includes(s.en) && !llmResponse.includes(s.zh));
     if (missingSections.length > 0) {
-      console.warn(`[ArchitectAgent] ⚠️  COMPLIANCE: Missing mandatory section(s): ${missingSections.map(s => s.en).join(', ')}. The agent output specification requires these sections.`);
+      throw new Error(`[ArchitectAgent] RTM_GATE_FAILED: Missing mandatory section(s): ${missingSections.map(s => s.en).join(', ')}.`);
     } else {
-      console.log(`[ArchitectAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan.`);
+      console.error(`[ArchitectAgent] ✅ Mandatory sections present: ${mandatorySections.map(s => s.en).join(', ')}.`);
+    }
+
+    // ── Traceability coverage check (REQ/AC -> architecture mapping) ────────
+    const requirementIds = [...new Set(llmResponse.match(/\b(?:REQ|AC)-\d{3,}\b/g) || [])];
+    if (requirementIds.length > 0) {
+      const mappedIds = new Set();
+
+      // Parse markdown table/list rows in Traceability Coverage section heuristically
+      const lineMatches = llmResponse.match(/^.*(?:REQ|AC)-\d{3,}.*$/gim) || [];
+      for (const line of lineMatches) {
+        const idsInLine = line.match(/\b(?:REQ|AC)-\d{3,}\b/g) || [];
+        const hasUnmapped = /\bUNMAPPED\b/i.test(line);
+        const hasTarget = /\b(?:mod-|ADR-|API|data model|module|decision|component)\b/i.test(line);
+        if (!hasUnmapped && hasTarget) {
+          for (const id of idsInLine) mappedIds.add(id);
+        }
+      }
+
+      // Parse structured adrLinkage links
+      if (jsonBlock && jsonBlock.adrLinkage && Array.isArray(jsonBlock.adrLinkage.links)) {
+        for (const link of jsonBlock.adrLinkage.links) {
+          if (link && typeof link.reqId === 'string' && /^((REQ|AC)-\d{3,})$/i.test(link.reqId) && typeof link.adrId === 'string' && /^ADR-\d{3,}$/i.test(link.adrId)) {
+            mappedIds.add(link.reqId.toUpperCase());
+          }
+        }
+      }
+
+      const uncovered = requirementIds.filter(id => !mappedIds.has(id.toUpperCase()));
+      if (uncovered.length > 0) {
+        throw new Error(`[ArchitectAgent] RTM_GATE_FAILED: Traceability coverage gap ${uncovered.length}/${requirementIds.length}. Uncovered: ${uncovered.slice(0, 8).join(', ')}${uncovered.length > 8 ? '...' : ''}`);
+      } else {
+        console.error(`[ArchitectAgent] ✅ Traceability coverage: ${mappedIds.size}/${requirementIds.length} REQ/AC item(s) mapped to architecture artifacts.`);
+      }
+    }
+
+    // ── ADR linkage structure check ──────────────────────────────────────────
+    if (jsonBlock && jsonBlock.adrLinkage) {
+      const links = jsonBlock.adrLinkage.links;
+      if (!Array.isArray(links) || links.length === 0) {
+        throw new Error(`[ArchitectAgent] RTM_GATE_FAILED: adrLinkage.links must be a non-empty array.`);
+      } else {
+        const badLinks = links.filter(l => !l || typeof l.reqId !== 'string' || typeof l.adrId !== 'string' || typeof l.decisionRef !== 'string');
+        if (badLinks.length > 0) {
+          throw new Error(`[ArchitectAgent] RTM_GATE_FAILED: adrLinkage.links has ${badLinks.length} malformed item(s). Expected { reqId, adrId, decisionRef }.`);
+        }
+
+        const invalidLinks = links.filter(l => !/^((REQ|AC)-\d{3,})$/i.test(String(l.reqId)) || !/^ADR-\d{3,}$/i.test(String(l.adrId)));
+        if (invalidLinks.length > 0) {
+          throw new Error(`[ArchitectAgent] RTM_GATE_FAILED: adrLinkage.links has ${invalidLinks.length} invalid reqId/adrId value(s). Expected REQ/AC and ADR ID formats.`);
+        }
+
+        console.error(`[ArchitectAgent] ✅ ADR linkage validated: ${links.length} REQ/AC → ADR link(s).`);
+      }
+    } else {
+      throw new Error(`[ArchitectAgent] RTM_GATE_FAILED: Missing adrLinkage in JSON block.`);
     }
 
     return llmResponse;

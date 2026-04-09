@@ -32,7 +32,7 @@
  * @param {boolean} [context.verbose=true]   - Print detailed log output
  * @returns {{ stages: object[], totalDurationMs: number, summary: string }}
  */
-function sleeptime(context = {}) {
+async function sleeptime(context = {}) {
   const {
     experienceStore,
     skillEvolution,
@@ -54,7 +54,7 @@ function sleeptime(context = {}) {
   try {
     if (experienceStore && typeof experienceStore.distill === 'function') {
       const stageStart = Date.now();
-      const result = experienceStore.distill({ similarityThreshold: 0.65, minClusterSize: 2 });
+      const result = await experienceStore.distill({ similarityThreshold: 0.65, minClusterSize: 2 });
       const elapsed = Date.now() - stageStart;
       stages.push({
         name: 'DISTILL',
@@ -147,8 +147,8 @@ function sleeptime(context = {}) {
     if (auditor) {
       const stageStart = Date.now();
       const result = typeof auditor.audit === 'function'
-        ? auditor.audit()
-        : auditor.auditHealth();
+        ? await auditor.audit()
+        : await auditor.auditHealth();
       const elapsed = Date.now() - stageStart;
       const findingCount = (result.findings || []).length;
       stages.push({

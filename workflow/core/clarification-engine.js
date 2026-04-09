@@ -36,7 +36,7 @@ const {
 
 class SelfCorrectionEngine {
   /**
-   * @param {Function} llmCall        - async (prompt: string) => string
+   * @param {Function} llmCall        - async (prompt: string) => string (main model)
    * @param {object}   [options]
    * @param {number}   [options.maxRounds=3]     - Max self-correction rounds
    * @param {boolean}  [options.verbose=true]    - Print progress to console
@@ -44,16 +44,23 @@ class SelfCorrectionEngine {
    *                                               Semantic mode: distinguishes real vs mitigated risks,
    *                                               detects logic errors, understands context.
    *                                               Falls back to regex if LLM call fails.
+   * @param {Function} [options.cheapLlmCall]    - Cheap LLM call function (GPT-4o-mini / Gemini Flash tier)
+   *                                               When provided, semantic detection uses cheapLlmCall
+   *                                               instead of the main llmCall (~50x cost reduction).
+   *                                               Refinement prompts still use the main llmCall.
    * @param {object}   [options.investigationTools] - Optional tools for deep investigation
    * @param {Function} [options.investigationTools.search]          - async (query: string) => string
    * @param {Function} [options.investigationTools.readSource]      - async (filePath: string) => string
    * @param {Function} [options.investigationTools.queryExperience] - async (query: string) => string
    */
-  constructor(llmCall, { maxRounds = 3, verbose = true, semanticMode = true, investigationTools = null } = {}) {
+  constructor(llmCall, { maxRounds = 3, verbose = true, semanticMode = true, cheapLlmCall = null, investigationTools = null } = {}) {
     if (typeof llmCall !== 'function') {
       throw new Error('[SelfCorrectionEngine] llmCall must be a function');
     }
     this.llmCall = llmCall;
+    // Semantic detection uses cheapLlmCall when available (cost-aware: ~$0.002/call vs ~$0.10/call)
+    // Refinement prompts still use the main llmCall for higher quality corrections.
+    this._semanticLlmCall = (typeof cheapLlmCall === 'function') ? cheapLlmCall : llmCall;
     this.maxRounds = maxRounds;
     this.verbose = verbose;
     this.semanticMode = semanticMode;
@@ -462,7 +469,9 @@ class SelfCorrectionEngine {
         : verificationMode
           ? buildSemanticVerificationPrompt(text, stageLabel)
           : buildSemanticDetectionPrompt(text, stageLabel);
-      const response = await this.llmCall(prompt);
+      // Use cheapLlmCall for semantic detection (cost-aware: ~$0.002/call)
+      // Refinement prompts in correct() still use the main llmCall.
+      const response = await this._semanticLlmCall(prompt);
       const signals = parseSemanticSignals(response);
 
       if (signals.length > 0) {

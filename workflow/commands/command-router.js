@@ -47,9 +47,11 @@ function registerCommand(name, description, handler) {
  * @returns {Promise<string>} Output message from the handler
  */
 async function dispatch(input, context = {}) {
-  const trimmed = input.trim();
+  let trimmed = input.trim();
+
+  // Auto-prepend '/' if missing (allows calling 'wf-mode' or '/wf-mode')
   if (!trimmed.startsWith('/')) {
-    throw new Error(`[CommandRouter] Not a command: "${trimmed}". Commands must start with /`);
+    trimmed = '/' + trimmed;
   }
 
   const parts = trimmed.slice(1).split(/\s+/);

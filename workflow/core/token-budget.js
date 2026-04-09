@@ -27,6 +27,17 @@ const { SemanticCompressor } = require('./semantic-compressor');
 const _compressor = new BlockCompressor();
 const _semanticCompressor = new SemanticCompressor({ targetRatio: 0.7 });
 
+/**
+ * Injects a cheap LLM call into the module-level SemanticCompressor singleton.
+ * Called by the Orchestrator during initialisation to enable LLM-based
+ * summarisation in the token budget pipeline.
+ *
+ * @param {Function} llmCall - Async function: (prompt: string) => string
+ */
+function setSemanticCompressorCheapLlm(llmCall) {
+  _semanticCompressor.setCheapLlmCall(llmCall);
+}
+
 // ─── Token Budget Guard ──────────────────────────────────────────────────────
 
 /**
@@ -131,7 +142,7 @@ const BLOCK_PRIORITY = {
  * @param {number} [budget=STAGE_TOKEN_BUDGET_CHARS]
  * @returns {{ assembled: string, stats: {total: number, dropped: string[], truncated: string[]} }}
  */
-function _applyTokenBudget(blocks, budget = STAGE_TOKEN_BUDGET_CHARS, opts = {}) {
+async function _applyTokenBudget(blocks, budget = STAGE_TOKEN_BUDGET_CHARS, opts = {}) {
   const { telemetry = null, stage = 'UNKNOWN', profile = null } = opts;
 
   // Per-stage budget adjustment: apply stage-specific multiplier when caller
@@ -179,7 +190,7 @@ function _applyTokenBudget(blocks, budget = STAGE_TOKEN_BUDGET_CHARS, opts = {})
   
   for (const block of active) {
     if (semanticEligibleLabels.has(block.label) && block.content.length > 300) {
-      const result = _semanticCompressor.compress(block.content, {
+      const result = await _semanticCompressor.compress(block.content, {
         contentType: 'text',
         targetRatio: 0.7,
       });
@@ -671,6 +682,291 @@ function getBudgetSummary(l2Stats, l3Analysis = null, stage = null) {
   return lines.join('\n');
 }
 
+// ─── P0-A: Priority-Based Conversation Truncation (OpenSpace-Inspired) ───────
+//
+// Ported from OpenSpace's conversation_formatter.py — the core token efficiency
+// innovation that achieves 30-46% token savings.
+//
+// Instead of simple tail-truncation, conversations are segmented by priority:
+//   Priority 0 — CRITICAL: User instruction (never truncated)
+//   Priority 1 — CRITICAL: Final assistant response (never truncated)
+//   Priority 2 — HIGH:     Tool calls + tool errors (paired)
+//   Priority 3 — HIGH:     Non-final assistant reasoning; tool results with summary
+//   Priority 4 — MEDIUM:   Tool success results (try to preserve)
+//   Priority 5 — LOW:      System guidance messages
+//   SKIP:                   Skill injection text, verbose system prompts
+//
+// Integration: Called by context builders when assembling conversation history
+// for analysis prompts (e.g., post-REVIEW evolution analysis, experience distillation).
+
+const CONVERSATION_PRIORITY = {
+  USER_INSTRUCTION: 0,
+  FINAL_RESPONSE: 1,
+  TOOL_CALLS_ERRORS: 2,
+  ASSISTANT_REASONING: 3,
+  TOOL_SUCCESS: 4,
+  SYSTEM_GUIDANCE: 5,
+};
+
+// Per-segment truncation limits (chars)
+const CONV_TRUNCATION = {
+  TOOL_ERROR_MAX: 1000,
+  TOOL_SUCCESS_MAX: 800,
+  TOOL_ARGS_MAX: 500,
+  TOOL_SUMMARY_MAX: 1500,
+};
+
+/**
+ * Formats conversation history with priority-based truncation.
+ *
+ * Inspired by OpenSpace's conversation_formatter.format_conversations().
+ * Achieves 30-46% token savings vs naive truncation by preserving high-value
+ * segments (user instructions, errors, final response) while aggressively
+ * truncating low-value segments (system guidance, verbose tool results).
+ *
+ * @param {Array<{role: string, content: string, toolCalls?: Array, isError?: boolean, hasSummary?: boolean}>} messages
+ *   Conversation messages in chronological order.
+ * @param {number} budget - Character budget for the formatted output.
+ * @returns {{ formatted: string, stats: { total: number, essential: number, skipped: number } }}
+ */
+function formatConversationWithBudget(messages, budget) {
+  if (!messages || messages.length === 0) {
+    return { formatted: '', stats: { total: 0, essential: 0, skipped: 0 } };
+  }
+
+  // Phase 1: Collect segments with priority assignment
+  const segments = [];
+  const totalMessages = messages.length;
+
+  // Find the last assistant message index for priority 1 assignment
+  let lastAssistantIdx = -1;
+  for (let i = totalMessages - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') {
+      lastAssistantIdx = i;
+      break;
+    }
+  }
+
+  for (let i = 0; i < totalMessages; i++) {
+    const msg = messages[i];
+    const role = msg.role || '';
+    const content = msg.content || '';
+    if (!content && !msg.toolCalls) continue;
+
+    if (role === 'user') {
+      // User messages: first user message is CRITICAL (instruction), rest are HIGH
+      segments.push({
+        priority: i === 0 ? CONVERSATION_PRIORITY.USER_INSTRUCTION : CONVERSATION_PRIORITY.ASSISTANT_REASONING,
+        text: `[USER] ${content}`,
+        truncatableTo: null,
+      });
+    } else if (role === 'assistant') {
+      const isLast = i === lastAssistantIdx;
+      if (content) {
+        segments.push({
+          priority: isLast ? CONVERSATION_PRIORITY.FINAL_RESPONSE : CONVERSATION_PRIORITY.ASSISTANT_REASONING,
+          text: `[ASSISTANT] ${content}`,
+          truncatableTo: isLast ? null : 200,
+        });
+      }
+      // Tool calls
+      if (msg.toolCalls && Array.isArray(msg.toolCalls)) {
+        for (const tc of msg.toolCalls) {
+          const fnName = tc.name || tc.function?.name || '?';
+          let fnArgs = tc.arguments || tc.function?.arguments || '';
+          if (typeof fnArgs === 'string' && fnArgs.length > CONV_TRUNCATION.TOOL_ARGS_MAX) {
+            fnArgs = fnArgs.slice(0, CONV_TRUNCATION.TOOL_ARGS_MAX) + '...';
+          }
+          segments.push({
+            priority: CONVERSATION_PRIORITY.TOOL_CALLS_ERRORS,
+            text: `[TOOL_CALL] ${fnName}(${fnArgs})`,
+            truncatableTo: null,
+          });
+        }
+      }
+    } else if (role === 'tool') {
+      const isError = msg.isError || _isToolError(content);
+      if (isError) {
+        const truncated = content.length > CONV_TRUNCATION.TOOL_ERROR_MAX
+          ? content.slice(0, CONV_TRUNCATION.TOOL_ERROR_MAX) + `... [truncated, ${content.length} chars total]`
+          : content;
+        segments.push({
+          priority: CONVERSATION_PRIORITY.TOOL_CALLS_ERRORS,
+          text: `[TOOL_ERROR] ${truncated}`,
+          truncatableTo: null,
+        });
+      } else if (msg.hasSummary || _hasEmbeddedSummary(content)) {
+        const summary = _extractEmbeddedSummary(content) || content.slice(0, CONV_TRUNCATION.TOOL_SUMMARY_MAX);
+        segments.push({
+          priority: CONVERSATION_PRIORITY.ASSISTANT_REASONING,
+          text: `[TOOL_RESULT (summary)] ${summary}`,
+          truncatableTo: 500,
+        });
+      } else {
+        const truncated = content.length > CONV_TRUNCATION.TOOL_SUCCESS_MAX
+          ? content.slice(0, CONV_TRUNCATION.TOOL_SUCCESS_MAX) + `... [truncated, ${content.length} chars total]`
+          : content;
+        segments.push({
+          priority: CONVERSATION_PRIORITY.TOOL_SUCCESS,
+          text: `[TOOL_RESULT] ${truncated}`,
+          truncatableTo: 300,
+        });
+      }
+    } else if (role === 'system') {
+      // Skip skill injection and verbose system prompts
+      if (content.length > 500 || content.includes('## Rules') || content.includes('## Best Practices')) {
+        continue; // SKIP — skill injection text
+      }
+      segments.push({
+        priority: CONVERSATION_PRIORITY.SYSTEM_GUIDANCE,
+        text: `[SYSTEM] ${content}`,
+        truncatableTo: 150,
+      });
+    }
+  }
+
+  // Phase 2: Assemble with budget management
+  const essential = segments.filter(s => s.priority <= 3);
+  const essentialChars = essential.reduce((sum, s) => sum + s.text.length + 2, 0);
+
+  if (essentialChars > budget) {
+    // Essential content alone exceeds budget — emergency mode
+    return _assembleEssentialOnly(segments, budget);
+  }
+
+  // Build output in chronological order
+  const outputParts = [];
+  let usedChars = 0;
+  let skippedCount = 0;
+
+  for (const seg of segments) {
+    if (seg.priority <= 3) {
+      outputParts.push(seg.text);
+      usedChars += seg.text.length + 2;
+    } else if (usedChars + seg.text.length + 2 <= budget) {
+      outputParts.push(seg.text);
+      usedChars += seg.text.length + 2;
+    } else {
+      // Over budget — try truncation
+      if (seg.truncatableTo && seg.text.length > seg.truncatableTo) {
+        const truncated = seg.text.slice(0, seg.truncatableTo) + '... [budget-truncated]';
+        if (usedChars + truncated.length + 2 <= budget) {
+          outputParts.push(truncated);
+          usedChars += truncated.length + 2;
+          continue;
+        }
+      }
+      skippedCount++;
+    }
+  }
+
+  if (skippedCount > 0) {
+    outputParts.push(`\n[... ${skippedCount} lower-priority segment(s) omitted due to budget ...]`);
+  }
+
+  return {
+    formatted: outputParts.join('\n\n'),
+    stats: {
+      total: segments.reduce((sum, s) => sum + s.text.length, 0),
+      essential: essentialChars,
+      skipped: skippedCount,
+    },
+  };
+}
+
+/**
+ * Emergency mode: even essential content exceeds budget.
+ * Keep priority 0-1 in full, budget-allocate priority 2, summarize priority 3.
+ */
+function _assembleEssentialOnly(segments, budget) {
+  const outputParts = [];
+  let usedChars = 0;
+
+  // Pass 1: priority 0 and 1 (user instruction + final response)
+  for (const seg of segments) {
+    if (seg.priority <= 1) {
+      outputParts.push(seg.text);
+      usedChars += seg.text.length + 2;
+    }
+  }
+
+  const remaining = budget - usedChars;
+
+  // Pass 2: priority 2 (tool calls + errors) — budget-allocated
+  const toolSegs = segments.filter(s => s.priority === 2);
+  if (toolSegs.length > 0) {
+    const perSegBudget = Math.max(400, Math.floor(remaining / (toolSegs.length + 1)));
+    for (const seg of toolSegs) {
+      let text = seg.text;
+      if (text.length > perSegBudget) {
+        text = text.slice(0, perSegBudget) + '... [budget-truncated]';
+      }
+      if (usedChars + text.length + 2 <= budget) {
+        outputParts.push(text);
+        usedChars += text.length + 2;
+      }
+    }
+  }
+
+  // Pass 3: priority 3 (non-final assistant reasoning) — one-line summaries
+  const assistantSegs = segments.filter(s => s.priority === 3);
+  if (assistantSegs.length > 0 && usedChars < budget) {
+    outputParts.push('\n--- Older iteration summaries ---');
+    for (const seg of assistantSegs) {
+      const firstLine = seg.text.split('\n', 1)[0].slice(0, 200);
+      if (usedChars + firstLine.length + 2 > budget) {
+        outputParts.push('[... remaining iterations omitted ...]');
+        break;
+      }
+      outputParts.push(firstLine);
+      usedChars += firstLine.length + 2;
+    }
+  }
+
+  return {
+    formatted: outputParts.join('\n\n'),
+    stats: {
+      total: segments.reduce((sum, s) => sum + s.text.length, 0),
+      essential: usedChars,
+      skipped: segments.filter(s => s.priority > 3).length,
+    },
+  };
+}
+
+/** Detect if a tool result represents an error. */
+function _isToolError(content) {
+  if (!content) return false;
+  const head = content.slice(0, 200).toLowerCase();
+  return (
+    content.startsWith('[ERROR]') ||
+    content.startsWith('ERROR') ||
+    head.slice(0, 50).includes('error') ||
+    head.includes('task failed') ||
+    head.includes('connection refused') ||
+    head.includes('timed out') ||
+    head.includes('traceback')
+  );
+}
+
+/** Check if tool result contains an embedded execution summary. */
+function _hasEmbeddedSummary(content) {
+  return /Execution Summary \(\d+ steps?\):/.test(content);
+}
+
+/** Extract embedded summary from tool result content. */
+function _extractEmbeddedSummary(content) {
+  const match = content.match(/Execution Summary \(\d+ steps?\):[\s\S]*?(?:={10,}|$)/);
+  if (match) {
+    let summary = match[0].trim();
+    const summaryLine = content.match(/\nSummary:\s*(.+)/);
+    if (summaryLine) {
+      summary += `\nConclusion: ${summaryLine[1].trim()}`;
+    }
+    return summary.slice(0, CONV_TRUNCATION.TOOL_SUMMARY_MAX);
+  }
+  return null;
+}
+
 module.exports = {
   STAGE_TOKEN_BUDGET_CHARS,
   STAGE_TOKEN_BUDGET_TOKENS,
@@ -680,4 +976,9 @@ module.exports = {
   ToolResultFilter,
   getBudgetSummary,
   INTENT_GREP_PATTERNS,
+  setSemanticCompressorCheapLlm,
+  // P0-A: OpenSpace-inspired conversation truncation
+  CONVERSATION_PRIORITY,
+  CONV_TRUNCATION,
+  formatConversationWithBudget,
 };

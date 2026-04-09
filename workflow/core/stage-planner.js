@@ -24,7 +24,7 @@ const { translateMdFile } = require('./i18n-translator');
 const {
   storePlannerContext,
 } = require('./orchestrator-stage-helpers');
-const { runEvoMapFeedback } = require('./stage-runner-utils');
+const { runEvoMapFeedback, recordSelfReport, runStageMetricsGate } = require('./stage-runner-utils');
 
 /**
  * Builds upstream context for the Planner from previous stages.
@@ -134,6 +134,21 @@ async function buildPlannerContextBlock(orch, upstreamCtx) {
     } catch (_) { /* non-fatal */ }
   }
 
+  // L3: Inject structured session memory (cross-session continuity, low token cost)
+  try {
+    const { TaskHistory } = require('./task-history');
+    const taskHistory = new TaskHistory();
+    const sessionMemoryBlock = taskHistory.getSessionMemoryBlock(3);
+    if (sessionMemoryBlock) {
+      expContext += `\n${sessionMemoryBlock}`;
+      console.error(`[Orchestrator] 🧠 Session Memory injected for PlannerAgent (${sessionMemoryBlock.length} chars)`);
+    }
+  } catch (memErr) {
+    if (process.env.DEBUG) {
+      console.warn(`[Orchestrator] Session memory injection failed for PLAN (non-fatal): ${memErr.message}`);
+    }
+  }
+
   // A-3 Architecture Fix: Return proper struct instead of setting expando on string.
   // Previously `result._injectedExpIds = _injectedExpIds` was set on a primitive string,
   // which silently fails (primitive strings cannot hold expando properties).
@@ -155,18 +170,18 @@ async function _runPlanner() {
   if (this.handoffLog) {
     this.handoffLog.printStageHeader('PLAN', 'PlannerAgent');
   } else {
-console.log(`\n[Orchestrator] Stage: PLAN (PlannerAgent — Frederick Brooks Project Management)`);
+console.error(`\n[Orchestrator] Stage: PLAN (PlannerAgent — Frederick Brooks Project Management)`);
   }
   const inputPath = this.bus.consume(AgentRole.PLANNER);
-  console.log(`[Orchestrator] 📥 PLAN upstream input: ${inputPath ? path.basename(inputPath) : '(none)'}`);
+  console.error(`[Orchestrator] 📥 PLAN upstream input: ${inputPath ? path.basename(inputPath) : '(none)'}`);
 
   // ── Build upstream context ──────────────────────────────────────────────
   const upstreamCtx = buildPlannerUpstreamCtx(this);
   if (upstreamCtx) {
     const ctxLines = upstreamCtx.split('\n').filter(l => l.trim()).length;
-    console.log(`[Orchestrator] 🔗 PLAN upstream context: ${ctxLines} line(s) from ANALYSE + ARCHITECT stages`);
+    console.error(`[Orchestrator] 🔗 PLAN upstream context: ${ctxLines} line(s) from ANALYSE + ARCHITECT stages`);
   } else {
-    console.log(`[Orchestrator] ⚠️  PLAN upstream context: empty (no prior stage context available)`);
+    console.error(`[Orchestrator] ⚠️  PLAN upstream context: empty (no prior stage context available)`);
   }
 
   // ── Build experience + context block ────────────────────────────────────
@@ -177,20 +192,28 @@ console.log(`\n[Orchestrator] Stage: PLAN (PlannerAgent — Frederick Brooks Pro
   if (planExpContent) {
     const injectedExpCount = planInjectedExpIds.length;
     this.obs.recordExpUsage({ injected: injectedExpCount });
-    console.log(`[Orchestrator] 📚 PLAN experience injection: ${injectedExpCount} experience(s) from ExperienceStore`);
+    console.error(`[Orchestrator] 📚 PLAN experience injection: ${injectedExpCount} experience(s) from ExperienceStore`);
     if (injectedExpCount > 0) {
-      console.log(`[Orchestrator]    Experience IDs: [${planInjectedExpIds.slice(0, 5).join(', ')}${injectedExpCount > 5 ? '...' : ''}]`);
+      console.error(`[Orchestrator]    Experience IDs: [${planInjectedExpIds.slice(0, 5).join(', ')}${injectedExpCount > 5 ? '...' : ''}]`);
     }
   } else {
-    console.log(`[Orchestrator] 📚 PLAN experience injection: none (ExperienceStore empty or no matches)`);
+    console.error(`[Orchestrator] 📚 PLAN experience injection: none (ExperienceStore empty or no matches)`);
   }
 
   // ── Execute PlannerAgent ───────────────────────────────────────────────
-  console.log(`[Orchestrator] 🚀 Executing PlannerAgent (generating execution-plan.md)...`);
+  console.error(`[Orchestrator] 🚀 Executing PlannerAgent (generating execution-plan.md)...`);
   const plannerStartTime = Date.now();
 const outputPath = await this.agents[AgentRole.PLANNER].run(inputPath, null, planExpContent, this.handoffLog);
   const plannerDuration = ((Date.now() - plannerStartTime) / 1000).toFixed(1);
-  console.log(`[Orchestrator] ✅ PlannerAgent completed in ${plannerDuration}s → ${outputPath ? path.basename(outputPath) : '(no output)'}`);
+  console.error(`[Orchestrator] ✅ PlannerAgent completed in ${plannerDuration}s → ${outputPath ? path.basename(outputPath) : '(no output)'}`);
+
+  // ── Agent Self-Report: extract self-report from PLANNER output ──
+  if (outputPath && fs.existsSync(outputPath)) {
+    try {
+      const planOutput = fs.readFileSync(outputPath, 'utf-8');
+      recordSelfReport('PLAN', planOutput, { agentRole: AgentRole.PLANNER });
+    } catch (_) { /* non-fatal */ }
+  }
 
   // ── SocraticEngine: User approval of execution plan ────────────────────
   try {
@@ -214,9 +237,9 @@ const outputPath = await this.agents[AgentRole.PLANNER].run(inputPath, null, pla
       throw new Error(abortMsg);
     } else if (planDecision.optionIndex === 2) {
       this.stateMachine.recordRisk('medium', '[SocraticEngine] User approved execution plan with reservations. Proceeding to CODE stage.');
-      console.log(`[Orchestrator] ⚠️  Execution plan approved with reservations. Proceeding.`);
+      console.error(`[Orchestrator] ⚠️  Execution plan approved with reservations. Proceeding.`);
     } else {
-      console.log(`[Orchestrator] ✅ Execution plan approved by user. Proceeding to CODE stage.`);
+      console.error(`[Orchestrator] ✅ Execution plan approved by user. Proceeding to CODE stage.`);
     }
   } catch (err) {
     if (err.message.includes('User rejected execution plan')) throw err;
@@ -245,15 +268,24 @@ const outputPath = await this.agents[AgentRole.PLANNER].run(inputPath, null, pla
     console.warn(`[Orchestrator] ⚠️  EvoMap feedback failed for PLAN stage (non-fatal): ${evoErr.message}`);
   }
 
+  // ── Metrics Quality Gate: validate PLAN stage runtime metrics ──────────
+  // Non-blocking: records threshold violations as risks, does not abort pipeline.
+  runStageMetricsGate(this, {
+    stageName: 'PLAN',
+    durationMs: Date.now() - planStageStartTime,
+    errorCount: 0,
+    llmCalls: (this.obs && this.obs._llmCallCount) ? this.obs._llmCallCount : 0,
+  });
+
   // ── Store PLAN stage context ──────────────────────────────────────────
-  const planOutputCtx = storePlannerContext(this, outputPath);
+  const planOutputCtx = await storePlannerContext(this, outputPath);
 
   // ── Log plan artifact stats ───────────────────────────────────────────
   if (planOutputCtx.taskCount > 0) {
-    console.log(`[Orchestrator] 📋 Execution plan breakdown: ${planOutputCtx.taskCount} task(s), ${planOutputCtx.keyDecisions.length} key decision(s)`);
+    console.error(`[Orchestrator] 📋 Execution plan breakdown: ${planOutputCtx.taskCount} task(s), ${planOutputCtx.keyDecisions.length} key decision(s)`);
   }
   if (planOutputCtx.summary) {
-    console.log(`[Orchestrator] 📝 Plan summary: ${planOutputCtx.summary.slice(0, 150)}${planOutputCtx.summary.length > 150 ? '...' : ''}`);
+    console.error(`[Orchestrator] 📝 Plan summary: ${planOutputCtx.summary.slice(0, 150)}${planOutputCtx.summary.length > 150 ? '...' : ''}`);
   }
 
   // ── Read plan content for detailed logging ─────────────────────────────
@@ -268,7 +300,7 @@ const outputPath = await this.agents[AgentRole.PLANNER].run(inputPath, null, pla
       // Extract dependency info
       const depMatches = planContent.match(/depend[s]?\s*(?:on)?\s*[:=]\s*\[?T-\d+/gi) || [];
 
-      console.log(`[Orchestrator] 📊 Plan stats: ${planLines} lines, ${(planSize / 1024).toFixed(1)} KB, ${phaseMatches.length} phase(s), ${depMatches.length} dependency link(s)`);
+      console.error(`[Orchestrator] 📊 Plan stats: ${planLines} lines, ${(planSize / 1024).toFixed(1)} KB, ${phaseMatches.length} phase(s), ${depMatches.length} dependency link(s)`);
     }
   } catch (_) { /* non-fatal logging */ }
 
@@ -282,13 +314,13 @@ const outputPath = await this.agents[AgentRole.PLANNER].run(inputPath, null, pla
     taskCount: planOutputCtx.taskCount || 0,
   };
   this.bus.publish(AgentRole.PLANNER, AgentRole.DEVELOPER, inputPath, busMeta);
-  console.log(`[Orchestrator] 📤 Bus: PLANNER → DEVELOPER (architecture.md + execution-plan, ${busMeta.taskCount} task(s))`);
+  console.error(`[Orchestrator] 📤 Bus: PLANNER → DEVELOPER (architecture.md + execution-plan, ${busMeta.taskCount} task(s))`);
 
   // ── Translate to Chinese ──────────────────────────────────────────────
   translateMdFile(outputPath, this._rawLlmCall).catch(() => {});
 
   const totalDuration = ((Date.now() - planStageStartTime) / 1000).toFixed(1);
-  console.log(`[Orchestrator] ✅ PLAN stage completed in ${totalDuration}s (PlannerAgent: ${plannerDuration}s, overhead: ${(totalDuration - plannerDuration).toFixed(1)}s)`);
+  console.error(`[Orchestrator] ✅ PLAN stage completed in ${totalDuration}s (PlannerAgent: ${plannerDuration}s, overhead: ${(totalDuration - plannerDuration).toFixed(1)}s)`);
 
   return outputPath;
 }

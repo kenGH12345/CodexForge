@@ -49,6 +49,8 @@ class BusinessLogicExtractor {
     this.codeGraph = options.codeGraph;
     this.ideAdapter = options.ideAdapter;
     this.logger = options.logger || console;
+    this.projectRoot = options.projectRoot || null;
+    this.outputDir = options.outputDir || null;
 
     // Strategy selection based on ADR-37 (IDE-First)
     this.strategy = this._selectStrategy();
@@ -77,6 +79,18 @@ class BusinessLogicExtractor {
    */
   async extract(projectRoot, options = {}) {
     const startTime = Date.now();
+
+    // Support calling as extract(options) without projectRoot
+    if (typeof projectRoot === 'object' && projectRoot !== null) {
+      options = projectRoot;
+      projectRoot = this.projectRoot;
+    }
+    if (!projectRoot) {
+      projectRoot = this.projectRoot || (this.codeGraph && this.codeGraph._root);
+    }
+    if (!projectRoot) {
+      throw new Error('projectRoot is required: pass it to constructor or extract()');
+    }
     const root = path.resolve(projectRoot);
 
     this.logger.info(`Extracting business logic from: ${root}`);

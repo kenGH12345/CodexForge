@@ -114,9 +114,9 @@ const ExperienceQueryMixin = {
       results = results
         .map(e => {
           let score = 0;
-          const titleLower = e.title.toLowerCase();
-          const contentLower = e.content.toLowerCase();
-          const tagsLower = e.tags.map(t => t.toLowerCase());
+          const titleLower = (e.title || '').toLowerCase();
+          const contentLower = (e.content || '').toLowerCase();
+          const tagsLower = (e.tags || []).map(t => t.toLowerCase());
           for (const kw of keywords) {
             if (titleLower.includes(kw)) score += 10;
             if (tagsLower.some(t => t.includes(kw))) score += 6;

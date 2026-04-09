@@ -55,14 +55,24 @@ const { fileExists, dirExists, hasExt, readFileContent } = require('./profiler-h
 // ─── ProjectProfiler Class ───────────────────────────────────────────────────
 
 class ProjectProfiler {
-  constructor() {
+  /**
+   * @param {string} [projectRoot] - Project root directory (can also be passed to analyze())
+   * @param {object} [options] - Configuration options
+   * @param {string[]} [options.ignoreDirs] - Directories to skip during analysis
+   * @param {object[]} [options.customFrameworkRules] - Custom framework detection rules
+   * @param {object[]} [options.customDataLayerRules] - Custom data layer detection rules
+   * @param {object[]} [options.customTestRules] - Custom test framework detection rules
+   */
+  constructor(projectRoot, options = {}) {
     this.name = 'ProjectProfiler';
+    this._projectRoot = projectRoot || null;
+    this._options = options;
   }
 
   /**
    * Analyzes a project and produces a structured profile.
    *
-   * @param {string} rootPath - Project root path
+   * @param {string} [rootPath] - Project root path (defaults to constructor projectRoot)
    * @param {object} options - Analysis options
    * @param {boolean} options.lspEnhance - Whether to enhance with LSP data (future feature)
    * @returns {object} Project profile
@@ -73,8 +83,8 @@ class ProjectProfiler {
     // Clear per-analysis cache
     clearFileContentCache();
 
-    // Resolve root path
-    const root = path.resolve(rootPath);
+    // Resolve root path (fallback to constructor projectRoot)
+    const root = path.resolve(rootPath || this._projectRoot || process.cwd());
 
     // 1. Read dependencies
     const deps = readDependencies(root);
@@ -137,6 +147,39 @@ class ProjectProfiler {
     }
 
     return profile;
+  }
+
+  /**
+   * Analyze the project and write the full report to project-profile.md.
+   * Convenience method used by init-project.js.
+   *
+   * @returns {{ profile: object, mdPath: string }} The profile and path to the written markdown file
+   */
+  analyzeAndWrite() {
+    const root = this._projectRoot || process.cwd();
+    const profile = this.analyze(root);
+    const outputDir = path.join(root, 'output');
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    const mdPath = path.join(outputDir, 'project-profile.md');
+    const report = this.renderFullReport(profile);
+    fs.writeFileSync(mdPath, report, 'utf-8');
+    return { profile, mdPath };
+  }
+
+  /**
+   * Analyze with LSP enhancement (future feature).
+   * Currently throws to trigger the fallback path in init-project.js.
+   *
+   * @param {string} [rootPath] - Project root path
+   * @param {object} [lspConfig] - LSP configuration
+   * @returns {Promise<{ profile: object, mdPath: string }>}
+   */
+  async analyzeWithLSP(rootPath, lspConfig = {}) {
+    // LSP enhancement is not yet implemented.
+    // Throwing here causes init-project.js to fall back to analyzeAndWrite().
+    throw new Error('LSP enhancement not yet implemented');
   }
 
   /**

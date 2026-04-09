@@ -314,8 +314,14 @@ class DuplicatePatternDetector {
     const similarGroups = [];
     const processed = new Set();
 
-    for (let i = 0; i < this._allFunctions.length; i++) {
-      const funcA = this._allFunctions[i];
+    // Cap at 2000 functions to avoid O(n²) blowup on large projects (e.g. 98k functions)
+    const MAX_SIMILAR_SAMPLE = 2000;
+    const candidates = this._allFunctions.length > MAX_SIMILAR_SAMPLE
+      ? this._allFunctions.slice(0, MAX_SIMILAR_SAMPLE)
+      : this._allFunctions;
+
+    for (let i = 0; i < candidates.length; i++) {
+      const funcA = candidates[i];
 
       // Skip small functions
       if (funcA.lineCount < MIN_BLOCK_LINES) continue;
@@ -332,8 +338,8 @@ class DuplicatePatternDetector {
         }],
       };
 
-      for (let j = i + 1; j < this._allFunctions.length; j++) {
-        const funcB = this._allFunctions[j];
+      for (let j = i + 1; j < candidates.length; j++) {
+        const funcB = candidates[j];
 
         // Skip if same file and close together
         if (funcA.symbol.file === funcB.symbol.file &&
@@ -385,7 +391,13 @@ class DuplicatePatternDetector {
   _detectDuplicateBlocks(minLines) {
     const blocks = [];
     const windowHashes = new Map();
-    const sourceFiles = this._collectSourceFiles();
+    const allSourceFiles = this._collectSourceFiles();
+
+    // Cap at 500 files to avoid scanning entire large projects
+    const MAX_BLOCK_FILES = 500;
+    const sourceFiles = allSourceFiles.length > MAX_BLOCK_FILES
+      ? allSourceFiles.slice(0, MAX_BLOCK_FILES)
+      : allSourceFiles;
 
     for (const filePath of sourceFiles) {
       try {
@@ -606,6 +618,10 @@ class DuplicatePatternDetector {
       '',
     ];
 
+    // Add Action Plan section
+    lines.push(...this._generateActionPlan(stats));
+    lines.push('');
+
     // Exact duplicates section
     if (this._exactDuplicates.length > 0) {
       lines.push(`### 🔴 Exact Duplicates`);
@@ -676,6 +692,185 @@ class DuplicatePatternDetector {
     }
 
     return lines.join('\n');
+  }
+
+  /**
+   * Generate Action Plan for refactoring duplicates.
+   * Prioritizes by impact (lines saved) and effort (complexity).
+   * @returns {string[]} Markdown lines for action plan
+   */
+  _generateActionPlan(stats) {
+    const lines = [
+      `### 🎯 Action Plan: Refactoring Priorities`,
+      '',
+      `> Auto-generated optimization roadmap. Items sorted by ROI (Return on Investment).`,
+      '',
+    ];
+
+    // Calculate priority scores for all duplicate groups
+    const prioritizedItems = [];
+
+    // Add exact duplicates (highest priority)
+    for (const group of this._exactDuplicates.slice(0, 10)) {
+      const linesSaved = group.lineCount * (group.instances.length - 1);
+      const fileCount = new Set(group.instances.map(i => i.file)).size;
+      const effort = fileCount > 1 ? 'Medium' : 'Low';
+      const priority = linesSaved > 50 ? 'P0' : linesSaved > 20 ? 'P1' : 'P2';
+      const impact = linesSaved > 50 ? 'High' : linesSaved > 20 ? 'Medium' : 'Low';
+
+      prioritizedItems.push({
+        type: 'Exact Duplicate',
+        priority,
+        effort,
+        impact,
+        linesSaved,
+        group,
+        recommendation: `Extract to shared utility: \`${group.instances[0].name}\``,
+      });
+    }
+
+    // Add similar functions (lower priority)
+    for (const group of this._similarFunctions.slice(0, 5)) {
+      const avgTokens = group.instances.reduce((sum, i) => sum + i.tokenCount, 0) / group.instances.length;
+      const effort = 'High';
+      const priority = 'P2';
+      const impact = avgTokens > 50 ? 'Medium' : 'Low';
+
+      prioritizedItems.push({
+        type: 'Similar Functions',
+        priority,
+        effort,
+        impact,
+        linesSaved: Math.floor(avgTokens / 5), // Rough estimate
+        group,
+        recommendation: `Consider abstraction: Create base class/strategy for ${group.instances.length} similar functions`,
+      });
+    }
+
+    // Sort by priority and then by lines saved
+    const priorityOrder = { 'P0': 0, 'P1': 1, 'P2': 2 };
+    prioritizedItems.sort((a, b) => {
+      if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+        return priorityOrder[a.priority] - priorityOrder[b.priority];
+      }
+      return b.linesSaved - a.linesSaved;
+    });
+
+    // Generate action items
+    if (prioritizedItems.length === 0) {
+      lines.push('✅ **No significant duplication detected. Codebase is clean!**');
+      return lines;
+    }
+
+    // Summary table
+    lines.push(`#### Quick Overview`);
+    lines.push('');
+    lines.push(`| Priority | Count | Est. Lines Saved | Est. Effort |`);
+    lines.push(`|----------|-------|------------------|-------------|`);
+    const p0Count = prioritizedItems.filter(i => i.priority === 'P0').length;
+    const p1Count = prioritizedItems.filter(i => i.priority === 'P1').length;
+    const p2Count = prioritizedItems.filter(i => i.priority === 'P2').length;
+    const totalLinesSaved = prioritizedItems.reduce((sum, i) => sum + i.linesSaved, 0);
+    lines.push(`| 🔴 P0 (Immediate) | ${p0Count} | ~${prioritizedItems.filter(i => i.priority === 'P0').reduce((s, i) => s + i.linesSaved, 0)} | High impact / Low effort |`);
+    lines.push(`| 🟡 P1 (Soon) | ${p1Count} | ~${prioritizedItems.filter(i => i.priority === 'P1').reduce((s, i) => s + i.linesSaved, 0)} | Medium impact / Medium effort |`);
+    lines.push(`| 🟢 P2 (Later) | ${p2Count} | ~${prioritizedItems.filter(i => i.priority === 'P2').reduce((s, i) => s + i.linesSaved, 0)} | Lower impact / Higher effort |`);
+    lines.push(`| **Total** | **${prioritizedItems.length}** | **~${totalLinesSaved}** | - |`);
+    lines.push('');
+
+    // Detailed action items
+    lines.push(`#### Detailed Action Items`);
+    lines.push('');
+
+    for (let i = 0; i < Math.min(prioritizedItems.length, 15); i++) {
+      const item = prioritizedItems[i];
+      const group = item.group;
+
+      lines.push(`##### ${i + 1}. ${item.recommendation}`);
+      lines.push('');
+      lines.push(`| Attribute | Value |`);
+      lines.push(`|-----------|-------|`);
+      lines.push(`| **Type** | ${item.type} |`);
+      lines.push(`| **Priority** | ${item.priority} |`);
+      lines.push(`| **Estimated Effort** | ${item.effort} |`);
+      lines.push(`| **Impact** | ${item.impact} (~${item.linesSaved} lines saved) |`);
+      lines.push(`| **Files Affected** | ${new Set(group.instances.map(inst => inst.file)).size} |`);
+      lines.push(`| **Occurrences** | ${group.instances.length} |`);
+      lines.push('');
+
+      // List locations
+      lines.push('**Locations:**');
+      for (const inst of group.instances.slice(0, 5)) {
+        lines.push(`- \`${inst.file}\`:${inst.line} - \`${inst.name}\``);
+      }
+      if (group.instances.length > 5) {
+        lines.push(`- ... and ${group.instances.length - 5} more`);
+      }
+      lines.push('');
+
+      // Add refactoring template for exact duplicates
+      if (item.type === 'Exact Duplicate') {
+        lines.push('**Suggested Refactoring:**');
+        lines.push('```javascript');
+        lines.push(...this._generateRefactoringTemplate(group));
+        lines.push('```');
+        lines.push('');
+      }
+
+      // Add refactoring steps
+      lines.push('**Steps:**');
+      lines.push(`1. ${item.type === 'Exact Duplicate' ? 'Create shared utility function' : 'Analyze function similarities and extract common interface'}`);
+      lines.push(`2. Update all ${group.instances.length} occurrences to use the new implementation`);
+      lines.push(`3. Run tests to verify no behavioral changes`);
+      lines.push(`4. Remove old duplicate implementations`);
+      lines.push('');
+
+      // Add verification command for IDE users
+      lines.push('**Verification:**');
+      const firstInstance = group.instances[0];
+      lines.push(`- Use IDE's "Find All References" on \`${firstInstance.name}\` to confirm all usages are updated`);
+      lines.push(`- Run the test suite: \`npm test\` or equivalent`);
+      lines.push('');
+    }
+
+    return lines;
+  }
+
+  /**
+   * Generate a refactoring template for a duplicate group.
+   * Creates a code skeleton for the extracted utility.
+   * @param {object} group - Duplicate group
+   * @returns {string[]} Code lines
+   */
+  _generateRefactoringTemplate(group) {
+    const firstInstance = group.instances[0];
+    const funcName = firstInstance.name.replace(/\d+$/, '').replace(/_(copy|dup|old|new)$/i, '');
+    const safeName = funcName || 'extractedUtil';
+
+    const lines = [
+      `/**`,
+      ` * ${safeName} - Extracted utility function`,
+      ` * `,
+      ` * Extracted from ${group.instances.length} duplicate implementations`,
+      ` * Locations:`,
+    ];
+
+    for (const inst of group.instances) {
+      lines.push(` *   - ${inst.file}:${inst.line}`);
+    }
+
+    lines.push(` *`);
+    lines.push(` * @TODO: Add proper JSDoc with parameter descriptions`);
+    lines.push(` * @TODO: Add unit tests for this extracted function`);
+    lines.push(` */`);
+    lines.push(`function ${safeName}(/* TODO: determine parameters */) {`);
+    lines.push(`  // TODO: Extract common logic here`);
+    lines.push(`  // Original implementation was ~${group.lineCount} lines`);
+    lines.push(`}`);
+    lines.push('');
+    lines.push(`// Export for use across modules`);
+    lines.push(`module.exports = { ${safeName} };`);
+
+    return lines;
   }
 
   /**

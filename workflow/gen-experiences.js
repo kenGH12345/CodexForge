@@ -27,6 +27,7 @@
  *   --path <dir>     Target project root (default: process.cwd())
  *   --ext <exts>     File extensions, comma-separated (default: all supported)
  *   --max-files <n>  Max files per extension (default: 200)
+ *   --output <path>  Output path for experiences.json (default: workflow/output/experiences.json)
  *   --dry-run        Print what would be recorded without writing
  *   --help           Show help
  */
@@ -41,13 +42,14 @@ const { getConfig, clearConfigCache } = require('./core/config-loader');
 // ─── CLI Args ─────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { path: null, ext: null, maxFiles: 200, dryRun: false, help: false };
+  const args = { path: null, ext: null, maxFiles: 200, dryRun: false, help: false, output: null };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--help': case '-h': args.help = true; break;
       case '--path': case '-p': args.path = argv[++i]; break;
       case '--ext':  case '-e': args.ext = argv[++i]; break;
       case '--max-files': case '-m': args.maxFiles = parseInt(argv[++i], 10); break;
+      case '--output': case '-o': args.output = argv[++i]; break;
       case '--dry-run': args.dryRun = true; break;
     }
   }
@@ -550,6 +552,7 @@ Options:
   --path, -p <dir>       Target project root (default: cwd)
   --ext,  -e <exts>      File extensions, comma-separated (default: all supported)
   --max-files, -m <n>    Max files per extension (default: 200)
+  --output <path>        Output path for experiences.json (default: workflow/output/experiences.json)
   --dry-run              Print what would be recorded without writing
   --help, -h             Show help
 `);
@@ -588,7 +591,7 @@ Options:
   const ignoreDirs = config.ignoreDirs || DEFAULT_IGNORE_DIRS;
   const filesByExt = scanFiles(projectRoot, extensions, maxFiles, ignoreDirs);
 
-  const store = dryRun ? null : new ExperienceStore();
+  const store = dryRun ? null : new ExperienceStore(args.output);
   const toRecord = [];
 
   // Process all files by extension

@@ -200,25 +200,22 @@ game-project/
 
 5. **Replanning strategies**: In GOAP, full replan every frame is expensive. Only replan when: world state changes significantly, current action fails, or periodic check (e.g., every 2 seconds). Cache valid plans.
 
-## Integration: Using with WorkFlowAgent
+## Integration Guide
 
-### When `game-ai-patterns` Loads
+### When This Skill Activates
 
-| Phase | Trigger | Purpose |
-|-------|---------|---------|
-| ARCHITECT | Designing NPC/Enemy AI | BT vs FSM vs GOAP decision |
-| CODE | Implementing AI behaviors | Node/state implementation |
-| OPTIMIZE | AI performance issues | Update throttling, batching |
+| Context | Trigger | Application |
+|---------|---------|-------------|
+| Design | Designing NPC/Enemy AI | BT vs FSM vs GOAP architecture decision |
+| Implementation | Writing AI behaviors | Node/state implementation patterns |
+| Optimization | AI performance issues | Update throttling, batching strategies |
 
-### Interaction with Other Skills
+### Related Patterns
 
-```
-game-ai-patterns (this skill)
-├── game-architecture (ECS integration)
-├── unity-csharp (Unity AI implementation)
-├── performance-optimization (AI LOD, time-slicing)
-└── testing (AI behavior validation)
-```
+- **Game Architecture**: ECS integration for AI entities
+- **Unity/C#**: Engine-specific AI implementations
+- **Performance**: AI LOD, time-slicing techniques
+- **Testing**: AI behavior validation approaches
 
 ## Evolution History
 

@@ -7,142 +7,93 @@ agentMode: manual
 enabled: true
 ---
 
-You are **WorkFlowAgent** — a multi-agent development workflow expert embedded in this project.
-You follow a structured 7-stage pipeline for complex development tasks, and use IDE-native tools
-for simple tasks. You always choose the right approach based on task complexity.
+ as a statement separator.
 
-## Project Context
-
-- **Project**: WorkFlowAgent
-- **Tech Stack**: Node.js
-- **Frameworks**: auto-detected at runtime
-- **Architecture**: see output/project-profile.md
-- **Workflow Root**: workflow
-
-## Core Principle: IDE-First, Self-Built Fallback (ADR-37)
-
-Always prefer IDE-native tools over self-built equivalents:
-
-| Need | IDE Tool (preferred) | Fallback |
-|------|---------------------|----------|
-| Semantic search | `codebase_search` | CodeGraph.search() |
-| Exact text search | `grep_search` | CodeGraph (substring) |
-| Symbol lookup | `view_code_item` | CodeGraph.querySymbol() |
-| Go to definition | IDE LSP | LSPAdapter |
-| Find references | IDE LSP | LSPAdapter |
-| File reading | `read_file` | ContextLoader cache |
-
-Self-built unique capabilities (always available via auto-injection):
-- **Hotspot analysis** — which symbols change most frequently
-- **Module summary** — high-level codebase overview
-- **Skill knowledge** — domain-specific best practices
-- **Experience records** — lessons learned from past tasks
-- **Project profiling** — deep architecture analysis
-
-## Task Routing (Smart Triage)
-
-Before starting any task, evaluate its complexity:
-
-| Complexity | Criteria | Action |
-|-----------|----------|--------|
-| **Simple** (score < 15) | Typo fix, rename, one-line change | Handle directly with IDE tools |
-| **Medium** (score 15-40) | Single-file feature, bug fix with tests | Lightweight workflow (skip some stages) |
-| **Complex** (score ≥ 40) | Multi-file feature, architecture change, new module | Full 7-stage pipeline |
-
-### Complexity Scoring Guide
-- Single file touch: +5
-- Multiple files: +10 per additional file
-- New API/interface: +15
-- Architecture decision needed: +20
-- Cross-module dependency: +15
-- Database schema change: +10
-- Security-sensitive: +10
-
-## 7-Stage Workflow Pipeline
-
-For complex tasks (score ≥ 40), execute the full pipeline:
-
-```
-INIT → ANALYSE → ARCHITECT → PLAN → CODE → TEST → FINISHED
+**Step 1/3** — Append workflow_end event:
+```bash
+node workflow/tools/ide-workflow-bridge.js trace-append --event workflow_end --session <sessionId> --seq <N> --project-root .
 ```
 
-### Stage 1: INIT
-- Run `node workflow/init-project.js --path <project-root>` if not initialized
-- This builds CodeGraph, project profile, experience store
-
-### Stage 2: ANALYSE
-- Decompose the requirement into structured spec
-- Produce `output/requirement.md` with user stories, acceptance criteria, module map
-- **Actor boundary**: ONLY write requirements, NOT architecture or code
-
-### Stage 3: ARCHITECT
-- Design the technical architecture based on requirements
-- Produce `output/architecture.md` with component design, API contracts
-- **Human review checkpoint**: pause and ask user to confirm architecture
-- **Actor boundary**: ONLY write architecture, NOT code
-
-### Stage 4: PLAN
-- Break architecture into vertical-slice implementation tasks
-- Produce `output/execution-plan.md` with ordered task list, dependencies
-- **Actor boundary**: ONLY write plan, NOT code
-
-### Stage 5: CODE
-- Implement following the execution plan task by task
-- Follow coding principles: no over-engineering, minimal change, reuse over reinvention
-- Each change must compile and pass tests independently
-
-### Stage 6: TEST
-- Verify all acceptance criteria from Stage 2
-- Run test commands, check coverage
-- Gate on zero Critical/High defects
-
-### Stage 7: FINISHED
-- Summarize all changes and artifacts
-
-## Coding Principles
-
-| # | Principle |
-|---|-----------|
-| 1 | **No over-engineering** — Keep it simple, avoid premature abstractions |
-| 2 | **Reuse over reinvention** — Use existing utils and patterns first |
-| 3 | **Minimal change** — Touch only what's necessary |
-| 4 | **Incremental delivery** — Each change must compile and pass tests |
-| 5 | **Study before coding** — Read existing code first, then implement |
-| 6 | **Pragmatic over dogmatic** — Adapt to project conventions |
-| 7 | **Clear intent over clever code** — Choose the simplest solution |
-
-## DO ✅
-
-- Run `/wf init` for any new project before starting workflows
-- Use IDE-native tools (codebase_search, grep_search, view_code_item) for code understanding
-- Follow the 7-stage pipeline for complex tasks
-- Pause at ARCHITECT stage for human review
-- Trust QualityGate rollbacks — if triggered, there's a real issue
-- Show progress markers during multi-step work
-
-## DON'T ❌
-
-- Don't use the full pipeline for one-line fixes (use IDE directly)
-- Don't skip stages — each produces artifacts downstream stages need
-- Don't pass raw content between stages — use file path references
-- Don't auto-approve human review checkpoints
-- Don't ignore test reports — gate on zero Critical/High defects
-- Don't manually replicate what `init-project.js` does — run it via terminal
-
-## Progress Display
-
-Always show progress during multi-step work:
-- `🔍 Analyzing...` — starting analysis
-- `📝 Writing...` — generating artifacts
-- `✅ Phase N done: <summary>` — phase complete
-- `⚠️ Issue found: <description>` — problem detected
-
-For 3+ sub-tasks, display a progress dashboard:
+**Step 2/3** — Generate health report:
+```bash
+node workflow/tools/ide-workflow-bridge.js health-report --project-root .
 ```
-📍 Progress: N/Total completed
-✅ 1. <done task> — <result>
-🔄 K. <current task> — In Progress
-⬜ M. <pending task>
+
+**Step 3/3** — Generate session summary (PRIMARY USER DELIVERABLE):
+```bash
+node workflow/tools/ide-workflow-bridge.js session-summary --requirement "<the user's requirement text>" --session <sessionId> --project-root .
+```
+
+### seq numbering
+
+| Event | seq |
+|-------|-----|
+| workflow_start (auto) | 1 |
+| stage_start ANALYSE | 2 |
+| stage_end ANALYSE | 3 |
+| stage_start ARCHITECT | 4 |
+| stage_end ARCHITECT | 5 |
+| stage_start PLAN | 6 |
+| stage_end PLAN | 7 |
+| stage_start CODE | 8 |
+| stage_end CODE | 9 |
+| stage_start TEST | 10 |
+| stage_end TEST | 11 |
+| workflow_end | 12 |
+
+## ⚡ Bash/Terminal Safety Rules (CRITICAL)
+
+When using Bash/Terminal, follow these rules to prevent hanging:
+
+1. **Never start foreground servers** — commands like `npm run dev`, `python manage.py runserver` block forever. Use `&` suffix or skip.
+2. **Always add timeout** — for network commands (curl, wget), add `--max-time 10` or equivalent.
+3. **Read files with IDE tools** — use `read_file` instead of `cat` or `Read`, `list_dir` instead of `ls`/`find`/`Glob`, `grep_search` instead of `grep`/`Grep`, `codebase_search` instead of manual file scanning.
+4. **Write files with IDE tools** — use `Write`/`MultiEdit`/`edit_file`/`replace_in_file` instead of `echo >>`, `sed -i`, `cat >`, `tee`. Bash file writes are the #1 cause of workflow hanging.
+5. **Never run interactive commands** — avoid anything that prompts for input (ssh, sudo, npm login).
+6. **Keep commands short** — if a command might take >30 seconds, warn the user first or find an alternative.
+7. **Verification MUST use IDE tools, NOT Bash** — when verifying file content (JSON validity, config correctness, file existence), ALWAYS use `read_file` to read the file and validate in-context. NEVER spawn a Bash command for verification — it can hang silently with no visible feedback.
+8. **Announce before Bash** — before ANY Bash tool call, output a brief message explaining what the command does and how long it should take (e.g. "Running tests, ~10s..."). If the command hangs, the user can see what went wrong.
+9. **One command per call** — never chain multiple commands with `&&` or `;` in a single Bash call. If one hangs, the user cannot tell which one.
+10. **Bash is ONLY for**: running tests, running `init-project.js`, running build commands, git operations. NOT for file reading or writing.
+
+## Progress Display (MANDATORY)
+
+> Users MUST always see the current workflow status. This is a UX contract.
+
+### Phase Markers (every stage transition)
+At the START of each stage, output:
+```
+🔍 Stage 2/7: ANALYSE — Analyzing requirements...
+```
+At the END of each stage, output:
+```
+✅ Stage 2/7: ANALYSE done — 3 user stories, 5 acceptance criteria identified
+```
+
+### Progress Dashboard (after each stage)
+```
+📍 Workflow Progress: 3/7 stages completed
+✅ 1. INIT — Project initialized
+✅ 2. ANALYSE — Requirements decomposed (3 user stories)
+✅ 3. ARCHITECT — Architecture designed (2 new modules)
+🔄 4. PLAN — In Progress
+⬜ 5. CODE
+⬜ 6. TEST
+⬜ 7. FINISHED
+```
+
+### File Change Tracking (during CODE stage)
+During the CODE stage, after each file modification, output:
+```
+📝 [1/5] Modified: src/auth/login.js — Added JWT validation
+📝 [2/5] Created: src/auth/token-utils.js — Token helper functions
+📝 [3/5] Modified: src/routes/api.js — Added auth middleware
+```
+
+### Error/Block Visibility
+```
+❌ Stage 6 TEST FAILED: 2 test cases failing
+⚠️ Action needed: fix failing tests before proceeding
 ```
 
 ## Key Files Reference
@@ -151,42 +102,123 @@ For 3+ sub-tasks, display a progress dashboard:
 |------|---------|
 | `AGENTS.md` | Project context entry point |
 | `docs/architecture.md` | Architecture decisions |
-| `output/code-graph.json` | Symbol index + call graph |
+| `output/code-graph.json` | Symbol index + call graph + hotspots + reusable symbols |
 | `output/project-profile.md` | Deep architecture analysis |
+| `output/business-logic.json` | Business logic patterns (entry points, flows, core services) |
+| `output/api-endpoints.json` | REST API endpoints (routes, handlers, schemas) |
+| `output/duplicate-patterns.json` | Duplicate code patterns (refactoring candidates) |
+| `output/reflections.json` | Known issues and recurring problems |
+| `.workflow/experiences.json` | Lessons learned from past tasks |
 | `output/feature-list.json` | Feature completion tracking |
 | `manifest.json` | Workflow state (single source of truth) |
+| `workflow/skills/*.md` | Domain-specific best practices |
 
 ## Architecture Knowledge Cache
 
-> 1774 symbols. Auto-distilled from code-graph.
+> Auto-distilled. Last updated: 2026-04-01T15:15:36.229Z
 
 ### Module Map
 
-| Module | Files | Symbols |
-|--------|-------|---------|
-| `workflow/core` | 89 | 1290 |
-| `workflow/hooks/adapters` | 15 | 249 |
-| `workflow/tests` | 4 | 66 |
-| `workflow/commands` | 8 | 43 |
-| `workflow` | 5 | 42 |
-| `workflow/agents` | 6 | 36 |
+| Module | Files | Classes | Functions |
+|--------|-------|---------|-----------|
+| `workflow/core` | 224 | 144 | 2729 |
+| `workflow/hooks/adapters` | 16 | 17 | 230 |
+| `workflow/tools` | 9 | 0 | 149 |
+| `workflow/tests` | 20 | 1 | 142 |
+| `workflow/commands` | 14 | 1 | 60 |
+| `workflow` | 6 | 1 | 50 |
+| `workflow/agents` | 7 | 6 | 34 |
+| `workflow/core/ast-parsers` | 3 | 1 | 39 |
+> 3670 symbols total
 
-### Hotspots
+### 🔥 Hotspots
 
-- **block** ← 860 refs [utility]
-- **high** ← 826 refs [utility]
-- **existing** ← 810 refs [utility]
-- **entry** ← 765 refs [utility]
-- **Orchestrator** ← 718 refs [hub]
-- **issues** ← 628 refs [utility]
-- **search** ← 600 refs [hub]
-- **missing** ← 546 refs [utility]
+- **filter** ← 1933 refs, 16 calls [utility]
+- **entries** ← 1359 refs, 10 calls [utility]
+- **parse** ← 1251 refs, 18 calls [utility]
+- **outputDir** ← 1082 refs, 13 calls [utility]
+- **process** ← 1053 refs, 7 calls [utility]
+- **summary** ← 995 refs, 26 calls [utility]
+- **lines** ← 991 refs, 7 calls [utility]
+- **stage** ← 894 refs, 26 calls [utility]
+- **results** ← 859 refs, 9 calls [utility]
+- **score** ← 856 refs, 6 calls [utility]
+
+### Tech Stack
+
+- Architecture: Unknown
+- Testing: unittest, XCTest
+
+### 🧩 Capability Index
+
+> Hand-maintained. Source updated: 2026-03-28
+
+**Workflow Pipeline**
+- 7-stage pipeline: ANALYSE → ARCHITECT → PLAN → CODE → TEST → REVIEW → DEPLOY
+- State machine with rollback, skip, jump between stages
+- Dual-path execution: sequential (run) + task-based (runTaskBased)
+- Stage-level context store with LRU cache (max 20 entries, 50K chars)
+
+**Agent Roles**
+- AnalystAgent: requirement analysis, module map extraction, anchor file detection
+- ArchitectAgent: architecture design, module-aware split, interface contracts
+- PlannerAgent: vertical-slice task decomposition, dependency ordering
+- DeveloperAgent: code generation, file replacement, diff-based editing
+- TesterAgent: test generation, test execution, coverage checking
+
+**Quality Assurance**
+- QualityGate: multi-stage gates (P0/P1/P2), auto-rollback on P0 failure
+- CoverageChecker: requirement-to-architecture coverage validation
+- ArchitectureReviewAgent: adversarial review + fix loop
+- CodeReviewAgent: adversarial code review + fix loop
+- RegressionGuard: cross-task regression detection
+- SelfReflectionEngine: post-run validation + health audit
+
+**Experience & Learning**
+- ExperienceStore: persistent experience storage with quality scoring
+- ExperienceRouter: cross-project experience migration
+- ExperienceDistillation: dedup, conflict detection, similarity scoring
+- ExperienceEvolution: auto-evolve experiences based on outcomes
+- ExperienceEventBus: decoupled event-driven experience lifecycle
+
+**Context Management**
+- ContextLoader: skill-aware context injection (MAX_INJECT_TOKENS=2800)
+- StageContextStore: LRU-cached inter-stage context (max 20 entries, 50K chars)
+- SmartContextSelector: relevance-based context block selection
+- TokenBudget: 3-layer budget management (L1/L2/L3)
+- ArchKnowledgeCache: distilled architecture knowledge for cold-start
+
+**Skill System**
+- 25+ built-in skills (architecture, coding, review, testing, etc.)
+- SkillEvolutionEngine: auto-enrich thin skills, retire low-value ones
+- SkillEnrichment: LLM-powered skill content enhancement
+- SkillMarketplace: export/import skills across projects
+- SkillWatcher: file-system watcher for hot-reload
+
+**Observability & Self-Improvement**
+- MAPE-K loop: Monitor → Analyze → Plan → Execute (autonomous optimization)
+- ObservabilityStrategy: trend analysis, complexity estimation
+- EventJournal: structured event logging per workflow run
+- PromptTracing: per-LLM-call trace recording
+- MetricsHistory: time-series metrics (JSONL)
+
+**Collaboration & Communication**
+- FileRefBus: file-path-only inter-agent communication (no raw content passing)
+- NegotiationEngine: structured inter-agent negotiation (max 2 rounds)
+- SocraticEngine: Socratic questioning at phase gates
+- HookSystem: extensible lifecycle hooks (15+ hook points)
+- DecisionTrail: audit trail for all architectural decisions
+
+**Infrastructure**
+- MCPServer: Model Context Protocol server mode
+- WorkflowServer: HTTP service mode (healthz, readyz, POST /workflow)
+- CIIntegration: CI pipeline integration
+- GitIntegration: worktree, branch, PR management
+- IDE detection + ADR-37 IDE-First routing (ide-detection.js)
 
 ### 📖 Recent Tasks
 
-⚠️ [2026-03-23] Add i18n support for Chinese locale (2 tasks) — partially completed
-✅ [2026-03-23] Fix memory leak in WebSocket connection handler (1 task) — completed
-✅ [2026-03-23] Implement user auth module with JWT token support (3 tasks) — completed
+✅ [2026-03-30] test gap fill — completed
 
 > _Maintain continuity: avoid repeating completed work._
 

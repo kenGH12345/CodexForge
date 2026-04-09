@@ -14,6 +14,13 @@ const fs = require('fs');
 
 // Test suites configuration
 const TEST_SUITES = {
+  smoke: {
+    name: 'Runtime Smoke Tests (六维度验证)',
+    description: '强制验证: 产物存在性、量化指标、下游消费、函数调用、模块路由、端到端流水线',
+    files: [
+      'workflow/tests/smoke-runtime.test.js',
+    ],
+  },
   unit: {
     name: 'Unit Tests',
     files: [
@@ -38,6 +45,7 @@ const TEST_SUITES = {
       'workflow/core/integration-pipeline-flow.test.js',
       'workflow/core/integration-agent-fusion.test.js',
       'workflow/core/integration-framework-fusion.test.js',
+      'workflow/tests/dual-mode-e2e.test.js',
     ],
   },
 };
@@ -46,6 +54,9 @@ const TEST_SUITES = {
 const args = process.argv.slice(2);
 const filter = args.find(a => a.startsWith('--filter='))?.split('=')[1];
 const specificFile = args.find(a => a.startsWith('--file='))?.split('=')[1];
+const filesSelector = args.find(a => a.startsWith('--files='))?.split('=')[1];
+const suitesSelector = args.find(a => a.startsWith('--suites='))?.split('=')[1];
+const profile = args.find(a => a.startsWith('--profile='))?.split('=')[1];
 const verbose = args.includes('--verbose');
 const failFast = args.includes('--fail-fast');
 
@@ -74,26 +85,75 @@ console.log();
 // Build test list based on filters
 let testsToRun = [];
 
-if (specificFile) {
+const orderedTypes = ['smoke', 'unit', 'integration'];
+
+function appendSuiteTests(type) {
+  if (!TEST_SUITES[type]) return;
+  testsToRun.push(...TEST_SUITES[type].files.map(f => ({ file: f, type })));
+}
+
+if (filesSelector) {
+  const tokens = filesSelector.split(',').map(s => s.trim()).filter(Boolean);
+  for (const token of tokens) {
+    for (const [type, suite] of Object.entries(TEST_SUITES)) {
+      const matched = suite.files.filter(f => f.includes(token));
+      testsToRun.push(...matched.map(f => ({ file: f, type })));
+    }
+  }
+} else if (specificFile) {
   // Find file by partial name match
   for (const [type, suite] of Object.entries(TEST_SUITES)) {
     const matched = suite.files.filter(f => f.includes(specificFile));
     testsToRun.push(...matched.map(f => ({ file: f, type })));
+  }
+} else if (suitesSelector) {
+  const suites = suitesSelector.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  for (const suiteType of suites) {
+    if (!TEST_SUITES[suiteType]) {
+      console.error(color('red', `Error: Unknown suite "${suiteType}". Available: smoke, unit, integration`));
+      process.exit(1);
+    }
+  }
+  for (const type of orderedTypes) {
+    if (suites.includes(type)) appendSuiteTests(type);
   }
 } else if (filter) {
   // Filter by suite type
   if (TEST_SUITES[filter]) {
     testsToRun = TEST_SUITES[filter].files.map(f => ({ file: f, type: filter }));
   } else {
-    console.error(color('red', `Error: Unknown filter "${filter}". Available: unit, integration`));
+    console.error(color('red', `Error: Unknown filter "${filter}". Available: smoke, unit, integration`));
     process.exit(1);
   }
+} else if (profile) {
+  const normalizedProfile = String(profile).toLowerCase();
+  const profileSuites = {
+    fast: ['smoke', 'unit'],
+    full: ['smoke', 'unit', 'integration'],
+  };
+
+  if (!profileSuites[normalizedProfile]) {
+    console.error(color('red', `Error: Unknown profile "${profile}". Available: fast, full`));
+    process.exit(1);
+  }
+
+  for (const type of profileSuites[normalizedProfile]) {
+    appendSuiteTests(type);
+  }
 } else {
-  // Run all tests
-  for (const [type, suite] of Object.entries(TEST_SUITES)) {
-    testsToRun.push(...suite.files.map(f => ({ file: f, type })));
+  // Run all tests (smoke first, then unit, then integration)
+  for (const type of orderedTypes) {
+    appendSuiteTests(type);
   }
 }
+
+// Deduplicate files while preserving order
+const seen = new Set();
+testsToRun = testsToRun.filter(({ file }) => {
+  if (seen.has(file)) return false;
+  seen.add(file);
+  return true;
+});
 
 if (testsToRun.length === 0) {
   console.error(color('red', 'Error: No tests found matching criteria'));
@@ -101,6 +161,15 @@ if (testsToRun.length === 0) {
 }
 
 console.log(color('cyan', `Running ${testsToRun.length} test ${testsToRun.length === 1 ? 'file' : 'files'}...\n`));
+if (profile) {
+  console.log(color('dim', `Test profile: ${profile.toLowerCase()}`));
+}
+if (suitesSelector) {
+  console.log(color('dim', `Target suites: ${suitesSelector}`));
+}
+if (filesSelector) {
+  console.log(color('dim', `Target files token(s): ${filesSelector}`));
+}
 
 // Results tracking
 const results = {
@@ -128,22 +197,60 @@ for (const { file, type } of testsToRun) {
 
   process.stdout.write(color('dim', `[${suiteName}] `) + `${shortName.padEnd(40)} `);
 
+  // Files using custom test format (not node:test compatible — use plain `node` runner)
+  const CUSTOM_FORMAT_FILES = [
+    'integration-framework-fusion.test.js',
+    'integration-agent-fusion.test.js',
+  ];
+  const isCustomFormat = CUSTOM_FORMAT_FILES.some(f => file.endsWith(f));
+
   try {
-    const output = execSync(`node --test "${filePath}"`, {
+    const output = execSync(`node ${isCustomFormat ? '' : '--test'} "${filePath}"`, {
       encoding: 'utf-8',
       stdio: verbose ? 'inherit' : 'pipe',
       cwd: path.resolve(__dirname, '..', '..'),
       timeout: 60000, // 60 second timeout per test file
     });
 
-    console.log(color('green', '✓ PASS'));
-    results.passed.push({ file, type });
+    if (isCustomFormat) {
+      // Parse custom ✅/❌ format
+      const passCount = (output.match(/✅/g) || []).length;
+      const failCount = (output.match(/❌/g) || []).length;
+      if (failCount > 0) {
+        console.log(color('red', `✗ FAIL`) + color('dim', ` (${passCount} pass, ${failCount} fail)`));
+        results.failed.push({ file, type, passCount, failCount, failures: [] });
+      } else {
+        console.log(color('green', `✓ PASS`) + color('dim', ` (${passCount} pass)`));
+        results.passed.push({ file, type });
+      }
+    } else {
+      console.log(color('green', '✓ PASS'));
+      results.passed.push({ file, type });
+    }
 
   } catch (error) {
     // node --test returns exit code 1 when tests fail, but we need to parse the output
     const stderr = error.stderr || '';
     const stdout = error.stdout || '';
     const fullOutput = stdout + stderr;
+
+    // Custom format files: parse ✅/❌ even on non-zero exit code
+    if (isCustomFormat) {
+      const passCount = (fullOutput.match(/✅/g) || []).length;
+      const failCount = (fullOutput.match(/❌/g) || []).length;
+      if (failCount > 0) {
+        console.log(color('red', `✗ FAIL`) + color('dim', ` (${passCount} pass, ${failCount} fail)`));
+        results.failed.push({ file, type, passCount, failCount, failures: [] });
+      } else if (passCount > 0) {
+        console.log(color('green', `✓ PASS`) + color('dim', ` (${passCount} pass)`));
+        results.passed.push({ file, type });
+      } else {
+        console.log(color('red', '✗ ERROR'));
+        results.failed.push({ file, type, error: 'Command error', stderr: stderr.substring(0, 200) });
+      }
+      if (failFast && results.failed.length > 0) break;
+      continue;
+    }
 
     // Check if this is a "test failure" (expected) vs "command failure" (syntax error etc)
     const isTestFailure = fullOutput.includes('not ok') || fullOutput.includes('# fail');

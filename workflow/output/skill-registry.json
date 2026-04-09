@@ -6,11 +6,21 @@
       "workflow",
       "orchestration"
     ],
+    "type": "domain-skill",
+    "loadLevel": "task",
+    "dependencies": [],
+    "maxTokens": 800,
+    "triggers": {},
     "version": "1.0.0",
     "evolutionCount": 0,
     "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\RichManGo\\workflow\\skills\\workflow-orchestration.md",
-    "createdAt": "2026-03-13T06:24:23.106Z"
+    "usageCount": 0,
+    "effectiveCount": 0,
+    "lastUsedAt": null,
+    "lastEffectiveAt": null,
+    "retiredAt": null,
+    "filePath": "C:\\workspace\\WorkFlowAgent\\workflow\\skills\\workflow-orchestration.md",
+    "createdAt": "2026-03-30T16:17:40.070Z"
   },
   {
     "name": "code-review",
@@ -19,167 +29,28 @@
       "quality",
       "review"
     ],
+    "type": "domain-skill",
+    "loadLevel": "task",
+    "dependencies": [],
+    "maxTokens": 800,
+    "triggers": {},
     "version": "1.0.0",
     "evolutionCount": 0,
     "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\RichManGo\\workflow\\skills\\code-review.md",
-    "createdAt": "2026-03-13T06:24:23.109Z"
-  },
-  {
-    "name": "api-design",
-    "description": "REST/RPC API design rules and patterns",
-    "domains": [
-      "backend",
-      "api"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\RichManGo\\workflow\\skills\\api-design.md",
-    "createdAt": "2026-03-13T06:24:23.110Z"
-  },
-  {
-    "name": "go-crud",
-    "description": "Go language CRUD implementation patterns",
-    "domains": [
-      "backend",
-      "go",
-      "database"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\RichManGo\\workflow\\skills\\go-crud.md",
-    "createdAt": "2026-03-13T06:24:23.111Z"
-  },
-  {
-    "name": "unity-csharp",
-    "description": "Unity C# development patterns and pitfalls",
-    "domains": [
-      "unity",
-      "csharp",
-      "game"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\RichManGo\\workflow\\skills\\unity-csharp.md",
-    "createdAt": "2026-03-13T06:24:23.113Z"
-  },
-  {
-    "name": "lua-scripting",
-    "description": "Lua scripting patterns for game engines",
-    "domains": [
-      "lua",
-      "game",
-      "scripting"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\RichManGo\\workflow\\skills\\lua-scripting.md",
-    "createdAt": "2026-03-13T06:24:23.114Z"
-  },
-  {
-    "name": "project-onboarding",
-    "description": "Legacy project onboarding: familiarise → distil → execute",
-    "domains": [
-      "onboarding",
-      "legacy"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\RichManGo\\workflow\\skills\\project-onboarding.md",
-    "createdAt": "2026-03-13T06:24:23.115Z"
-  },
-  {
-    "name": "architecture-design",
-    "description": "Architecture design patterns, principles and best practices",
-    "domains": [
-      "architecture",
-      "design"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\RichManGo\\workflow\\skills\\architecture-design.md",
-    "createdAt": "2026-03-13T06:25:11.906Z"
-  },
-  {
-    "name": "code-development",
-    "description": "Code development patterns, coding standards and best practices",
-    "domains": [
-      "development",
-      "coding"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\RichManGo\\workflow\\skills\\code-development.md",
-    "createdAt": "2026-03-13T06:25:11.908Z"
-  },
-  {
-    "name": "test-report",
-    "description": "Test report writing standards and quality assurance patterns",
-    "domains": [
-      "testing",
-      "qa"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\RichManGo\\workflow\\skills\\test-report.md",
-    "createdAt": "2026-03-13T06:25:11.909Z"
-  },
-  {
-    "name": "javascript-dev",
-    "description": "JavaScript development patterns",
-    "domains": [
-      "frontend",
-      "backend",
-      "javascript"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\WorkFlowAgent\\workflow\\skills\\javascript-dev.md",
-    "createdAt": "2026-03-14T03:20:12.398Z"
-  },
-  {
-    "name": "java-dev",
-    "description": "Java development patterns",
-    "domains": [
-      "backend",
-      "java"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\WorkFlowAgent\\workflow\\skills\\java-dev.md",
-    "createdAt": "2026-03-15T09:11:50.148Z"
-  },
-  {
-    "name": "flutter-dev",
-    "description": "Flutter/Dart development patterns",
-    "domains": [
-      "flutter",
-      "dart",
-      "mobile"
-    ],
-    "version": "1.0.0",
-    "evolutionCount": 0,
-    "lastEvolvedAt": null,
-    "filePath": "C:\\workspace\\WorkFlowAgent\\workflow\\skills\\flutter-dev.md",
-    "createdAt": "2026-03-15T09:28:03.998Z"
+    "usageCount": 0,
+    "effectiveCount": 0,
+    "lastUsedAt": null,
+    "lastEffectiveAt": null,
+    "retiredAt": null,
+    "filePath": "C:\\workspace\\WorkFlowAgent\\workflow\\skills\\code-review.md",
+    "createdAt": "2026-03-30T16:17:40.071Z"
   },
   {
     "name": "python-dev",
-    "description": "Python development best practices (OpenCV, EasyOCR, automation)",
+    "description": "Python development patterns",
     "domains": [
-      "python",
-      "automation",
-      "computer-vision"
+      "backend",
+      "python"
     ],
     "type": "domain-skill",
     "loadLevel": "task",
@@ -195,6 +66,155 @@
     "lastEffectiveAt": null,
     "retiredAt": null,
     "filePath": "C:\\workspace\\WorkFlowAgent\\workflow\\skills\\python-dev.md",
-    "createdAt": "2026-03-22T00:43:05.384Z"
+    "createdAt": "2026-03-30T16:17:40.073Z"
+  },
+  {
+    "name": "unity-csharp",
+    "description": "Unity C# development patterns and pitfalls",
+    "domains": [
+      "unity",
+      "csharp",
+      "game"
+    ],
+    "type": "domain-skill",
+    "loadLevel": "task",
+    "dependencies": [],
+    "maxTokens": 800,
+    "triggers": {},
+    "version": "1.0.0",
+    "evolutionCount": 0,
+    "lastEvolvedAt": null,
+    "usageCount": 0,
+    "effectiveCount": 0,
+    "lastUsedAt": null,
+    "lastEffectiveAt": null,
+    "retiredAt": null,
+    "filePath": "C:\\workspace\\WorkFlowAgent\\workflow\\skills\\unity-csharp.md",
+    "createdAt": "2026-03-31T02:14:12.925Z"
+  },
+  {
+    "name": "api-design",
+    "description": "REST/RPC API design rules and patterns",
+    "domains": [
+      "backend",
+      "api"
+    ],
+    "type": "domain-skill",
+    "loadLevel": "task",
+    "dependencies": [],
+    "maxTokens": 800,
+    "triggers": {},
+    "version": "1.0.0",
+    "evolutionCount": 0,
+    "lastEvolvedAt": null,
+    "usageCount": 0,
+    "effectiveCount": 0,
+    "lastUsedAt": null,
+    "lastEffectiveAt": null,
+    "retiredAt": null,
+    "filePath": "C:\\workspace\\WorkFlowAgent\\workflow\\skills\\api-design.md",
+    "createdAt": "2026-03-31T12:16:49.752Z"
+  },
+  {
+    "name": "project-standards",
+    "description": "Auto-discovered project conventions, coding standards, and toolchain configuration",
+    "domains": [
+      "standards",
+      "conventions",
+      "project"
+    ],
+    "type": "standards",
+    "loadLevel": "project",
+    "dependencies": [],
+    "maxTokens": 1200,
+    "triggers": {
+      "keywords": [
+        "standard",
+        "convention",
+        "style",
+        "lint",
+        "format",
+        "naming",
+        "structure"
+      ],
+      "roles": [
+        "analyst",
+        "architect",
+        "developer",
+        "reviewer"
+      ]
+    },
+    "version": "1.0.0",
+    "evolutionCount": 0,
+    "lastEvolvedAt": null,
+    "usageCount": 0,
+    "effectiveCount": 0,
+    "lastUsedAt": null,
+    "lastEffectiveAt": null,
+    "retiredAt": null,
+    "filePath": "C:\\workspace\\WorkFlowAgent\\.workflow\\skills\\project-standards.md",
+    "createdAt": "2026-03-31T12:19:54.958Z"
+  },
+  {
+    "name": "javascript-dev",
+    "description": "JavaScript development patterns",
+    "domains": [
+      "frontend",
+      "backend",
+      "javascript"
+    ],
+    "type": "domain-skill",
+    "loadLevel": "task",
+    "dependencies": [],
+    "maxTokens": 800,
+    "triggers": {},
+    "version": "1.0.2",
+    "evolutionCount": 2,
+    "lastEvolvedAt": "2026-04-02T16:22:35.279Z",
+    "usageCount": 0,
+    "effectiveCount": 0,
+    "lastUsedAt": null,
+    "lastEffectiveAt": null,
+    "retiredAt": null,
+    "filePath": "C:\\workspace\\WorkFlowAgent\\workflow\\skills\\javascript-dev.md",
+    "createdAt": "2026-04-01T04:10:52.898Z"
+  },
+  {
+    "name": "stable-pattern-long-term-memory",
+    "description": "Proven patterns and idioms for workflow completion pattern: sequential outcome=success.",
+    "domains": [
+      "patterns"
+    ],
+    "type": "domain-skill",
+    "loadLevel": "task",
+    "dependencies": [],
+    "maxTokens": 800,
+    "triggers": {
+      "keywords": [
+        "long-term-memory",
+        "workflow-completion",
+        "mode:sequential",
+        "outcome:success",
+        "workflow",
+        "completion",
+        "pattern",
+        "sequential",
+        "outcomesuccess"
+      ],
+      "roles": []
+    },
+    "version": "1.0.1",
+    "evolutionCount": 1,
+    "lastEvolvedAt": "2026-04-02T10:05:26.831Z",
+    "usageCount": 0,
+    "effectiveCount": 0,
+    "lastUsedAt": null,
+    "lastEffectiveAt": null,
+    "retiredAt": null,
+    "filePath": "C:\\workspace\\WorkFlowAgent\\workflow\\skills\\stable-pattern-long-term-memory.md",
+    "createdAt": "2026-04-02T10:05:26.825Z",
+    "needsEnrichment": true,
+    "enrichmentTriggeredAt": null,
+    "enrichmentCompletedAt": null
   }
 ]

@@ -234,6 +234,82 @@ registerCommand(
 
 
 
+registerCommand(
+  'regenerate-agents',
+  'Regenerate IDE Agent definition files (.codebuddy, .cursor, .claude) with the latest prompt template. [--path <dir>] [--target codebuddy|cursor|claude-code] [--workflow-source <dir>]',
+  async (args, context) => {
+    const { generateIDEAgents, PROMPT_VERSION } = require('../core/agent-generator');
+    const { getConfig } = require('../core/config-loader');
+
+    // Allow --path override
+    const pathMatch   = args.match(/--path\s+(\S+)/);
+    const projectRoot = pathMatch
+      ? path.resolve(pathMatch[1])
+      : (context.orchestrator?.projectRoot || path.resolve(__dirname, '..', '..'));
+
+    // Allow --target filter
+    const targetMatch = args.match(/--target\s+(\S+)/);
+    const targets     = targetMatch ? [targetMatch[1]] : undefined;
+
+    // Allow --workflow-source override (remote reference mode)
+    const sourceMatch = args.match(/--workflow-source\s+(\S+)/);
+
+    let config;
+    try {
+      config = getConfig(projectRoot);
+    } catch (_) {
+      config = { projectName: path.basename(projectRoot), techStack: 'Unknown' };
+    }
+
+    // CLI --workflow-source overrides config.workflowSource
+    if (sourceMatch) {
+      config.workflowSource = path.resolve(sourceMatch[1]);
+    }
+
+    try {
+      const result = generateIDEAgents(projectRoot, config, {
+        dryRun: false,
+        force: true,   // Always overwrite — that's the whole point
+        targets,
+      });
+
+      const lines = [
+        `## 🔄 IDE Agent Files Regenerated (Prompt v${PROMPT_VERSION})`,
+        ``,
+      ];
+
+      if (result.generated.length > 0) {
+        lines.push(`### ✅ Generated`);
+        result.generated.forEach(g => lines.push(`- ${g}`));
+        lines.push('');
+      }
+      if (result.skipped.length > 0) {
+        lines.push(`### ⏭️ Skipped`);
+        result.skipped.forEach(s => lines.push(`- ${s}`));
+        lines.push('');
+      }
+      if (result.errors.length > 0) {
+        lines.push(`### ❌ Errors`);
+        result.errors.forEach(e => lines.push(`- ${e}`));
+        lines.push('');
+      }
+
+      lines.push(`> 💡 Restart your IDE or reload the project to pick up the updated agent definitions.`);
+
+      if (result.hints && result.hints.length > 0) {
+        lines.push('');
+        result.hints.forEach(h => lines.push(h));
+      }
+
+      return lines.join('\n');
+    } catch (err) {
+      return `❌ Agent regeneration failed: ${err.message}`;
+    }
+  }
+);
+
+
+
 }
 
 module.exports = { registerInfraCommands };

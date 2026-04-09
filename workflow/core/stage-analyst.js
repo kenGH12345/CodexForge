@@ -16,9 +16,10 @@ const { DECISION_QUESTIONS } = require('./socratic-engine');
 const { Observability } = require('./observability');
 const { translateMdFile } = require('./i18n-translator');
 const { getPromptSlotManager } = require('./prompt-builder');
-const { runEvoMapFeedback } = require('./stage-runner-utils');
+const { runEvoMapFeedback, recordSelfReport, runStageMetricsGate } = require('./stage-runner-utils');
 const { ContractViolationError } = require('./file-ref-bus');
 const { RequestTriage } = require('./request-triage');
+const { extractJsonBlock } = require('./agent-output-schema');
 const {
   storeAnalyseContext,
   webSearchHelper,
@@ -47,6 +48,80 @@ function _recordPromptABOutcome(agentRole, gatePassed, correctionRounds, tokensU
   });
 }
 
+function _normalizeStableId(prefix, raw, index) {
+  const normalized = String(raw || '').trim();
+  if (/^[A-Z]{2,6}-\d{1,6}$/i.test(normalized)) {
+    return normalized.toUpperCase();
+  }
+  return `${prefix}-${String(index + 1).padStart(3, '0')}`;
+}
+
+function _extractRequirementItemsFromJson(jsonBlock) {
+  if (!jsonBlock || !Array.isArray(jsonBlock.requirements)) return [];
+
+  return jsonBlock.requirements.map((req, i) => {
+    if (typeof req === 'string') {
+      return {
+        id: _normalizeStableId('REQ', null, i),
+        text: req.trim(),
+        acceptanceCriteria: [],
+      };
+    }
+
+    const acRaw = Array.isArray(req?.acceptanceCriteria)
+      ? req.acceptanceCriteria
+      : (Array.isArray(req?.acceptance_criteria) ? req.acceptance_criteria : []);
+
+    const acceptanceCriteria = acRaw.map((ac, acIdx) => {
+      if (typeof ac === 'string') {
+        return {
+          id: _normalizeStableId('AC', null, acIdx),
+          text: ac.trim(),
+        };
+      }
+      return {
+        id: _normalizeStableId('AC', ac?.id, acIdx),
+        text: String(ac?.text || ac?.description || '').trim(),
+      };
+    }).filter(ac => ac.text.length > 0);
+
+    return {
+      id: _normalizeStableId('REQ', req?.id, i),
+      text: String(req?.text || req?.description || req?.title || '').trim(),
+      acceptanceCriteria,
+    };
+  }).filter(r => r.text.length > 0);
+}
+
+function _writeRequirementTraceability(outputDir, analyseContent) {
+  try {
+    const jsonBlock = extractJsonBlock(analyseContent || '');
+    const requirements = _extractRequirementItemsFromJson(jsonBlock);
+    if (!Array.isArray(requirements) || requirements.length === 0) return null;
+
+    const totalAcceptanceCriteria = requirements.reduce((sum, r) => sum + (r.acceptanceCriteria?.length || 0), 0);
+    const traceability = {
+      version: '1.0',
+      generatedAt: new Date().toISOString(),
+      source: 'ANALYSE',
+      requirementFile: 'requirement.md',
+      requirements,
+      stats: {
+        requirementCount: requirements.length,
+        acceptanceCriteriaCount: totalAcceptanceCriteria,
+      },
+    };
+
+    const tracePath = path.join(outputDir, 'requirement-traceability.json');
+    const tmpPath = `${tracePath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(traceability, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, tracePath);
+    return traceability;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Runs the ANALYSE stage: requirement clarification, enrichment, and analysis.
  *
@@ -64,7 +139,7 @@ async function _runAnalyst(rawRequirement) {
   if (this.handoffLog) {
     this.handoffLog.printStageHeader('ANALYSE', 'AnalystAgent');
   } else {
-    console.log(`\n[Orchestrator] Stage: ANALYSE (AnalystAgent)`);
+    console.error(`\n[Orchestrator] Stage: ANALYSE (AnalystAgent)`);
   }
   if (!this.stageCtx) {
     throw new Error('[Orchestrator] stageCtx is not initialised. This is a bug – StageContextStore should be created in the Orchestrator constructor.');
@@ -81,7 +156,7 @@ async function _runAnalyst(rawRequirement) {
   if (clarResult.riskNotes && clarResult.riskNotes.length > 0) {
     try {
       const scopeDecision = this.socratic.askAsync(DECISION_QUESTIONS.SCOPE_CLARIFICATION, 2);
-      console.log(`[Orchestrator] ⚡ Scope clarification (non-blocking): "${scopeDecision.optionText}"`);
+      console.error(`[Orchestrator] ⚡ Scope clarification (non-blocking): "${scopeDecision.optionText}"`);
       if (scopeDecision.optionIndex === 0) {
         clarResult.enrichedRequirement = `[Scope: Minimal – implement only the core feature]\n\n${clarResult.enrichedRequirement}`;
       } else if (scopeDecision.optionIndex === 1) {
@@ -120,7 +195,7 @@ async function _runAnalyst(rawRequirement) {
       if (uniqueTechTerms.length > 0) {
         const reqSnippet = (clarResult.enrichedRequirement || '').slice(0, 100).replace(/\n/g, ' ');
         const searchQuery = `${uniqueTechTerms.join(' ')} latest API compatibility constraints ${reqSnippet}`.slice(0, 200);
-        console.log(`[Orchestrator] \uD83C\uDF10 Tech feasibility: searching for: "${searchQuery.slice(0, 80)}..."`);
+        console.error(`[Orchestrator] \uD83C\uDF10 Tech feasibility: searching for: "${searchQuery.slice(0, 80)}..."`);
         const searchResult = await webSearchHelper(this, searchQuery, {
           maxResults: 3,
           label: 'Tech Feasibility (Analyst)',
@@ -132,7 +207,7 @@ async function _runAnalyst(rawRequirement) {
           });
           // Optimization B: structured section header for LLM clarity
           clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n## Context: Technical Feasibility Research\n${feasibilityBlock}`;
-          console.log(`[Orchestrator] 🌐 Tech feasibility: ${searchResult.results.length} result(s) appended to enriched requirement.`);
+          console.error(`[Orchestrator] 🌐 Tech feasibility: ${searchResult.results.length} result(s) appended to enriched requirement.`);
 
           // ── ADR-30 P3: Persist ANALYSE search results to project knowledge base ──
           try {
@@ -158,7 +233,7 @@ async function _runAnalyst(rawRequirement) {
             const tmpPath = knowledgePath + '.tmp';
             fs.writeFileSync(tmpPath, JSON.stringify(existing, null, 2), 'utf-8');
             fs.renameSync(tmpPath, knowledgePath);
-            console.log(`[Orchestrator] 💾 ANALYSE search results persisted (${existing.length} total entries).`);
+            console.error(`[Orchestrator] 💾 ANALYSE search results persisted (${existing.length} total entries).`);
           } catch (persistErr) {
             console.warn(`[Orchestrator] ⚠️  Failed to persist ANALYSE search results (non-fatal): ${persistErr.message}`);
           }
@@ -170,7 +245,7 @@ async function _runAnalyst(rawRequirement) {
   }
 
   if (!clarResult.skipped && clarResult.rounds > 0) {
-    console.log(`[Orchestrator] ✅ Requirement clarified in ${clarResult.rounds} round(s). Proceeding to analysis.`);
+    console.error(`[Orchestrator] ✅ Requirement clarified in ${clarResult.rounds} round(s). Proceeding to analysis.`);
   }
 
   if (clarResult.qualityMetrics && this.obs) {
@@ -187,9 +262,9 @@ async function _runAnalyst(rawRequirement) {
       if (moduleSeedInfo && moduleSeedInfo.length > 0) {
         // Optimization B: structured section header for LLM clarity
         clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n## Context: Codebase Module Structure\n${moduleSeedInfo}`;
-        console.log(`[Orchestrator] 🗺️  Code Graph seed info injected into AnalystAgent (${moduleSeedInfo.length} chars). Module Map will be grounded in real codebase structure.`);
+        console.error(`[Orchestrator] 🗺️  Code Graph seed info injected into AnalystAgent (${moduleSeedInfo.length} chars). Module Map will be grounded in real codebase structure.`);
       } else {
-        console.log(`[Orchestrator] 🗺️  Code Graph has no module summary (new project or single-directory). Module Map will be generated from scratch.`);
+        console.error(`[Orchestrator] 🗺️  Code Graph has no module summary (new project or single-directory). Module Map will be generated from scratch.`);
       }
     }
   } catch (seedErr) {
@@ -213,11 +288,26 @@ async function _runAnalyst(rawRequirement) {
         // Optimization B: structured section header for LLM clarity
         clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n## Context: Past Experience\n${expBlock}`;
         this.obs.recordExpUsage({ injected: analystInjectedExpIds.length });
-        console.log(`[Orchestrator] 📚 ANALYSE experience injection: ${analystInjectedExpIds.length} experience(s) from ExperienceStore (keyword-scored + LLM-expanded)`);
+        console.error(`[Orchestrator] 📚 ANALYSE experience injection: ${analystInjectedExpIds.length} experience(s) from ExperienceStore (keyword-scored + LLM-expanded)`);
       }
     }
   } catch (expErr) {
     console.warn(`[Orchestrator] ⚠️  ANALYSE experience injection failed (non-fatal): ${expErr.message}`);
+  }
+
+  // L3: Inject structured session memory (cross-session continuity, low token cost)
+  try {
+    const { TaskHistory } = require('./task-history');
+    const taskHistory = new TaskHistory();
+    const sessionMemoryBlock = taskHistory.getSessionMemoryBlock(3);
+    if (sessionMemoryBlock) {
+      clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n${sessionMemoryBlock}`;
+      console.error(`[Orchestrator] 🧠 Session Memory injected for AnalystAgent (${sessionMemoryBlock.length} chars)`);
+    }
+  } catch (memErr) {
+    if (process.env.DEBUG) {
+      console.warn(`[Orchestrator] Session memory injection failed for ANALYSE (non-fatal): ${memErr.message}`);
+    }
   }
 
   // ── Optimization F: Pre-assess complexity for conditional prompt injection ──
@@ -231,7 +321,7 @@ async function _runAnalyst(rawRequirement) {
     if (triageResult.score < 15) preComplexityLevel = 'simple';
     else if (triageResult.score < 40) preComplexityLevel = 'moderate';
     else preComplexityLevel = 'complex';
-    console.log(`[Orchestrator] ⚡ Pre-complexity assessment: ${preComplexityLevel} (score=${triageResult.score})`);
+    console.error(`[Orchestrator] ⚡ Pre-complexity assessment: ${preComplexityLevel} (score=${triageResult.score})`);
   } catch (triageErr) {
     console.warn(`[Orchestrator] ⚠️  Pre-complexity assessment failed (non-fatal): ${triageErr.message}`);
   }
@@ -256,7 +346,7 @@ async function _runAnalyst(rawRequirement) {
       if (retryOutputPath && fs.existsSync(retryOutputPath)) {
         const retryContent = fs.readFileSync(retryOutputPath, 'utf-8').trim();
         if (retryContent.length > 0) {
-          console.log(`[Orchestrator] ✅ ANALYST retry succeeded (${retryContent.length} chars).`);
+          console.error(`[Orchestrator] ✅ ANALYST retry succeeded (${retryContent.length} chars).`);
           // Use the retry output path for the rest of the stage
           return await _finalizeAnalyst.call(this, retryOutputPath, clarResult, analystInjectedExpIds);
         }
@@ -282,7 +372,10 @@ async function _runAnalyst(rawRequirement) {
  * @returns {Promise<string>} outputPath
  */
 async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
-  const analyseCtx = storeAnalyseContext(this, outputPath, clarResult);
+  const analyseCtx = await storeAnalyseContext(this, outputPath, clarResult);
+
+  // ── P0 traceability: build requirement → acceptance criteria matrix artifact ──
+  let traceabilityMeta = null;
 
   // ── P1 fix: EvoMap feedback loop for ANALYSE stage (was completely missing) ───
   // When the requirement analysis completes successfully, we close the learning loop.
@@ -292,10 +385,37 @@ async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
     if (outputPath && fs.existsSync(outputPath)) {
       analyseContent = fs.readFileSync(outputPath, 'utf-8');
     }
+
+    const traceability = _writeRequirementTraceability(this._outputDir, analyseContent);
+    if (traceability) {
+      traceabilityMeta = {
+        requirementCount: traceability.stats?.requirementCount || 0,
+        acceptanceCriteriaCount: traceability.stats?.acceptanceCriteriaCount || 0,
+        file: 'requirement-traceability.json',
+      };
+      console.error(`[Orchestrator] 🔗 Requirement traceability generated: ${traceabilityMeta.requirementCount} REQ, ${traceabilityMeta.acceptanceCriteriaCount} AC.`);
+    }
+
     await runEvoMapFeedback(this, {
       injectedExpIds: analystInjectedExpIds,
       errorContext: analyseContent,
       stageLabel: 'ANALYSE',
+    });
+
+    // ── Agent Self-Report: extract self-report from ANALYST output ──
+    recordSelfReport('ANALYSE', analyseContent, { agentRole: AgentRole.ANALYST });
+
+    // ── Metrics Quality Gate: validate ANALYSE stage runtime metrics ──────
+    // Non-blocking: records threshold violations as risks, does not abort pipeline.
+    const analyseDurationMs = (this.obs && typeof this.obs.getTotalDurationMs === 'function')
+      ? this.obs.getTotalDurationMs()
+      : 0;
+    const analyseLlmCalls = (this.obs && this.obs._llmCallCount) ? this.obs._llmCallCount : 0;
+    runStageMetricsGate(this, {
+      stageName: 'ANALYSE',
+      durationMs: analyseDurationMs,
+      errorCount: 0,
+      llmCalls: analyseLlmCalls,
     });
   } catch (evoErr) {
     console.warn(`[Orchestrator] ⚠️  EvoMap feedback failed for ANALYSE stage (non-fatal): ${evoErr.message}`);
@@ -314,17 +434,21 @@ async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
       const existingAnalyse = this.stageCtx.get('ANALYSE') || {};
       this.stageCtx.set('ANALYSE', {
         ...existingAnalyse,
-        meta: { ...(existingAnalyse.meta || {}), complexity },
+        meta: {
+          ...(existingAnalyse.meta || {}),
+          complexity,
+          traceability: traceabilityMeta || (existingAnalyse.meta || {}).traceability || null,
+        },
       });
     }
 
-    console.log(`[Orchestrator] 📊 AEF Complexity Assessment: level=${complexity.level}, score=${complexity.score}`);
+    console.error(`[Orchestrator] 📊 AEF Complexity Assessment: level=${complexity.level}, score=${complexity.score}`);
     if (complexity.level === 'simple') {
-      console.log(`[Orchestrator] ⚡ AEF Fast-Path: Simple task detected — ARCHITECT stage will use streamlined review.`);
+      console.error(`[Orchestrator] ⚡ AEF Fast-Path: Simple task detected — ARCHITECT stage will use streamlined review.`);
     } else if (complexity.level === 'moderate') {
-      console.log(`[Orchestrator] ▶️  AEF Standard-Path: Moderate task detected — standard review flow.`);
+      console.error(`[Orchestrator] ▶️  AEF Standard-Path: Moderate task detected — standard review flow.`);
     } else if (complexity.level === 'complex' || complexity.level === 'very_complex') {
-      console.log(`[Orchestrator] 🔍 AEF Full-Path: ${complexity.level === 'very_complex' ? 'Very complex' : 'Complex'} task detected — enhanced review budgets will be applied.`);
+      console.error(`[Orchestrator] 🔍 AEF Full-Path: ${complexity.level === 'very_complex' ? 'Very complex' : 'Complex'} task detected — enhanced review budgets will be applied.`);
     }
 
     const cfgAutoFix = (this._config && this._config.autoFixLoop) || {};
@@ -337,8 +461,8 @@ async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
     });
     if (updatedStrategy.maxFixRounds !== this._adaptiveStrategy.maxFixRounds ||
         updatedStrategy.maxReviewRounds !== this._adaptiveStrategy.maxReviewRounds) {
-      console.log(`[Orchestrator] 📈 Adaptive strategy re-derived after ANALYSE (complexity=${complexity.level}, score=${complexity.score}):`);
-      console.log(`[Orchestrator]    maxFixRounds: ${this._adaptiveStrategy.maxFixRounds} → ${updatedStrategy.maxFixRounds} | maxReviewRounds: ${this._adaptiveStrategy.maxReviewRounds} → ${updatedStrategy.maxReviewRounds}`);
+      console.error(`[Orchestrator] 📈 Adaptive strategy re-derived after ANALYSE (complexity=${complexity.level}, score=${complexity.score}):`);
+      console.error(`[Orchestrator]    maxFixRounds: ${this._adaptiveStrategy.maxFixRounds} → ${updatedStrategy.maxFixRounds} | maxReviewRounds: ${this._adaptiveStrategy.maxReviewRounds} → ${updatedStrategy.maxReviewRounds}`);
       this._adaptiveStrategy = updatedStrategy;
     }
 
@@ -346,7 +470,7 @@ async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
     if (this.llmRouter && typeof this.llmRouter.applyTierRouting === 'function') {
       const tierResult = this.llmRouter.applyTierRouting(complexity);
       if (tierResult.applied) {
-        console.log(`[Orchestrator] 🎯 P1 Auto-Tier: ${tierResult.changes.length} role(s) re-routed based on complexity=${complexity.level}.`);
+        console.error(`[Orchestrator] 🎯 P1 Auto-Tier: ${tierResult.changes.length} role(s) re-routed based on complexity=${complexity.level}.`);
         if (this.stageCtx) {
           const existingAnalyseCtx = this.stageCtx.get('ANALYSE') || {};
           this.stageCtx.set('ANALYSE', {
@@ -387,7 +511,7 @@ async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
         contextSummary:      analyseCtx.summary,
         contractRetry:       true,
       });
-      console.log(`[Orchestrator] ✅ ANALYST contract retry succeeded.`);
+      console.error(`[Orchestrator] ✅ ANALYST contract retry succeeded.`);
     } else {
       throw pubErr;
     }

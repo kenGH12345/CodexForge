@@ -30,10 +30,34 @@ const { getGlobalEventBus, ExperienceEvents } = require('./experience-event-bus'
 
 class ExperienceStore {
   /**
-   * @param {string} [storePath] - Path to persist experience JSON
+   * @param {string|object} [options] - Path to persist experience JSON or options object
+   * @param {string} [options.projectRoot] - Project root for ADR-43 project-scoped experiences
+   * @param {string} [options.storePath] - Explicit path to experience store file
    */
-  constructor(storePath = null) {
-    this.storePath = storePath || path.join(PATHS.OUTPUT_DIR, 'experiences.json');
+  constructor(options = null) {
+    // Support both string (storePath) and object ({ projectRoot, storePath }) signatures
+    let storePath = null;
+    let projectRoot = null;
+    
+    if (typeof options === 'string') {
+      storePath = options;
+    } else if (options && typeof options === 'object') {
+      storePath = options.storePath || null;
+      projectRoot = options.projectRoot || null;
+    }
+    
+    // ADR-43: Scope-aware ExperienceStore
+    // If projectRoot is provided, use project-scoped store path
+    if (projectRoot && !storePath) {
+      const projectStoreDir = path.join(projectRoot, '.workflow');
+      // Ensure directory exists
+      if (!fs.existsSync(projectStoreDir)) {
+        fs.mkdirSync(projectStoreDir, { recursive: true });
+      }
+      this.storePath = path.join(projectStoreDir, 'experiences.json');
+    } else {
+      this.storePath = storePath || path.join(PATHS.OUTPUT_DIR, 'experiences.json');
+    }
     /** @type {Experience[]} */
     this.experiences = [];
     this._dirty = false;
@@ -598,8 +622,12 @@ class ExperienceStore {
 
         // P2-C: Auto-distill similar experiences before capacity eviction.
         // This preserves knowledge by merging instead of blindly evicting.
+        // Note: distill() is async (supports LLM semantic merge), but autoDistill
+        // is fire-and-forget here — we don't block _load() on it.
         if (typeof this.autoDistill === 'function') {
-          this.autoDistill();
+          this.autoDistill().catch(err => {
+            console.warn(`[ExperienceStore] ⚠️  Auto-distillation failed (non-fatal): ${err.message}`);
+          });
         }
 
         // P4a fix: enforce capacity cap using value-density based eviction
@@ -954,6 +982,16 @@ Object.assign(ExperienceStore.prototype, ExperienceTransferMixin);
 Object.assign(ExperienceStore.prototype, ExperienceDistillationMixin);
 Object.assign(ExperienceStore.prototype, ExperienceAbstractionMixin);
 Object.assign(ExperienceStore.prototype, ExperienceHealthMixin);
+
+// ─── Cheap LLM Injection for Distillation ─────────────────────────────────────
+// ExperienceDistillationMixin.distill() uses this._cheapLlmCall for LLM semantic merge.
+// This setter allows the Orchestrator to inject the cheap LLM call function at runtime.
+ExperienceStore.prototype.setCheapLlmCall = function(cheapLlmCall) {
+  if (typeof cheapLlmCall === 'function') {
+    this._cheapLlmCall = cheapLlmCall;
+    console.log(`[ExperienceStore] 🤖 Cheap LLM enabled for experience distillation.`);
+  }
+};
 
 // ─── Backward-Compatible Exports ────────────────────────────────────────────
 // All existing require('./experience-store') consumers continue to work unchanged.

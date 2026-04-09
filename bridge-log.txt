@@ -1,0 +1,369 @@
+﻿[ToolHooks] Auto-activated: Loading thick-tools-hooked.js
+[ToolHooks] Integration complete. All thick-tools now trigger BEFORE/AFTER hooks.
+[ToolHooks] Metrics logging: enabled
+node : [@babel/*] packages not found. Run: npm install @babel/parser @babel/traverse @bab
+el/generator @babel/types
+所在位置 行:1 字符: 33
++ ... kFlowAgent; node workflow/tools/ide-workflow-bridge.js run --requirem ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([@babel/*] pack...or @babel/types:String) [ 
+   ], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+鉁?AST Transform Engine loaded
+[ConfigLoader] No workflow.config.js found. Using built-in defaults.
+[ToolHookExecutor] Initialized (enabled: true)
+[Orchestrator] 馃敡 Tool Hook Executor initialized (P1: automatic tool-level hooks)
+[ConfigLoader] No workflow.config.js found. Using built-in defaults.
+[ExperienceStore] 馃摉 Synonym table loaded: 1 entries, 0 total hits
+[ExperienceStore] Loaded 85 experiences
+[ComplaintWall] Loaded 18 complaints
+[Orchestrator] 馃幆 SessionSignalDetector initialised (ADR-43: signal-driven experience capture).
+[Orchestrator] 馃敆 ExperienceStore 鈫?ComplaintWall bidirectional sync established.
+[SkillEvolution] Loaded 6 skills from registry
+[SkillEvolution] 馃尦 Loaded lineage DAG: 6 skills, 6 nodes
+[SelfReflection] Loaded 0 reflections (0 patterns tracked).
+[Orchestrator] 馃攳 SelfReflectionEngine initialised (0 historical reflections loaded).
+[Orchestrator] 馃敆 StageContextStore initialised for cross-stage context propagation.
+[Orchestrator] Registering 3 skills from workflow.config.js
+[SkillEvolution] Skill already registered: workflow-orchestration
+[SkillEvolution] Skill already registered: code-review
+[SkillEvolution] Skill already registered: api-design
+[SmartRouterEnhancement] 鉁?Router enhanced with bottleneck-aware routing
+[LlmRouter] 鉁?P2 SmartRouterEnhancement activated
+[ExperienceStore] 馃 LLM query expansion enabled.
+[SkillEvolution] 馃 LLM-Lite Skill Refiner injected
+[SkillEvolutionTriggers] Registered 7 evolution trigger handlers
+[Orchestrator] 馃攧 LoopGuard initialised (Plan-A: max 2 retries per backward edge)
+[IDEDetection] 馃彔 Running inside VS Code (detected via: env:TERM_PROGRAM=vscode, TERM_PROGRAM=vscode)
+[IDEDetection]    Available IDE capabilities: codebaseSearch, grepSearch, viewCodeItem, readFile, listDir, builtinLSP, callHierarchy, findReferences, goToDefinition, typeInference, terminal, editFile
+[CodeGraph] 馃彔 IDE semantic search available 鈥?CodeGraph operates in fallback mode
+[CodeGraph] 鉁?IDE search available - skipping graph initialization (lazy mode)
+[RunGuard] 馃洝锔? Initialised (calls鈮?0, tokens鈮?00K, time鈮?0min, budget=$5)
+[StageSmartSkip] 鈴笍  Initialised (rules: ARCHITECT(score<26), PLAN(score<51))
+[Orchestrator] 馃彈锔? ServiceContainer initialised with 28 service(s).
+[Orchestrator] 馃敡 StageRegistry initialised: [ANALYSE 鈫?ARCHITECT 鈫?PLAN 鈫?CODE 鈫?TEST]
+[Orchestrator] 馃 NegotiationEngine initialised (maxRounds=2).
+[Orchestrator] 馃摑 Structured Logger configured (outputDir=C:\workspace\WorkFlowAgent\output, session=ide-bridge-1774970389343).
+[Orchestrator] 馃寪 ExperienceRouter initialised.
+[Orchestrator] 鈿狅笍  [Contract] IStateMachine violations on 'stateMachine': Missing requir
+ed method: isTerminal
+[Orchestrator] 鈿狅笍  [Contract] IHookSystem violations on 'hooks': Missing required method
+: register; Method emit: expected minArity=2, got 1 (may be false positive with default/r
+est params); Missing required method: listRegistered
+[Orchestrator] 馃摐 Contract validation sweep complete (5 service(s) checked).
+[Orchestrator] 馃洝锔? SafeInterfaceProxy active (mode=warn, 12 shared objects protected).
+[MCPRegistry] Registered adapter: package-registry
+[MCPRegistry] Registered adapter: security-cve
+[MCPRegistry] Registered adapter: lsp
+[MCPRegistry] Registered adapter: code-quality
+[MCPRegistry] Registered adapter: ci-status
+[MCPRegistry] Registered adapter: license-compliance
+[MCPRegistry] Registered adapter: doc-gen
+[MCPRegistry] Registered adapter: llm-cost-router
+[MCPRegistry] Registered adapter: test-infra
+[AdapterPluginRegistry] 鉁?Registered plugin: "industry-research" 鈫?stages=[ARCHITECT], priority=50
+[AdapterPluginRegistry] 鉁?Registered plugin: "package-registry" 鈫?stages=[ARCHITECT,DEVELOPER], priority=55
+[AdapterPluginRegistry] 鉁?Registered plugin: "security-cve" 鈫?stages=[ARCHITECT,DEVELOPER], priority=65
+[AdapterPluginRegistry] 鉁?Registered plugin: "license-compliance" 鈫?stages=[ARCHITECT], priority=58
+[AdapterPluginRegistry] 鉁?Registered plugin: "figma-design" 鈫?stages=[ARCHITECT,DEVELOPER], priority=52
+[AdapterPluginRegistry] 鉁?Registered plugin: "api-research" 鈫?stages=[DEVELOPER], priority=50
+[AdapterPluginRegistry] 鉁?Registered plugin: "code-quality" 鈫?stages=[DEVELOPER], priority=60
+[AdapterPluginRegistry] 鉁?Registered plugin: "ci-status" 鈫?stages=[DEVELOPER,TESTER], priority=63
+[AdapterPluginRegistry] 鉁?Registered plugin: "doc-gen" 鈫?stages=[DEVELOPER], priority=45
+[AdapterPluginRegistry] 鉁?Registered plugin: "test-best-practices" 鈫?stages=[TESTER], priority=50
+[AdapterPluginRegistry] 鉁?Registered plugin: "test-infra" 鈫?stages=[TESTER], priority=43
+[Orchestrator] 馃攲 AdapterPluginRegistry initialised with 11 built-in plugin(s).
+[Orchestrator] 馃彔 IDE-First mode: VS Code detected. Agent prompts will prefer IDE tools.
+[Orchestrator]    LSP: IDE-native (self-spawned LSP skipped)
+[Orchestrator]    Search: IDE codebase_search preferred over CodeGraph.search()
+[Orchestrator] 馃攲 MCPRegistry initialised with PackageRegistry + SecurityCVE(OSV.dev) + LSP(IDE-native, self-spawn skipped) + CodeQuality(local) + CIStatus + LicenseCompliance(ClearlyDefined) + DocGen + LLMCostRouter(OpenRouter) + TestInfra adapter(s).
+
+[32m鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲[0m
+[32m鈺?                                                         鈺?[0m
+[32m鈺?[0m                 馃彔  FULL IDE AGENT MODE                  [32m鈺?[0m
+[32m鈺?                                                         鈺?[0m
+[32m鈺?[0m   [2mRunning inside VS Code with full LSP support[0m   [32m鈺?[0m
+[32m鈺?                                                         鈺?[0m
+[32m鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲[0m
+[32m鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?[0m
+[32m鈹?[0m 馃彔 Environment                                           [32m鈹?[0m
+[32m鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?[0m
+[32m鈹?[0m IDE:     VS Code                                         [32m鈹?[0m
+[32m鈹?[0m Key Cap: codebase search                                 [32m鈹?[0m
+[32m鈹?[0m Others:  +11 more                                        [32m鈹?[0m
+[32m鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?[0m
+
+[1mTool Priority:[0m
+  [32m1. IDE-native tools[0m (codebase_search, grep_search, view_code_item)
+  [2m2. Self-built fallback[0m (CodeGraph, LSPAdapter)
+
+[Orchestrator] 馃攧 MAPE Engine initialised (closed-loop self-governance).
+[runWorkflow] Starting full workflow for requirement: test...
+
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+[Orchestrator] 馃殌 Starting sequential workflow execution
+[Orchestrator] 馃搵 Requirement: test
+鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+
+[Orchestrator] 馃 SocraticChallenger initialized (maxRetries=1)
+[Orchestrator] 馃К EvolutionLoop initialized for self-evolution
+[Orchestrator] 馃敡 Initializing workflow...
+[StateMachine] Resuming from state: ARCHITECT
+[Orchestrator] StateMachine initialised. Resume state: ARCHITECT
+[MemoryManager] Building global context (strategy: undefined)...
+[MemoryManager] Scanning .js, .ts, .py, .go, .java, .cs, .lua code symbols...
+[MemoryManager] Extracting project context from source files...
+[MemoryManager] AGENTS.md written: C:\workspace\WorkFlowAgent\AGENTS.md
+[ArchKnowledgeCache] Cache written: C:\workspace\WorkFlowAgent\output\arch-knowledge-cache.json
+[ArchKnowledgeCache] Rebuilt sections: structure
+[ToolSelector] Large project detected (501 files). Using THICK tools strategy.
+[ThickTools:scanCodeSymbols] Scanned 80 files. ~3551 tokens.
+[MemoryManager] Starting file watcher on: C:\workspace\WorkFlowAgent
+[MemoryManager] Watcher active. Memory will auto-sync on changes.
+[Orchestrator] 馃搵 AGENTS.md loaded (11474 chars) 鈥?will be injected into all Agent prompts.
+[Orchestrator] 鈿狅笍  18 open complaint(s) need attention:
+  [minor] [Auto] Negative experience recorded: Interface contract text-block format may c
+ause cross-module inconsistency
+  [minor] [Auto] Negative experience recorded: Execution validation score below threshold
+  [minor] [Auto] Negative experience recorded: [LOW_CONFIDENCE] ANALYSE: Confidence 0.499
+99999999999994 < thresho
+[Orchestrator] 鈩癸笍  SkillWatcher deferred: ContextLoader not yet initialised (will activate on first LLM call).
+[MCPAdapter:package-registry] Connected (default registry: npm).
+[SafeInterfaceProxy] 鉂?HookSystem.register does not exist!
+  "register" is not a method or property of HookSystem.
+  Did you mean: HookSystem._registerBuiltins()?
+  Available methods (4): _registerBuiltins, emit, getEmitter, on
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the HookSystem API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:283:24)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[SafeInterfaceProxy] 鉂?HookSystem.register does not exist!
+  "register" is not a method or property of HookSystem.
+  Did you mean: HookSystem._registerBuiltins()?
+  Available methods (4): _registerBuiltins, emit, getEmitter, on
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the HookSystem API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:288:27)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[SafeInterfaceProxy] 鉂?HookSystem.listRegistered does not exist!
+  "listRegistered" is not a method or property of HookSystem.
+  Available methods (4): _registerBuiltins, emit, getEmitter, on
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the HookSystem API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:283:24)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[SafeInterfaceProxy] 鉂?HookSystem.listRegistered does not exist!
+  "listRegistered" is not a method or property of HookSystem.
+  Available methods (4): _registerBuiltins, emit, getEmitter, on
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the HookSystem API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:288:27)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[Orchestrator] 鈿狅笍  Contract IHookSystem: 2 violation(s):
+[Orchestrator]    - Method register: expected minArity=2, got 0 (may be false positive wi
+th default/rest params)
+[Orchestrator]    - Method emit: expected minArity=2, got 1 (may be false positive with d
+efault/rest params)
+[SafeInterfaceProxy] 鉂?StateMachine.isTerminal does not exist!
+  "isTerminal" is not a method or property of StateMachine.
+  Available methods (32): _acquireTransitionLock, _checkRequirementCompleteness, _getArti
+factSourceState, _jumpToInner, _readManifest, _recordArtifact, _releaseTransitionLock, _t
+ransitionInner, _validatePrecondition, _writeManifest, addConditionalTransition, flushRis
+ks, getArtifacts, getConditionalRules, getNextState...
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the StateMachine API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:283:24)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[SafeInterfaceProxy] 鉂?StateMachine.isTerminal does not exist!
+  "isTerminal" is not a method or property of StateMachine.
+  Available methods (32): _acquireTransitionLock, _checkRequirementCompleteness, _getArti
+factSourceState, _jumpToInner, _readManifest, _recordArtifact, _releaseTransitionLock, _t
+ransitionInner, _validatePrecondition, _writeManifest, addConditionalTransition, flushRis
+ks, getArtifacts, getConditionalRules, getNextState...
+  This is likely a cross-module interface mismatch (dark disconnection bug).
+  Check that the caller is using the correct method name from the StateMachine API.
+Error: Stack trace for debugging:
+    at Object.get (C:\workspace\WorkFlowAgent\workflow\core\safe-interface-proxy.js:190:2
+3)
+    at assertContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:288:27)
+    at validateContract (C:\workspace\WorkFlowAgent\workflow\core\contracts.js:336:10)
+    at Orchestrator._initWorkflow (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-
+init.js:150:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.
+js:63:25)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[Orchestrator] 馃敆 ExperienceStore linked to PromptBuilder (synonym expansion enabled).
+[SkillDiscovery] 鈴笍  Skill "project-standards" already exists with content (15 lines). Skipping.
+鈩癸笍 [Orchestrator] Workflow initialised {"projectId":"ide-bridge-1774970389343","resumeState":"ARCHITECT","outputDir":"C:\\workspace\\WorkFlowAgent\\output"}
+鈩癸笍 [Negotiation] Round counters reset for new workflow run
+[MCPAdapter:security-cve] Connected (provider: OSV.dev).
+[EventJournal] 馃摉 Attached to HookSystem 鈥?capturing all events to event-journal-ide-bridge-1774970389343-1774970389574.jsonl
+[IntrospectionManager] Initialized for session: ide-bridge-1774970389343-1774970389576
+[IntrospectionManager] Subscribed to workflow hooks
+[Orchestrator] 馃攳 Workflow Introspection Manager initialized
+
+鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+鈺?                                                                       鈺?鈺? 馃殌 WorkFlowAgent 路 鏅鸿兘宸ヤ綔娴佺紪鎺掔郴缁?                                   鈺?鈺?                                                                       鈺?鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈼?  ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈼?  ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈼?  PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈼?  CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+馃搶 鍚敤 wf 宸ヤ綔娴?鎴戝皢鎸夌収宸ヤ綔娴佹ā寮忓疄鏂介渶姹傘€傝鎴戝厛杩涜鍒嗘瀽鍜屾灦鏋勮鍒掋€?
+[Orchestrator] 馃攧 Agent Handoff Log initialized
+[Orchestrator] 馃攧 Agent Feedback System initialized
+[FeedbackHelpers] 鉁?Integrated with orchestrator lifecycle
+[Orchestrator] 馃敡 Tool Hook handlers registered
+[LSPAdapter] 馃彔 IDE environment detected 鈥?skipping self-spawned LSP.
+[LSPAdapter]    IDE already provides LSP capabilities (definition, references, hover, symbols).
+[LSPAdapter]    Agent should use IDE tools: view_code_item, codebase_search, grep_search.
+[LSPAdapter]    CodeGraph regex-based indexing remains available as fallback.
+[Orchestrator] 鉁?Initialization complete (67ms)
+[Orchestrator] 馃搷 Resume state: ARCHITECT
+[Orchestrator] 馃摑 Extracted requirement data: taskType=test, scope=unknown
+[StateMachine] 馃摑 Requirement data recorded: raw, taskType, targetScope, successCriteria
+[Orchestrator] 馃摑 Requirement data recorded in StateMachine
+[Orchestrator] 馃摗 Event emitted: workflow:start
+[Orchestrator] 馃搳 Pipeline stages: [ARCHITECT 鈫?PLAN 鈫?CODE 鈫?TEST]
+
+
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 鈻讹笍  Executing stage: ARCHITECT
+鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃彈锔?ARCHITECT  | ArchitectAgent                                鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+[AgentHandoffLog] 鈿狅笍  No active handoff found for agent: architect
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈼?  ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈼?  PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈼?  CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?[MCPAdapter:code-quality] Connected (backend: local).
+[MCPAdapter:ci-status] Connected (provider: github, repo: kenGH12345/CodexForge).
+[MCPAdapter:license-compliance] Connected (backend: clearlydefined).
+[Orchestrator] 鉂?Stage ARCHITECT failed: [FileRefBus] No message queued for receiver: "ar
+chitect"
+Error: [FileRefBus] No message queued for receiver: "architect"
+    at Proxy.consume (C:\workspace\WorkFlowAgent\workflow\core\file-ref-bus.js:399:13)
+    at fileRefBus.consume (C:\workspace\WorkFlowAgent\workflow\core\agent-handoff-log.js:
+963:12)
+    at Orchestrator._runArchitect (C:\workspace\WorkFlowAgent\workflow\core\stage-archite
+ct.js:58:33)
+    at ArchitectStage.execute (C:\workspace\WorkFlowAgent\workflow\core\stages\architect-
+stage.js:40:26)
+    at Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.js:124
+:39)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[Orchestrator] 馃攧 Retrying stage ARCHITECT due to error...
+
+[Orchestrator] 馃攧 Retry attempt 1 for stage: ARCHITECT
+[Orchestrator] 馃弮 Running stage executor...
+
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃彈锔?ARCHITECT  | ArchitectAgent                                鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+[AgentHandoffLog] 鈿狅笍  No active handoff found for agent: architect
+[EmbeddingService] 鈿狅笍  Model load failed (non-fatal): Neither @huggingface/transformers 
+nor @xenova/transformers is installed. Run: npm install @huggingface/transformers
+[EmbeddingService]    Semantic matching disabled. Keyword matching will be used as fallba
+ck.
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 馃搵 浠诲姟娓呭崟  0/5 宸插畬鎴?                                         鈹?鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?鈹? 鈹?鈼?  ANALYZE    娣卞害鍒嗘瀽椤圭洰缁撴瀯涓庨渶姹?                               鈹?鈹? 鈹?鈴?鈻?ARCHITECT  璁捐绯荤粺鏋舵瀯涓庢妧鏈柟妗?                               鈹?鈹? 鈹?鈼?  PLAN       鍒跺畾璇︾粏瀹炴柦璁″垝                                   鈹?鈹? 鈹?鈼?  CODE       缂栫爜瀹炵幇鍔熻兘                                     鈹?鈹? 鈹?鈼?  TEST       娴嬭瘯楠岃瘉涓庤川閲忔鏌?                                 鈹?鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?[MCPAdapter:doc-gen] Connected (projectRoot: C:\workspace\WorkFlowAgent).
+[Orchestrator] 鉂?Stage ARCHITECT failed: [FileRefBus] No message queued for receiver: "ar
+chitect"
+Error: [FileRefBus] No message queued for receiver: "architect"
+    at Proxy.consume (C:\workspace\WorkFlowAgent\workflow\core\file-ref-bus.js:399:13)
+    at fileRefBus.consume (C:\workspace\WorkFlowAgent\workflow\core\agent-handoff-log.js:
+963:12)
+    at Orchestrator._runArchitect (C:\workspace\WorkFlowAgent\workflow\core\stage-archite
+ct.js:58:33)
+    at ArchitectStage.execute (C:\workspace\WorkFlowAgent\workflow\core\stages\architect-
+stage.js:40:26)
+    at Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.js:124
+:39)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+[runWorkflow] Error: [FileRefBus] No message queued for receiver: "architect"
+Error: [FileRefBus] No message queued for receiver: "architect"
+    at Proxy.consume (C:\workspace\WorkFlowAgent\workflow\core\file-ref-bus.js:399:13)
+    at fileRefBus.consume (C:\workspace\WorkFlowAgent\workflow\core\agent-handoff-log.js:
+963:12)
+    at Orchestrator._runArchitect (C:\workspace\WorkFlowAgent\workflow\core\stage-archite
+ct.js:58:33)
+    at ArchitectStage.execute (C:\workspace\WorkFlowAgent\workflow\core\stages\architect-
+stage.js:40:26)
+    at Orchestrator.run (C:\workspace\WorkFlowAgent\workflow\core\orchestrator-run.js:124
+:39)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async runWorkflow (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.j
+s:3018:20)
+    at async main (C:\workspace\WorkFlowAgent\workflow\tools\ide-workflow-bridge.js:4253:
+16)
+{
+  "success": false,
+  "subcommand": "run",
+  "error": "[FileRefBus] No message queued for receiver: \"architect\"",
+  "stack": "Error: [FileRefBus] No message queued for receiver: \"architect\"\n    at Proxy.consume (C:\\workspace\\WorkFlowAgent\\workflow\\core\\file-ref-bus.js:399:13)\n    at fileRefBus.consume (C:\\workspace\\WorkFlowAgent\\workflow\\core\\agent-handoff-log.js:963:12)\n    at Orchestrator._runArchitect (C:\\workspace\\WorkFlowAgent\\workflow\\core\\stage-architect.js:58:33)\n    at ArchitectStage.execute (C:\\workspace\\WorkFlowAgent\\workflow\\core\\stages\\architect-stage.js:40:26)\n    at Orchestrator.run (C:\\workspace\\WorkFlowAgent\\workflow\\core\\orchestrator-run.js:124:39)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async runWorkflow (C:\\workspace\\WorkFlowAgent\\workflow\\tools\\ide-workflow-bridge.js:3018:20)\n    at async main (C:\\workspace\\WorkFlowAgent\\workflow\\tools\\ide-workflow-bridge.js:4253:16)"
+}

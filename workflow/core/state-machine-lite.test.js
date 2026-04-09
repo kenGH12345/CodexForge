@@ -73,7 +73,7 @@ describe('StateMachine State Transitions', () => {
   const { STATE_ORDER } = require('./types');
 
   it('should have correct state order', () => {
-    const expectedOrder = ['INIT', 'ANALYSE', 'ARCHITECT', 'CODE', 'TEST', 'FINISHED'];
+    const expectedOrder = ['INIT', 'ANALYSE', 'ARCHITECT', 'PLAN', 'CODE', 'TEST', 'FINISHED'];
 
     for (let i = 0; i < expectedOrder.length; i++) {
       assert.strictEqual(STATE_ORDER[i], expectedOrder[i], `State ${i} should be ${expectedOrder[i]}`);

@@ -555,16 +555,55 @@ const ExperienceEvolutionMixin = {
           // Skill doesn't exist — create it!
           const domains = _inferDomains(triggerExp);
           const keywords = _inferKeywords(triggerExp);
+          const description = _generateSkillDescription(triggerExp);
 
           try {
             skillEvolution.registerSkill({
               name: skillName,
-              description: `Auto-created skill from high-frequency experience: "${triggerExp.title}"`,
+              description,
               domains,
               type: 'domain-skill',
               loadLevel: 'task',
               triggers: { keywords, roles: [] },
             });
+
+            // LLM-Lite: If SkillLlmRefiner is available, generate high-quality
+            // initial content for the newly created skill. This replaces the
+            // default placeholder template with actionable rules and practices.
+            // Async, non-blocking — if it fails, the default template remains.
+            if (skillEvolution._llmRefiner) {
+              skillEvolution._llmRefiner.generateSkillContent({
+                skillName,
+                description,
+                domains,
+                sourceExp: triggerExp,
+              }).then(generatedContent => {
+                if (generatedContent) {
+                  // Read current (template) content and replace placeholder sections
+                  const currentContent = skillEvolution.readSkill(skillName);
+                  if (currentContent) {
+                    const fs = require('fs');
+                    const meta = skillEvolution.registry.get(skillName);
+                    if (meta) {
+                      // Find the end of frontmatter + header, insert generated content
+                      const evolutionHistoryIdx = currentContent.indexOf('## Evolution History');
+                      if (evolutionHistoryIdx > 0) {
+                        // Replace everything between header and Evolution History with generated content
+                        const headerEnd = currentContent.indexOf('\n---\n');
+                        const afterHeader = headerEnd > 0 ? headerEnd + 5 : 0;
+                        const newContent = currentContent.slice(0, afterHeader) + '\n' + generatedContent + '\n\n' + currentContent.slice(evolutionHistoryIdx);
+                        const tmpPath = meta.filePath + '.tmp';
+                        fs.writeFileSync(tmpPath, newContent, 'utf-8');
+                        fs.renameSync(tmpPath, meta.filePath);
+                        console.log(`[EvolutionMixin] 🧠 LLM-Lite generated initial content for "${skillName}"`);
+                      }
+                    }
+                  }
+                }
+              }).catch(err => {
+                console.warn(`[EvolutionMixin] LLM-Lite content generation failed (non-fatal): ${err.message}`);
+              });
+            }
 
             triggerExp.skill = skillName;
             created++;

@@ -1,7 +1,8 @@
 # Dependencies
 node_modules/
 
-# Large generated output files
+# Large generated output files (runtime artifacts)
+output/
 workflow/output/code-graph.json
 workflow/output/experiences.json
 

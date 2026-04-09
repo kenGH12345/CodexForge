@@ -18,6 +18,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { runReadOnlyExploration } = require('../core/read-only-explorer-agent');
 
 /**
  * Registers analyze commands into the shared command registry.
@@ -28,7 +29,7 @@ function registerAnalyzeCommands(registerCommand) {
 
   registerCommand(
     'analyze',
-    'Run ProjectProfiler to (re-)analyze project architecture. Usage: /analyze [--no-lsp] [--max-files <N>] [--path <dir>] [--dry-run] [--verbose]',
+    'Run ProjectProfiler to (re-)analyze project architecture. Usage: /analyze [--explore] [--readonly] [--no-lsp] [--max-files <N>] [--path <dir>] [--dry-run] [--verbose]',
     async (args, context) => {
       const startTime = Date.now();
       const flags = (args || '').trim();
@@ -37,6 +38,7 @@ function registerAnalyzeCommands(registerCommand) {
       const noLsp      = flags.includes('--no-lsp');
       const dryRun     = flags.includes('--dry-run');
       const verbose    = flags.includes('--verbose');
+      const readOnlyExplore = flags.includes('--explore') || flags.includes('--readonly');
       const pathMatch  = flags.match(/--path\s+(\S+)/);
       const maxFilesMatch = flags.match(/--max-files\s+(\d+)/);
 
@@ -79,10 +81,59 @@ function registerAnalyzeCommands(registerCommand) {
         `## 🔬 Project Architecture Analysis${dryRun ? ' (Dry Run)' : ''}`,
         ``,
         `**Project**: \`${projectRoot}\``,
-        `**Mode**: ${noLsp ? '📄 Baseline only (--no-lsp)' : '🔬 Baseline + LSP Enhancement'}`,
+        `**Mode**: ${readOnlyExplore ? '🧭 Read-only Explorer Agent (--explore/--readonly)' : (noLsp ? '📄 Baseline only (--no-lsp)' : '🔬 Baseline + LSP Enhancement')}`,
         maxFiles ? `**Max Files (LSP)**: ${maxFiles}` : '',
         ``,
       ].filter(Boolean);
+
+      if (readOnlyExplore) {
+        const exploration = await runReadOnlyExploration({
+          projectRoot,
+          requirement: flags,
+          noLsp,
+          maxFiles,
+        });
+
+        const p = exploration.profile || {};
+        const frameworks = Array.isArray(p.frameworks) ? p.frameworks : [];
+        const arch = p.architecture || {};
+
+        lines.push(`### ✅ Read-only Exploration Completed`);
+        lines.push(``);
+        lines.push(`- **Read-only guarantee**: ${exploration.evidence?.readOnlyGuaranteed ? '✅ yes' : '❌ no'}`);
+        lines.push(`- **Writes attempted**: ${exploration.evidence?.writesAttempted || 0}`);
+        lines.push(`- **LSP used**: ${exploration.lspUsed ? '✅' : '❌'}`);
+        if (exploration.lspError) {
+          lines.push(`- **LSP fallback reason**: ${exploration.lspError}`);
+        }
+        lines.push(``);
+        lines.push(`### 🏗️ Exploration Snapshot`);
+        lines.push(``);
+        lines.push(`- **Primary language**: ${p.primaryLanguage || 'unknown'}`);
+        lines.push(`- **Frameworks detected**: ${frameworks.length > 0 ? frameworks.map(f => f.name).join(', ') : 'none'}`);
+        lines.push(`- **Architecture pattern**: ${arch.pattern || 'unknown'}`);
+        if (Array.isArray(arch.layers) && arch.layers.length > 0) {
+          lines.push(`- **Layers**: ${arch.layers.join(' → ')}`);
+        }
+        lines.push(``);
+        lines.push(`### 🧩 Governance (rules/skills/hooks)`);
+        lines.push(``);
+        const gw = exploration.governanceReport || {};
+        const warnings = Array.isArray(gw.warnings) ? gw.warnings : [];
+        lines.push(`- **Warnings**: ${warnings.length}`);
+        if (warnings.length > 0) {
+          warnings.slice(0, 8).forEach((w) => lines.push(`  - ${w}`));
+          if (warnings.length > 8) {
+            lines.push(`  - ... ${warnings.length - 8} more`);
+          }
+        }
+        lines.push(``);
+        lines.push(`### 📄 Compact Summary`);
+        lines.push(``);
+        lines.push(exploration.compactSummary || '_No summary generated_');
+        lines.push(``);
+        return lines.join('\n');
+      }
 
       if (dryRun) {
         lines.push(`> 💡 Dry run mode: no files will be written. Remove \`--dry-run\` to persist results.`);
@@ -94,6 +145,8 @@ function registerAnalyzeCommands(registerCommand) {
         }
         lines.push(`${noLsp ? '2' : '3'}. Write results to \`output/project-profile.md\``);
         lines.push(`${noLsp ? '3' : '4'}. Persist \`projectProfile\` into \`workflow.config.js\``);
+        lines.push(``);
+        lines.push(`> 🧭 For read-only exploration use: \`/analyze --explore\` (no file writes).`);
         return lines.join('\n');
       }
 

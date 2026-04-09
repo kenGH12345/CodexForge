@@ -118,25 +118,22 @@ game-project/
 
 5. **Hybrid ECS approach** — You don't need pure ECS. Many games use ECS for gameplay entities but traditional OOP for UI, audio, and global systems. Use the right tool for each subsystem.
 
-## Integration: Using with WorkFlowAgent
+## Integration Guide
 
-### When `game-architecture` Loads
+### When This Skill Activates
 
-| Phase | Trigger | Purpose |
-|-------|---------|---------|
-| ARCHITECT | Designing game entity system | ECS vs OOP decision |
-| CODE | Implementing game logic | System design, component definition |
-| OPTIMIZE | Performance issues | Object pooling, query optimization |
+| Context | Trigger | Application |
+|---------|---------|-------------|
+| Design | Designing game entity system | ECS vs OOP architecture decision |
+| Implementation | Writing game logic | System design, component definition |
+| Optimization | Performance issues | Object pooling, query optimization |
 
-### Interaction with Other Skills
+### Related Patterns
 
-```
-game-architecture (this skill)
-├── game-ai-patterns (AI behavior systems)
-├── unity-csharp (Unity-specific implementation)
-├── performance-optimization (frame time optimization)
-└── testing (game system testing strategies)
-```
+- **AI Patterns**: Behavior systems for game entities
+- **Unity/C#**: Engine-specific implementations
+- **Performance**: Frame time optimization techniques
+- **Testing**: Game system testing strategies
 
 ## Evolution History
 

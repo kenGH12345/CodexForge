@@ -708,8 +708,22 @@ class LSPRouter {
       };
     }
 
-    // Use CodeGraph's getCallGraph
-    const callGraph = this._codeGraph.getCallGraph(symbolName);
+    // IMPORTANT: Use CodeGraph's SYNCHRONOUS internal data directly to avoid
+    // infinite recursion (getCallGraph → LSPRouter → _callHierarchyViaRegex → getCallGraph → ...)
+    // This is the regex fallback — it must NOT re-enter the LSPRouter routing chain.
+    const cg = this._codeGraph;
+    const sym = cg._findByName ? cg._findByName(symbolName) : null;
+    if (!sym) {
+      return { success: true, incoming: [], outgoing: [], source: 'regex', isAccurate: false };
+    }
+    const calls = cg._callEdges ? (cg._callEdges.get(sym.id) || []) : [];
+    const calledByIds = [];
+    if (cg._callEdges) {
+      for (const [callerId, callees] of cg._callEdges) {
+        if (callees.includes(sym.id)) calledByIds.push(callerId);
+      }
+    }
+    const callGraph = { calls, calledBy: calledByIds };
 
     // Convert to new format
     // Use public API getSymbolById() instead of direct _symbols.get() access

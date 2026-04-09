@@ -247,10 +247,13 @@ const OrchestratorInitMixin = {
         if (this.skillEvolution) {
           const { discoverProjectSkills } = require('./skill-discovery');
           // Fire-and-forget: discovery is non-blocking and non-fatal
+          // Prefer cheapLlmCall (GPT-4o-mini tier) for skill refinement (~50x cost reduction)
+          const cheapLlm = this.llmRouter?.getTierConfig()?.fast || null;
           discoverProjectSkills({
             projectRoot: this.projectRoot || process.cwd(),
             skillEvolution: this.skillEvolution,
             llmCall: this._rawLlmCall || null,
+            cheapLlmCall: cheapLlm,
             force: false,
           }).then(result => {
             if (result.discovered) {
@@ -294,6 +297,20 @@ const OrchestratorInitMixin = {
           enabled: true,
         });
         this.eventJournal.attachToHookSystem(this.hooks);
+
+        // P0: attach runtime loop to live event stream and expose recovery state
+        if (this.p0RuntimeLoop) {
+          this.p0RuntimeLoop.attachEventJournal(this.eventJournal);
+          const restoreResult = this.p0RuntimeLoop.restoreCheckpoint();
+          this.p0RuntimeLoop.markWorkflowStart({
+            initResumeState: resumeState,
+            checkpointRestored: restoreResult.restored,
+          });
+          if (restoreResult.restored) {
+            console.log(`[Orchestrator] ♻️  P0 recovery checkpoint loaded (${restoreResult.checkpoint?.status || 'unknown'})`);
+          }
+        }
+
         this._initCompleted.add('eventJournal');
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [P2-1] Step 10 (EventJournal) failed (non-fatal): ${err.message}`);

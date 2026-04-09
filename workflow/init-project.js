@@ -35,13 +35,14 @@ const { generateIDEAgents } = require('./core/agent-generator');
 // ─── CLI Args ─────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { path: null, validate: false, help: false, dryRun: false };
+  const args = { path: null, validate: false, help: false, dryRun: false, linkTo: null };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--help':     case '-h': args.help     = true; break;
       case '--validate': case '-v': args.validate = true; break;
       case '--dry-run':             args.dryRun   = true; break;
       case '--path':     case '-p': args.path = argv[++i]; break;
+      case '--link-to':             args.linkTo = argv[++i]; break;
     }
   }
   return args;
@@ -85,6 +86,158 @@ function validateConfig(config, configPath) {
   return { errors, warnings };
 }
 
+// ─── Experience Sync Helper ───────────────────────────────────────────────────
+
+/**
+ * Synchronizes expert experiences from the workflowSource to the target project.
+ * This ensures projects using remote workflow reference get the source project's
+ * high-quality expert knowledge, particularly for test-related experiences.
+ *
+ * @param {string} projectRoot    - Target project root (where to sync TO)
+ * @param {string} workflowSource - Path to the workflow source directory
+ * @returns {{ success: boolean, syncedCount: number, categories: string[], message: string }}
+ */
+async function _syncExpertExperiences(projectRoot, workflowSource) {
+  const path = require('path');
+  const fs = require('fs');
+  const { ExperienceStore, ExperienceType } = require('./core/experience-store');
+
+  // Resolve source experiences path (workflowSource usually points to workflow/ dir)
+  // Try both patterns: workflowSource/.workflow/experiences.json OR workflowSource/../.workflow/experiences.json
+  const possibleSourcePaths = [
+    path.join(workflowSource, '.workflow', 'experiences.json'),
+    path.join(workflowSource, '..', '.workflow', 'experiences.json'),
+    path.join(path.resolve(workflowSource, '..'), '.workflow', 'experiences.json'),
+  ];
+
+  let sourceExpPath = null;
+  for (const p of possibleSourcePaths) {
+    if (fs.existsSync(p)) {
+      sourceExpPath = p;
+      break;
+    }
+  }
+
+  if (!sourceExpPath) {
+    return {
+      success: false,
+      syncedCount: 0,
+      categories: [],
+      message: 'No expert experiences found in workflowSource',
+    };
+  }
+
+  // Load source experiences
+  const sourceExps = JSON.parse(fs.readFileSync(sourceExpPath, 'utf-8'));
+  const experiences = Array.isArray(sourceExps) ? sourceExps : (sourceExps.experiences || []);
+
+  if (experiences.length === 0) {
+    return {
+      success: true,
+      syncedCount: 0,
+      categories: [],
+      message: 'No experiences to sync (empty source store)',
+    };
+  }
+
+  // Filter for high-value expert experiences (not auto-generated code descriptions)
+  // Priority categories for cross-project knowledge transfer
+  const valuableCategories = [
+    'PITFALL',           // Issues to avoid
+    'DEBUG_TECHNIQUE',   // Debugging approaches
+    'STABLE_PATTERN',    // Proven patterns
+    'CRITICAL_FIX',      // Critical fixes
+    'LESSON_LEARNED',    // General lessons
+    'QUALITY_PRACTICE',  // Quality practices
+    'TEST_STRATEGY',     // Testing strategies
+    'MODULE_USAGE',      // Framework usage patterns
+    'FRAMEWORK_LIMIT',   // Framework limitations
+  ];
+
+  const expertExps = experiences.filter(exp => {
+    // Must have content or title (real insights, not just code descriptions)
+    const hasInsight = exp.content || exp.title;
+    // Is in priority category or has high value markers
+    const isValuableCategory = valuableCategories.includes(exp.category);
+    const hasImportanceMarker = (exp.importance || 0) >= 3 || (exp.confidence || 0) >= 0.8;
+    const isNegativeLesson = exp.type === ExperienceType.NEGATIVE;
+    // Tag-based detection for test-related experiences
+    const hasTestTag = exp.tags && exp.tags.some(t =>
+      /test|testing|pytest|jest|unittest|quality|coverage/i.test(t)
+    );
+
+    return hasInsight && (isValuableCategory || hasImportanceMarker || isNegativeLesson || hasTestTag);
+  });
+
+  if (expertExps.length === 0) {
+    return {
+      success: true,
+      syncedCount: 0,
+      categories: [],
+      message: 'No valuable expert experiences to sync',
+    };
+  }
+
+  // Ensure target .workflow directory exists
+  const targetDir = path.join(projectRoot, '.workflow');
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
+
+  // Create target experience store
+  const targetExpPath = path.join(targetDir, 'experiences.json');
+  const store = new ExperienceStore(targetExpPath);
+
+  // Load existing target experiences to avoid duplicates
+  let existingTitles = new Set();
+  try {
+    const existingExps = store.getAllExperiences ? store.getAllExperiences() : [];
+    for (const exp of existingExps) {
+      existingTitles.add(exp.title);
+    }
+  } catch (_) {
+    // Store doesn't exist yet, that's fine
+  }
+
+  // Sync expert experiences (adding source marker)
+  let syncedCount = 0;
+  const syncedCategories = new Set();
+
+  for (const exp of expertExps) {
+    // Skip duplicates based on title
+    if (existingTitles.has(exp.title)) continue;
+
+    // Mark as sourced from expert knowledge
+    const enrichedExp = {
+      ...exp,
+      tags: [...(exp.tags || []), 'expert-sync', 'from-source-workflow'],
+      metadata: {
+        ...exp.metadata,
+        syncSource: 'workflowSource',
+        syncedAt: new Date().toISOString(),
+      },
+    };
+
+    try {
+      store.record(enrichedExp);
+      syncedCount++;
+      syncedCategories.add(exp.category);
+    } catch (err) {
+      // Skip if record fails (e.g., deduplication)
+    }
+  }
+
+  // Save the store
+  store.save();
+
+  return {
+    success: true,
+    syncedCount,
+    categories: Array.from(syncedCategories),
+    message: `Synced ${syncedCount} expert experience(s) from workflow source`,
+  };
+}
+
 // ─── Long-running Agent Helpers ───────────────────────────────────────────────
 
 /**
@@ -98,10 +251,179 @@ function validateConfig(config, configPath) {
  * @returns {string} Shell script content
  */
 
+// ─── Link-To: Generate cross-project IDE Agent config ───────────────────────
+
+/**
+ * Generates IDE Agent configuration files for a target project to use
+ * this WorkFlowAgent installation. Minimal footprint — only creates:
+ *   1. <target>/.claude/settings.json  — Claude Code Hook pointing to this WF installation
+ *   2. Appends a minimal workflow trigger snippet to <target>/AGENTS.md
+ *
+ * @param {string} targetPath  - Absolute path to the target project
+ * @param {string} wfAgentRoot - Absolute path to this WorkFlowAgent installation
+ * @param {object} opts        - { dryRun: boolean }
+ */
+function runLinkTo(targetPath, wfAgentRoot, opts = {}) {
+  const { dryRun = false } = opts;
+  const targetRoot = path.resolve(targetPath);
+  const wfRoot = path.resolve(wfAgentRoot);
+
+  // Normalize to forward slashes for cross-platform compatibility in shell scripts
+  const wfRootPosix = wfRoot.replace(/\\/g, '/');
+  const bridgePath = `${wfRootPosix}/workflow/tools/ide-workflow-bridge.js`;
+  const hookPath = `${wfRootPosix}/workflow/tools/wf-hook.sh`;
+
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`  🔗 WorkFlowAgent Link-To`);
+  console.log(`  Target Project : ${targetRoot}`);
+  console.log(`  WF Agent Root  : ${wfRoot}`);
+  console.log(`${'='.repeat(60)}\n`);
+
+  // ── Step 1: Generate .claude/settings.json ──────────────────────────────
+  console.log(`[1/2] Generating .claude/settings.json (Claude Code Hook)...`);
+  const claudeDir = path.join(targetRoot, '.claude');
+  const settingsPath = path.join(claudeDir, 'settings.json');
+
+  if (!dryRun) {
+    if (fs.existsSync(settingsPath)) {
+      console.log(`      ⏭️  .claude/settings.json already exists, skipping`);
+      console.log(`      💡 To add hooks manually, add UserPromptSubmit, PreToolUse (Bash), and Stop hooks.`);
+    } else {
+      try {
+        if (!fs.existsSync(claudeDir)) fs.mkdirSync(claudeDir, { recursive: true });
+        const preToolUseGuardPath = `${wfRootPosix}/workflow/hooks/pre-tool-use-guard.js`;
+        const stopGuardPath = `${wfRootPosix}/workflow/hooks/stop-guard.js`;
+        const settings = {
+          hooks: {
+            UserPromptSubmit: [
+              {
+                matcher: '',
+                hooks: [
+                  {
+                    type: 'command',
+                    command: `bash ${hookPath}`,
+                    timeout: 10000,
+                  },
+                ],
+              },
+            ],
+            PreToolUse: [
+              {
+                matcher: 'Bash',
+                hooks: [
+                  {
+                    type: 'command',
+                    command: `node ${preToolUseGuardPath}`,
+                    timeout: 5000,
+                  },
+                ],
+              },
+            ],
+            Stop: [
+              {
+                matcher: '',
+                hooks: [
+                  {
+                    type: 'command',
+                    command: `node ${stopGuardPath}`,
+                    timeout: 5000,
+                  },
+                ],
+              },
+            ],
+          },
+        };
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+        console.log(`      ✅ .claude/settings.json written to: ${settingsPath}`);
+        console.log(`      📋 Registered hooks: UserPromptSubmit, PreToolUse (Bash), Stop`);
+      } catch (err) {
+        console.warn(`      ⚠️  .claude/settings.json generation warning: ${err.message}`);
+      }
+    }
+  } else {
+    console.log(`      [dry-run] Would write: ${settingsPath}`);
+  }
+  console.log('');
+
+  // ── Step 2: Append workflow trigger snippet to AGENTS.md ─────────────────
+  console.log(`[2/2] Appending workflow trigger snippet to AGENTS.md...`);
+  const agentsPath = path.join(targetRoot, 'AGENTS.md');
+  const wfMarker = '<!-- WorkFlowAgent trigger snippet — DO NOT REMOVE -->';
+
+  const snippet = `
+${wfMarker}
+## WorkFlowAgent Integration
+
+> This project is linked to WorkFlowAgent at: \`${wfRoot}\`
+> Full workflow rules: \`@${wfRootPosix}/AGENTS.md\`
+
+### /wf Command Trigger
+
+When you receive a message starting with \`/wf\`, execute these two actions IMMEDIATELY:
+
+**ACTION 1** — Output this exact text as your very first line:
+\`\`\`
+> 🔄 启用wf工作流
+\`\`\`
+
+**ACTION 2** — Call terminal immediately:
+\`\`\`bash
+node ${bridgePath} input-received \\
+  --user-input "<exact /wf message text>" \\
+  --input-type "requirement" \\
+  --decision "走完整工作流" \\
+  --session <SESSION_ID> \\
+  --project-root .
+\`\`\`
+
+Then follow the full 7-stage workflow. For complete rules, read: \`@${wfRootPosix}/AGENTS.md\`
+
+Each stage command uses the WorkFlowAgent bridge:
+\`\`\`bash
+# Start a stage
+node ${bridgePath} workflow-stage --stage <STAGE> --session <SESSION_ID> --project-root . --requirement "<req>"
+# Complete a stage
+node ${bridgePath} stage-complete --stage <STAGE> --session <SESSION_ID> --project-root . --summary "<summary>"
+\`\`\`
+`;
+
+  if (!dryRun) {
+    try {
+      const existingContent = fs.existsSync(agentsPath) ? fs.readFileSync(agentsPath, 'utf-8') : '';
+      if (existingContent.includes(wfMarker) || existingContent.includes('ide-workflow-bridge.js')) {
+        console.log(`      ⏭️  AGENTS.md already contains workflow trigger snippet, skipping`);
+      } else {
+        fs.appendFileSync(agentsPath, snippet, 'utf-8');
+        console.log(`      ✅ Workflow trigger snippet appended to: ${agentsPath}`);
+      }
+    } catch (err) {
+      console.warn(`      ⚠️  AGENTS.md append warning: ${err.message}`);
+    }
+  } else {
+    console.log(`      [dry-run] Would append workflow trigger snippet to: ${agentsPath}`);
+  }
+  console.log('');
+
+  console.log(`${'='.repeat(60)}`);
+  console.log(`  ✅ Link-To complete!`);
+  console.log(`${'='.repeat(60)}`);
+  console.log(`\n  Next steps:`);
+  console.log(`  1. Restart Claude Code in the target project to activate the hook`);
+  console.log(`  2. Send a /wf message to verify the workflow triggers correctly`);
+  console.log(`  3. For CodeBuddy/Cursor: the AGENTS.md snippet is already active\n`);
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+
+  // ── --link-to mode: lightweight cross-project setup ──────────────────────
+  if (args.linkTo) {
+    const wfAgentRoot = path.resolve(__dirname, '..');
+    runLinkTo(args.linkTo, wfAgentRoot, { dryRun: args.dryRun });
+    return;
+  }
 
   if (args.help) {
     console.log(`
@@ -109,6 +431,8 @@ Usage: node workflow/init-project.js [options]
 
 Options:
   --path, -p <dir>   Project root directory (default: cwd)
+  --link-to <dir>    Link another project to use this WorkFlowAgent installation
+                     (generates .claude/settings.json + AGENTS.md snippet)
   --validate, -v     Only validate config, do not run initialisation
   --dry-run          Show what would be done without writing any files
   --help, -h         Show this help
@@ -117,6 +441,7 @@ Examples:
   node workflow/init-project.js                        # Init current project (fully automatic)
   node workflow/init-project.js --path D:\\MyProject   # Init a specific project
   node workflow/init-project.js --validate             # Validate config only
+  node workflow/init-project.js --link-to D:\\OtherProject  # Link another project
 
 How it works:
   1. If workflow.config.js exists  → use it directly
@@ -129,8 +454,9 @@ How it works:
   const projectRoot = args.path ? path.resolve(args.path) : process.cwd();
 
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`  Workflow Project Initialiser`);
+  console.log(`  🚀 Workflow Project Initialiser`);
   console.log(`  Project Root: ${projectRoot}`);
+  console.log(`\n  📋 Starting 10-step initialization pipeline...`);
   console.log(`${'='.repeat(60)}\n`);
 
   // ── Auto-detect or load config ────────────────────────────────────────────
@@ -141,6 +467,17 @@ How it works:
   if (configPath) {
     // Config already exists – use it
     console.log(`📋 Config file: ${configPath} (existing)`);
+
+    // Auto-detect remote init: inject workflowSource if not already set
+    // and workflow/ is not inside the target project
+    if (!config.workflowSource) {
+      const localWorkflow = path.join(projectRoot, 'workflow', 'init-project.js');
+      const isRemoteInit = !fs.existsSync(localWorkflow) && projectRoot !== path.resolve(__dirname, '..');
+      if (isRemoteInit) {
+        config.workflowSource = path.resolve(__dirname, '..').replace(/\\/g, '/');
+        console.log(`   🔗 Remote mode: workflowSource → ${config.workflowSource}`);
+      }
+    }
 
     // Always run tech stack detection to populate runtime fields
     // (projectName, techStack, sourceExtensions, ignoreDirs).
@@ -179,10 +516,21 @@ How it works:
     }
 
     if (!args.dryRun) {
+      // Detect remote init: if workflow/ is not inside the target project,
+      // auto-set workflowSource to point back to this workflow installation.
+      const localWorkflow = path.join(projectRoot, 'workflow', 'init-project.js');
+      const isRemoteInit = !fs.existsSync(localWorkflow) && projectRoot !== path.resolve(__dirname, '..');
+      const workflowSource = isRemoteInit ? path.resolve(__dirname, '..') : null;
+
+      if (workflowSource) {
+        console.log(`   🔗 Remote mode: workflowSource → ${workflowSource}`);
+      }
+
       const generatedPath = generateConfigFromProfile(
         projectRoot,
         profile || TECH_PROFILES[TECH_PROFILES.length - 1],  // fallback to last (js)
-        projectName
+        projectName,
+        { workflowSource }
       );
       console.log(`   ✅ Generated: ${generatedPath}\n`);
 
@@ -333,8 +681,33 @@ How it works:
     console.log(`      [dry-run] Would build AGENTS.md at: ${path.join(projectRoot, 'AGENTS.md')}\n`);
   }
 
-  // ── Step 2: Generate experiences from source files ─────────────────────────
-  console.log(`[4/10] Generating experience store from source files...`);
+  // ── Step 2a: Sync expert experiences from workflowSource (remote reference) ─
+  // When using remote workflow reference, also sync the source project's expert knowledge
+  if (config.workflowSource) {
+    console.log(`[3.5/10] Syncing expert experiences from workflowSource...`);
+    if (!args.dryRun) {
+      try {
+        const syncResult = await _syncExpertExperiences(projectRoot, config.workflowSource);
+        if (syncResult.success) {
+          console.log(`      ✅ Synced ${syncResult.syncedCount} expert experience(s)`);
+          if (syncResult.categories.length > 0) {
+            console.log(`         Categories: ${syncResult.categories.join(', ')}`);
+          }
+        } else {
+          console.log(`      ℹ️  ${syncResult.message}`);
+        }
+      } catch (err) {
+        console.warn(`      ⚠️  Expert experience sync warning (non-fatal): ${err.message}`);
+      }
+    } else {
+      const sourceExpPath = path.join(config.workflowSource, '..', '.workflow', 'experiences.json');
+      console.log(`      [dry-run] Would sync expert experiences from: ${sourceExpPath}`);
+    }
+    console.log('');
+  }
+
+  // ── Step 2b: Generate local experiences from source files ──────────────────
+  console.log(`[4/10] Generating local experience store from source files...`);
   if (!args.dryRun) {
     try {
       // Dynamically require gen-experiences to avoid circular deps
@@ -342,16 +715,17 @@ How it works:
       // Run as child process to isolate argv
       const { execSync } = require('child_process');
       const extArg = config.sourceExtensions.join(',');
-      const cmd = `node "${genExpPath}" --path "${projectRoot}" --ext "${extArg}"`;
+      const cmd = `node "${genExpPath}" --path "${projectRoot}" --ext "${extArg}" --output "${path.join(projectRoot, '.workflow', 'experiences.json')}"`;
       console.log(`      Running: ${cmd}`);
       execSync(cmd, { stdio: 'inherit' });
-      console.log(`      ✅ Experience store populated\n`);
+      console.log(`      ✅ Local experience store populated`);
     } catch (err) {
-      console.warn(`      ⚠️  Experience generation warning: ${err.message}\n`);
+      console.warn(`      ⚠️  Local experience generation warning: ${err.message}`);
     }
   } else {
-    console.log(`      [dry-run] Would run: node gen-experiences.js --path "${projectRoot}" --ext "${config.sourceExtensions.join(',')}"\n`);
+    console.log(`      [dry-run] Would run: node gen-experiences.js --path "${projectRoot}" --ext "${config.sourceExtensions.join(',')}" --output "${path.join(projectRoot, '.workflow', 'experiences.json')}"`);
   }
+  console.log('');
 
   // ── Step 3: Register built-in skills ──────────────────────────────────────
   console.log(`[4.5/10] Registering built-in skills...`);
@@ -426,7 +800,7 @@ How it works:
   console.log(`[5.6/10] Generating IDE Agent definitions (CodeBuddy, Cursor, Claude Code)...`);
   if (!args.dryRun) {
     try {
-      const agentResult = generateIDEAgents(projectRoot, config, { dryRun: false, force: false });
+      const agentResult = generateIDEAgents(projectRoot, config, { dryRun: false, force: true });
       if (agentResult.generated.length > 0) {
         agentResult.generated.forEach(g => console.log(`      ✅ ${g}`));
       }
@@ -443,6 +817,72 @@ How it works:
     console.log(`      [dry-run] Would generate IDE Agent definitions for: CodeBuddy, Cursor, Claude Code`);
   }
   console.log('');
+
+  // ── Step 5.7: Generate .claude/settings.json (Claude Code Hook) ──────────
+  console.log(`[5.7/10] Generating .claude/settings.json (Claude Code Hooks: UserPromptSubmit + PreToolUse + Stop)...`);
+  const claudeDir = path.join(projectRoot, '.claude');
+  const settingsPath = path.join(claudeDir, 'settings.json');
+  if (!args.dryRun) {
+    if (fs.existsSync(settingsPath)) {
+      console.log(`      ⏭️  .claude/settings.json already exists, skipping\n`);
+    } else {
+      try {
+        if (!fs.existsSync(claudeDir)) fs.mkdirSync(claudeDir, { recursive: true });
+        // Determine hook paths: use absolute paths to hook scripts
+        const wfAgentRoot = path.resolve(__dirname, '..');
+        const hookPath = path.join(wfAgentRoot, 'workflow', 'tools', 'wf-hook.sh').replace(/\\/g, '/');
+        const preToolUseGuardPath = path.join(wfAgentRoot, 'workflow', 'hooks', 'pre-tool-use-guard.js').replace(/\\/g, '/');
+        const stopGuardPath = path.join(wfAgentRoot, 'workflow', 'hooks', 'stop-guard.js').replace(/\\/g, '/');
+        const settings = {
+          hooks: {
+            UserPromptSubmit: [
+              {
+                matcher: '',
+                hooks: [
+                  {
+                    type: 'command',
+                    command: `bash ${hookPath}`,
+                    timeout: 10000,
+                  },
+                ],
+              },
+            ],
+            PreToolUse: [
+              {
+                matcher: 'Bash',
+                hooks: [
+                  {
+                    type: 'command',
+                    command: `node ${preToolUseGuardPath}`,
+                    timeout: 5000,
+                  },
+                ],
+              },
+            ],
+            Stop: [
+              {
+                matcher: '',
+                hooks: [
+                  {
+                    type: 'command',
+                    command: `node ${stopGuardPath}`,
+                    timeout: 5000,
+                  },
+                ],
+              },
+            ],
+          },
+        };
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+        console.log(`      ✅ .claude/settings.json written to: ${settingsPath}\n`);
+        console.log(`      📋 Registered hooks: UserPromptSubmit, PreToolUse (Bash), Stop\n`);
+      } catch (err) {
+        console.warn(`      ⚠️  .claude/settings.json generation warning (non-fatal): ${err.message}\n`);
+      }
+    }
+  } else {
+    console.log(`      [dry-run] Would generate: ${settingsPath}\n`);
+  }
 
   // ── Step 6: Build initial code graph ──────────────────────────────────────
   console.log(`[6/10] Building initial code graph (symbol index + call relationships)...`);
@@ -467,7 +907,7 @@ How it works:
         ignoreDirs:     cfg.ignoreDirs,
         scopeDirs:      cfg.codeGraph?.scopeDirs,
       });
-      const result = await graph.build({ incremental: false, force: true });
+      const result = await graph.build({ incremental: true, force: false });
       console.log(`      ✅ Code graph built: ${result.symbolCount} symbols, ${result.edgeCount} call edges, ${result.fileCount} files`);
       console.log(`      📄 Index: ${path.join(outputDir, 'code-graph.json')}`);
       console.log(`      📄 Summary: ${path.join(outputDir, 'code-graph.md')}\n`);
@@ -510,19 +950,53 @@ How it works:
       });
 
       // Extract business logic patterns
-      const extractResult = await extractor.extract({
+      const extractResult = await extractor.extract(projectRoot, {
         maxFlows: 20,
         maxDepth: 5,
         minCalledBy: 3,
-        writeOutput: true,
       });
 
+      // Write output files
+      const metrics = extractResult.metrics || {};
+      const patterns = extractResult.patterns || {};
+      try {
+        const jsonPath = path.join(outputDir, 'business-logic.json');
+        const mdPath = path.join(outputDir, 'business-logic.md');
+        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+        fs.writeFileSync(jsonPath, JSON.stringify(extractResult, null, 2), 'utf-8');
+        // Generate markdown summary
+        const mdLines = [
+          '# Business Logic Analysis',
+          '',
+          `> Auto-generated by BusinessLogicExtractor. Strategy: ${metrics.strategy || 'unknown'}`,
+          '',
+          `## Metrics`,
+          '',
+          `| Metric | Value |`,
+          `|--------|-------|`,
+          `| Files analyzed | ${metrics.filesAnalyzed || 0} |`,
+          `| Symbols found | ${metrics.symbolsFound || 0} |`,
+          `| Call relations | ${metrics.callRelations || 0} |`,
+          `| Extraction time | ${metrics.extractionMs || 0}ms |`,
+          '',
+        ];
+        if (patterns.entryPoints && patterns.entryPoints.length > 0) {
+          mdLines.push(`## Entry Points (${patterns.entryPoints.length})`, '');
+          for (const ep of patterns.entryPoints.slice(0, 20)) {
+            mdLines.push(`- **${ep.name || ep.id}** (${ep.file || 'unknown'})`);
+          }
+          mdLines.push('');
+        }
+        fs.writeFileSync(mdPath, mdLines.join('\n'), 'utf-8');
+      } catch (writeErr) {
+        console.warn(`      ⚠️  Could not write business logic output: ${writeErr.message}`);
+      }
+
       console.log(`      ✅ Business logic extracted:`);
-      console.log(`         • Entry points: ${extractResult.stats.entryPointCount}`);
-      console.log(`         • Business flows: ${extractResult.stats.businessFlowCount}`);
-      console.log(`         • Core services: ${extractResult.stats.coreServiceCount}`);
-      console.log(`         • Utilities: ${extractResult.stats.utilityFunctionCount}`);
-      console.log(`         • Strategy: ${extractResult.stats.strategy}`);
+      console.log(`         • Files analyzed: ${metrics.filesAnalyzed || 0}`);
+      console.log(`         • Symbols found: ${metrics.symbolsFound || 0}`);
+      console.log(`         • Call relations: ${metrics.callRelations || 0}`);
+      console.log(`         • Strategy: ${metrics.strategy || 'unknown'}`);
       console.log(`      📄 JSON: ${path.join(outputDir, 'business-logic.json')}`);
       console.log(`      📄 Summary: ${path.join(outputDir, 'business-logic.md')}\n`);
     } catch (err) {
@@ -537,7 +1011,7 @@ How it works:
   if (!args.dryRun) {
     try {
       const { CodeGraph } = require('./core/code-graph');
-      const { ApiEndpointExtractor } = require('./core/api-endpoint-extractor');
+      const { APIEndpointExtractor } = require('./core/api-endpoint-extractor');
       const { detectIDEEnvironment } = require('./core/ide-detection');
       const outputDir = path.join(projectRoot, 'output');
       const cfg = config || {};
@@ -555,7 +1029,7 @@ How it works:
       const ideDetection = detectIDEEnvironment({ config: cfg });
 
       // Create extractor with IDE-First strategy
-      const apiExtractor = new ApiEndpointExtractor({
+      const apiExtractor = new APIEndpointExtractor({
         codeGraph: graph,
         projectRoot,
         outputDir,
@@ -569,10 +1043,12 @@ How it works:
         writeOutput: true,
       });
 
+      const apiStats = apiResult.stats || {};
+      const httpMethods = apiStats.httpMethods || {};
       console.log(`      ✅ API endpoints extracted:`);
-      console.log(`         • Endpoints: ${apiResult.stats.endpointCount}`);
-      console.log(`         • By method: GET=${apiResult.stats.byMethod.GET || 0}, POST=${apiResult.stats.byMethod.POST || 0}, PUT=${apiResult.stats.byMethod.PUT || 0}, DELETE=${apiResult.stats.byMethod.DELETE || 0}`);
-      console.log(`         • Strategy: ${apiResult.stats.strategy}`);
+      console.log(`         • Endpoints: ${apiStats.totalEndpoints || 0}`);
+      console.log(`         • By method: GET=${httpMethods.GET || 0}, POST=${httpMethods.POST || 0}, PUT=${httpMethods.PUT || 0}, DELETE=${httpMethods.DELETE || 0}`);
+      console.log(`         • Strategy: ${apiStats.strategy || 'unknown'}`);
       console.log(`      📄 JSON: ${path.join(outputDir, 'api-endpoints.json')}`);
       console.log(`      📄 Summary: ${path.join(outputDir, 'api-endpoints.md')}\n`);
     } catch (err) {
@@ -627,13 +1103,170 @@ How it works:
       console.log(`         • Duplication rate: ${dupResult.stats.duplicationRate}`);
       console.log(`         • Strategy: ${dupResult.stats.strategy}`);
       console.log(`      📄 JSON: ${path.join(outputDir, 'duplicate-patterns.json')}`);
-      console.log(`      📄 Summary: ${path.join(outputDir, 'duplicate-patterns.md')}\n`);
+      console.log(`      📄 Summary: ${path.join(outputDir, 'duplicate-patterns.md')}`);
+      console.log(`      📄 Action Plan: ${path.join(outputDir, 'duplicate-patterns.md')}#action-plan`);
+      if (dupResult.stats.exactDuplicateGroups > 0 || dupResult.stats.similarFunctionGroups > 0) {
+        console.log(`      💡 Tip: Check the Action Plan section in duplicate-patterns.md for prioritized refactoring tasks`);
+      }
+      console.log('');
     } catch (err) {
       console.warn(`      ⚠️  Duplicate pattern detection warning (non-fatal): ${err.message}\n`);
     }
   } else {
     console.log(`      [dry-run] Would detect duplicate patterns for: ${projectRoot}\n`);
   }
+
+  // ── Step 10: Initialize reflections.json seed file ──────────────────────────
+  console.log(`[10/10] Initializing self-reflection store (reflections.json)...`);
+  if (!args.dryRun) {
+    const reflectionsPath = path.join(outputDir, 'reflections.json');
+    if (fs.existsSync(reflectionsPath)) {
+      console.log(`      ⏭️  reflections.json already exists, skipping\n`);
+    } else {
+      try {
+        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+        const seedData = {
+          version: 1,
+          updatedAt: new Date().toISOString(),
+          reflections: [],
+          patternFrequency: {},
+          stats: { total: 0, open: 0, fixed: 0, deferred: 0, bySeverity: {}, recurringPatterns: 0 },
+        };
+        fs.writeFileSync(reflectionsPath, JSON.stringify(seedData, null, 2), 'utf-8');
+        console.log(`      ✅ reflections.json seed file written to: ${reflectionsPath}`);
+        console.log(`      ℹ️  Self-reflection data will accumulate as the workflow runs\n`);
+      } catch (err) {
+        console.warn(`      ⚠️  reflections.json generation warning (non-fatal): ${err.message}\n`);
+      }
+    }
+  } else {
+    console.log(`      [dry-run] Would generate: ${path.join(outputDir, 'reflections.json')}\n`);
+  }
+
+  // ── Step 10.2: Install Git pre-commit hooks for workflow enforcement ──────
+  console.log(`[10.2/10] Installing Git pre-commit hooks (workflow enforcement)...`);
+  if (!args.dryRun) {
+    try {
+      const { installHooks } = require('./tools/install-git-hooks');
+      const hookResult = installHooks(projectRoot);
+      if (hookResult.success) {
+        console.log(`      ✅ Git hooks installed: ${path.basename(hookResult.hookPath)}`);
+        console.log(`      🔒 Effect: Unmodified code cannot be committed (workflow enforced)`);
+      } else {
+        console.log(`      ⏭️  ${hookResult.reason || 'Git hooks installation skipped'}`);
+      }
+    } catch (err) {
+      console.warn(`      ⚠️  Git hooks installation warning (non-fatal): ${err.message}`);
+    }
+  } else {
+    console.log(`      [dry-run] Would install Git pre-commit hooks`);
+  }
+  console.log('');
+
+  // ── Step 10.5: Auto-distill expert knowledge from analysis artifacts ──────
+  console.log(`[10.5/10] Auto-distilling expert knowledge from analysis artifacts...`);
+  if (!args.dryRun) {
+    try {
+      const { ExpertKnowledgeChannel, autoDistillExpertKnowledge } = require('./core/expert-knowledge-channel');
+
+      // First, load any existing expert knowledge files
+      const expertChannel = new ExpertKnowledgeChannel({ projectRoot });
+      const loadResult = expertChannel.loadFromDirectory();
+      if (loadResult.loaded > 0) {
+        console.log(`      📚 Loaded ${loadResult.loaded} existing expert knowledge file(s)`);
+      }
+
+      // Then, attempt auto-distillation from analysis artifacts
+      // We need a cheap LLM call — try to get one from the environment
+      let cheapLlmCall = null;
+      try {
+        const { LLMRouter } = require('./core/llm-router');
+        const router = new LLMRouter();
+        cheapLlmCall = async (prompt) => {
+          const result = await router.call('system', prompt, { tier: 'fast' });
+          return typeof result === 'string' ? result : (result && result.content) || '';
+        };
+      } catch (_) {
+        // LLM not available — skip auto-distillation
+      }
+
+      if (cheapLlmCall) {
+        const distillResult = await autoDistillExpertKnowledge({
+          projectRoot,
+          cheapLlmCall,
+        });
+        if (distillResult.success) {
+          console.log(`      ✅ Auto-distilled expert knowledge: ${distillResult.filePath}`);
+        } else {
+          console.log(`      ℹ️  Auto-distillation skipped: ${distillResult.error}`);
+        }
+      } else {
+        console.log(`      ℹ️  Auto-distillation skipped: LLM not available (can be run later)`);
+      }
+    } catch (err) {
+      console.warn(`      ⚠️  Expert knowledge step warning (non-fatal): ${err.message}`);
+    }
+  } else {
+    console.log(`      [dry-run] Would auto-distill expert knowledge from analysis artifacts`);
+  }
+  console.log('');
+
+  // ── Step 10.6: Generate Dev Map (project-level index) ───────────────────────
+  console.log(`[10.6/10] Generating Dev Map (project-level index)...`);
+  if (!args.dryRun) {
+    try {
+      const { DevMapGenerator } = require('./tools/dev-map-generator');
+      const devMapGen = new DevMapGenerator(projectRoot);
+      const devMapResult = await devMapGen.generate();
+      if (devMapResult.generated) {
+        console.log(`      ✅ Dev Map generated: ${devMapResult.path}`);
+        console.log(`      ├── Sections: ${devMapResult.sections.join(', ')}`);
+        console.log(`      └── Provides PM Agent with project capability overview`);
+        console.log('');
+        console.log(`      💡 Dev Map enables PM Agent to route tasks based on:`);
+        console.log(`          • Project type (Node.js/Python/Java/Go)`);
+        console.log(`          • Entry points (detected automatically)`);
+        console.log(`          • Available scripts (build/test/lint)`);
+      } else {
+        console.log(`      ⚠️  Dev Map generation returned unexpected result`);
+      }
+    } catch (err) {
+      console.warn(`      ⚠️  Dev Map generation warning (non-fatal): ${err.message}`);
+    }
+  } else {
+    console.log(`      [dry-run] Would generate Dev Map for: ${projectRoot}`);
+  }
+  console.log('');
+
+  // ── Step 10.7: Initialize Task Board for first session ──────────────────────
+  console.log(`[10.7/10] Initializing Task Board (enhanced stage tracking)...`);
+  if (!args.dryRun) {
+    try {
+      const { TaskBoard } = require('./tools/task-board');
+      const taskBoard = new TaskBoard(projectRoot);
+      const sessionId = `init-${Date.now()}`;
+      const requirement = `Project initialization for ${config.projectName || path.basename(projectRoot)}`;
+      const tbResult = taskBoard.init(sessionId, requirement);
+      if (tbResult.sessionId) {
+        console.log(`      ✅ Task Board initialized: ${sessionId}`);
+        console.log(`      ├── Total stages: ${tbResult.stages.length}`);
+        console.log(`      ├── Columns: backlog, in_progress, review, done`);
+        console.log(`      └── Gates: PRE-DEVELOP, PRE-DEPLOY (hard constraints)`);
+        console.log('');
+        console.log(`      💡 First session created. When running /wf <requirement>:`);
+        console.log(`          • PM Agent will use this board for progress tracking`);
+        console.log(`          • Gate Controller will enforce stage transitions`);
+        console.log(`          • View board: node workflow/tools/task-board.js status`);
+      } else {
+        console.log(`      ⚠️  Task Board initialization returned unexpected result`);
+      }
+    } catch (err) {
+      console.warn(`      ⚠️  Task Board initialization warning (non-fatal): ${err.message}`);
+    }
+  } else {
+    console.log(`      [dry-run] Would initialize Task Board for: ${projectRoot}`);
+  }
+  console.log('');
 
   // ── Summary ────────────────────────────────────────────────────────────────
   console.log(`${'='.repeat(60)}`);
@@ -655,12 +1288,24 @@ How it works:
   console.log(`    • output/business-logic.md   – Human-readable business logic summary`);
   console.log(`    • output/api-endpoints.json  – Extracted REST API endpoints (routes, handlers)`);
   console.log(`    • output/api-endpoints.md    – Human-readable API endpoint summary`);
-  console.log(`    • output/duplicate-patterns.json – Detected duplicate code patterns`);
-  console.log(`    • output/duplicate-patterns.md   – Human-readable duplication analysis`);
+  console.log(`    • output/duplicate-patterns.json – Detected duplicate code patterns (machine-readable)`);
+  console.log(`    • output/duplicate-patterns.md   – Duplication analysis with 🎯 Action Plan`);
+  console.log(`    • output/duplicate-patterns-diagrams.md – Visual duplication network (Mermaid)`);
+  console.log(`    • output/reflections.json    – Self-reflection store (known issues, recurring problems)`);
   console.log(`  IDE Agent definitions:`);
   console.log(`    • .codebuddy/agents/workflow-agent.md  – CodeBuddy custom Agent (select in mode dropdown)`);
   console.log(`    • .cursor/rules/workflow-agent.mdc     – Cursor Agent rule`);
   console.log(`    • .claude/agents/workflow-agent.md     – Claude Code Agent`);
+  console.log(`  Expert knowledge:`);
+  console.log(`    • .workflow/experts/                   – Expert knowledge files (create .md files here)`);
+  console.log(`    • .workflow/experts/auto-distilled.md  – Auto-distilled from code analysis (if LLM available)`);
+  console.log(`    • .workflow/experiences.json           – Experience store (local + synced expert knowledge)`);
+  if (config.workflowSource) {
+    console.log(`      └─ 🔗 Remote experiences synced from: ${config.workflowSource}`);
+  }
+  console.log(`  Git hooks (enforcement):`);
+  console.log(`    • .git/hooks/pre-commit                – Blocks commits without workflow completion`);
+  console.log(`      🔒 Workflow enforced: All commits must have a valid session in workflow-progress.log`);
   console.log(`  You can now run: node workflow/index.js\n`);
 }
 

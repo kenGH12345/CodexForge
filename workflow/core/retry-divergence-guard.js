@@ -54,17 +54,37 @@ const MAX_DIGEST_LENGTH = 600;
  */
 const MAX_KEY_DECISIONS = 5;
 
+/**
+ * Module-level cheapLlmCall reference. Injected at runtime by the Orchestrator
+ * via setCheapLlmCall(). When available, extractKeyDecisions uses LLM for
+ * semantic decision extraction instead of regex heuristics.
+ * @type {Function|null}
+ */
+let _cheapLlmCall = null;
+
+/**
+ * Injects a cheap LLM call function for enhanced decision extraction.
+ * Called by the Orchestrator during initialisation.
+ *
+ * @param {Function} llmCall - Async function: (prompt: string) => string
+ */
+function setCheapLlmCall(llmCall) {
+  if (typeof llmCall === 'function') {
+    _cheapLlmCall = llmCall;
+    console.log(`[RetryDivergenceGuard] 🤖 Cheap LLM enabled for decision extraction.`);
+  }
+}
+
 // ─── Strategy 1: Negative Prompt Generation ──────────────────────────────────
 
 /**
- * Extracts key decisions/choices from a previous stage output.
- * Looks for headings, bullet points with decision language, and
- * architectural patterns mentioned in the text.
+ * Extracts key decisions/choices from a previous stage output using regex
+ * heuristics. This is the fallback when LLM is not available.
  *
  * @param {string} previousOutput - The full text of the previous attempt's output
  * @returns {string[]} Array of key decision strings (max MAX_KEY_DECISIONS)
  */
-function extractKeyDecisions(previousOutput) {
+function extractKeyDecisionsHeuristic(previousOutput) {
   if (!previousOutput || typeof previousOutput !== 'string') return [];
 
   const decisions = [];
@@ -105,6 +125,62 @@ function extractKeyDecisions(previousOutput) {
 }
 
 /**
+ * Extracts key decisions/choices from a previous stage output.
+ * When cheapLlmCall is available, uses LLM for semantic extraction
+ * (supports both English and Chinese, understands implicit decisions).
+ * Falls back to regex heuristics when LLM is unavailable or fails.
+ *
+ * @param {string} previousOutput - The full text of the previous attempt's output
+ * @returns {Promise<string[]>} Array of key decision strings (max MAX_KEY_DECISIONS)
+ */
+async function extractKeyDecisions(previousOutput) {
+  if (!previousOutput || typeof previousOutput !== 'string') return [];
+
+  // Try LLM extraction first (if available)
+  if (_cheapLlmCall) {
+    try {
+      const truncated = previousOutput.slice(0, 3000); // Bound input tokens
+      const prompt = [
+        'Extract the top 5 key architectural/design decisions from the following output.',
+        'Focus on: technology choices, patterns selected, algorithms chosen, trade-offs made.',
+        'Return ONLY a JSON array of short decision strings (max 150 chars each).',
+        'If the text is in Chinese, extract decisions in Chinese.',
+        'Example: ["Use React with TypeScript for frontend", "Adopt microservice architecture"]',
+        '',
+        '--- OUTPUT ---',
+        truncated,
+        '--- END ---',
+      ].join('\n');
+
+      const response = await _cheapLlmCall(prompt);
+      if (response) {
+        // Parse JSON array from response (tolerant of markdown fences)
+        const cleaned = String(response).replace(/```json\s*/g, '').replace(/```/g, '').trim();
+        const match = cleaned.match(/\[\s*[\s\S]*?\]/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const decisions = parsed
+              .filter(d => typeof d === 'string' && d.length > 5)
+              .slice(0, MAX_KEY_DECISIONS)
+              .map(d => d.slice(0, 150));
+            if (decisions.length > 0) {
+              console.log(`[RetryDivergenceGuard] 🤖 LLM extracted ${decisions.length} key decisions.`);
+              return decisions;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[RetryDivergenceGuard] ⚠️ LLM decision extraction failed (falling back to heuristic): ${err.message}`);
+    }
+  }
+
+  // Fallback: regex heuristic extraction
+  return extractKeyDecisionsHeuristic(previousOutput);
+}
+
+/**
  * Generates a Negative Prompt block that instructs the LLM to avoid
  * repeating the same decisions as the previous attempt.
  *
@@ -115,8 +191,8 @@ function extractKeyDecisions(previousOutput) {
  * @param {string} [options.stageName]    - Name of the stage being retried
  * @returns {string} Formatted negative prompt block to prepend to the retry prompt
  */
-function buildNegativePrompt({ previousOutput, failureReason, retryCount, stageName = 'STAGE' }) {
-  const keyDecisions = extractKeyDecisions(previousOutput);
+async function buildNegativePrompt({ previousOutput, failureReason, retryCount, stageName = 'STAGE' }) {
+  const keyDecisions = await extractKeyDecisions(previousOutput);
 
   // Build the output digest (truncated to stay within token budget)
   const digest = previousOutput
@@ -285,11 +361,11 @@ async function compareOutputFingerprint({
  * @param {string} [options.stageName]     - Name of the stage being retried
  * @returns {string} Complete retry context to prepend to the retry prompt
  */
-function buildRetryContext({ previousOutput, failureReason, retryCount, stageName = 'STAGE' }) {
+async function buildRetryContext({ previousOutput, failureReason, retryCount, stageName = 'STAGE' }) {
   const parts = [];
 
   // Strategy 1: Negative Prompt
-  parts.push(buildNegativePrompt({ previousOutput, failureReason, retryCount, stageName }));
+  parts.push(await buildNegativePrompt({ previousOutput, failureReason, retryCount, stageName }));
 
   // Strategy 2: Creativity Directive
   parts.push(getCreativityDirective(retryCount));
@@ -300,8 +376,11 @@ function buildRetryContext({ previousOutput, failureReason, retryCount, stageNam
 // ─── Module Exports ───────────────────────────────────────────────────────────
 
 module.exports = {
+  // LLM injection
+  setCheapLlmCall,
   // Strategy 1
   extractKeyDecisions,
+  extractKeyDecisionsHeuristic,
   buildNegativePrompt,
   // Strategy 2
   getCreativityDirective,

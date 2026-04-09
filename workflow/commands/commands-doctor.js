@@ -14,6 +14,7 @@
  *   7. LLM API connectivity (optional, requires orchestrator context)
  *   8. MCP adapter connectivity
  *   9. CLI tools for detected tech stack (flutter, cargo, go, etc.)
+ *   10. IDE Detection – shows current running mode
  */
 
 'use strict';
@@ -22,6 +23,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { PATHS } = require('../core/constants');
+const { getIDEDetectionResult } = require('../core/ide-detection');
 
 /**
  * Registers the /workflow-doctor command.
@@ -157,15 +159,37 @@ function registerDoctorCommands(registerCommand) {
             notFound.push(t.name);
           }
         }
-        if (found.length > 0) {
+      if (found.length > 0) {
           return { status: '✅', message: `Found: ${found.join(', ')}` };
         }
         return { status: 'ℹ️', message: `No tech stack CLI tools detected (checked: ${toolChecks.map(t => t.name).join(', ')})` };
       });
 
-      // ── 9. MCP adapters ───────────────────────────────────────────────
-      if (context.orchestrator && context.orchestrator.mcpRegistry) {
-        check('MCP adapters', () => {
+      // ── 9. IDE Detection ──────────────────────────────────────────────
+      check('IDE Detection', () => {
+        const detection = getIDEDetectionResult();
+        if (!detection.isInsideIDE) {
+          return {
+            status: '🖥️',
+            message: 'Standalone Mode (Node Orchestrator) — Using self-built CodeGraph + LSPAdapter',
+          };
+        }
+        const isFullIDE = detection.capabilities.builtinLSP;
+        const icon = isFullIDE ? '🏠' : '⌨️';
+        const mode = isFullIDE ? 'Full IDE Agent Mode' : 'Limited IDE Mode';
+        const lspStatus = isFullIDE ? 'with full LSP support' : 'CLI tools only (no LSP)';
+        const caps = Object.entries(detection.capabilities)
+          .filter(([, v]) => v)
+          .map(([k]) => k.replace(/([A-Z])/g, ' $1').trim().toLowerCase());
+        const capSummary = caps.length > 3 ? `${caps.slice(0, 3).join(', ')}, +${caps.length - 3} more` : caps.join(', ');
+        return {
+          status: icon,
+          message: `${mode} — ${detection.ideName} ${lspStatus} (${capSummary})`,
+        };
+      });
+
+      // ── 11. MCP adapters ───────────────────────────────────────────────
+      if (context.orchestrator && context.orchestrator.mcpRegistry) {        check('MCP adapters', () => {
           const registry = context.orchestrator.mcpRegistry;
           const adapters = registry.getAll ? registry.getAll() : [];
           const connected = adapters.filter(a => a.isConnected);

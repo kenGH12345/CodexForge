@@ -17,15 +17,21 @@ const assert = require('assert');
 let passed = 0;
 let failed = 0;
 
+const _testQueue = [];
 function test(name, fn) {
-  try {
-    fn();
-    console.log(`  ✅ PASS: ${name}`);
-    passed++;
-  } catch (err) {
-    console.error(`  ❌ FAIL: ${name}`);
-    console.error(`     ${err.message}`);
-    failed++;
+  _testQueue.push({ name, fn });
+}
+async function _runTests() {
+  for (const { name, fn } of _testQueue) {
+    try {
+      await fn();
+      console.log(`  ✅ PASS: ${name}`);
+      passed++;
+    } catch (err) {
+      console.error(`  ❌ FAIL: ${name}`);
+      console.error(`     ${err.message}`);
+      failed++;
+    }
   }
 }
 
@@ -94,7 +100,7 @@ test('buildJsonBlockInstruction includes moduleGrouping for planner', () => {
   assert.ok(instruction.includes('moduleGrouping'), 'Instruction should mention moduleGrouping');
 });
 
-test('storePlannerContext extracts moduleGrouping from JSON block', () => {
+test('storePlannerContext extracts moduleGrouping from JSON block', async () => {
   const tmpDir = makeTempDir();
   const planContent = [
     '```json',
@@ -126,7 +132,7 @@ test('storePlannerContext extracts moduleGrouping from JSON block', () => {
   const { storePlannerContext } = require('../core/orchestrator-stage-helpers');
 
   const mockOrch = { stageCtx: store };
-  const result = storePlannerContext(mockOrch, planPath);
+  const result = await storePlannerContext(mockOrch, planPath);
 
   assertEqual(result.taskCount, 3, 'taskCount');
   assert.ok(result.moduleGrouping, 'moduleGrouping should be extracted');
@@ -143,7 +149,7 @@ test('storePlannerContext extracts moduleGrouping from JSON block', () => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-test('storePlannerContext handles missing moduleGrouping gracefully', () => {
+test('storePlannerContext handles missing moduleGrouping gracefully', async () => {
   const tmpDir = makeTempDir();
   const planContent = [
     '```json',
@@ -166,7 +172,7 @@ test('storePlannerContext handles missing moduleGrouping gracefully', () => {
   const { storePlannerContext } = require('../core/orchestrator-stage-helpers');
 
   const mockOrch = { stageCtx: store };
-  const result = storePlannerContext(mockOrch, planPath);
+  const result = await storePlannerContext(mockOrch, planPath);
 
   assertEqual(result.taskCount, 1, 'taskCount');
   assertEqual(result.moduleGrouping, null, 'moduleGrouping should be null when absent');
@@ -471,8 +477,9 @@ test('ExperienceStore loads old experiences without moduleId', () => {
 // Summary
 // ═══════════════════════════════════════════════════════════════════════════════
 
-console.log(`\n${'='.repeat(60)}`);
-console.log(`  Phase 2.5 Tests: ${passed} passed, ${failed} failed`);
-console.log(`${'='.repeat(60)}\n`);
-
-process.exit(failed > 0 ? 1 : 0);
+_runTests().then(() => {
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`  Phase 2.5 Tests: ${passed} passed, ${failed} failed`);
+  console.log(`${'='.repeat(60)}\n`);
+  process.exit(failed > 0 ? 1 : 0);
+}).catch(err => { console.error('Test runner error:', err); process.exit(1); });

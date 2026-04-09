@@ -37,6 +37,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { applyConfigGovernance } = require('./config-governance');
 
 // ─── Default Configuration ────────────────────────────────────────────────────
 
@@ -68,6 +69,98 @@ const DEFAULT_CONFIG = {
     },
     commentRatioWarning: 50,
   },
+
+  // ─── Configuration Governance (anti-sprawl for rules/skills/hooks) ───────
+  configurationGovernance: {
+    enabled: true,
+    limits: {
+      maxGlobalSkills: 8,
+      maxProjectSkills: 16,
+      maxBuiltinSkills: 64,
+      maxClassificationRules: 40,
+      maxCustomDetectionRulesPerType: 20,
+      maxSocraticUniversalRules: 16,
+      maxSocraticStageRulesPerStage: 12,
+      maxSocraticArtifactRules: 12,
+      maxHookPolicies: 24,
+      maxToolHookMetricsHistory: 5000,
+    },
+  },
+
+  // ─── Runtime Policy (制度化约束: runtime-enforced) ───────────────────────
+  runtimePolicy: {
+    enabled: true,
+    requireReadBeforeWrite: true,
+    blockScopeExpansion: true,
+    requireApprovalForRiskyOps: true,
+    maxRequirementChars: 8000,
+  },
+
+  // ─── Independent Acceptance Gate (做事/验收分离) ────────────────────────
+  acceptanceGate: {
+    enabled: true,
+    strict: false,
+    requireArtifacts: ['requirement.md', 'architecture.md', 'execution-plan.md', 'code.diff', 'test-report.md'],
+  },
+
+  // ─── Tool Governance Pipeline (pre/post/fallback) ───────────────────────
+  toolGovernance: {
+    enabled: true,
+    maxInputLength: 12000,
+    allowFallback: true,
+  },
+
+  // ─── Context Budget Policy (产品级预算策略) ───────────────────────────────
+  contextBudgetPolicy: {
+    enabled: true,
+    requirementMaxChars: 8000,
+    stageBudgets: {
+      ANALYSE: 12000,
+      ARCHITECT: 14000,
+      PLAN: 10000,
+      CODE: 14000,
+      TEST: 12000,
+    },
+  },
+
+  // ─── Capability Catalog (模型可见能力清单) ───────────────────────────────
+  capabilityCatalog: {
+    enabled: true,
+    includeRuntimeCapabilities: true,
+  },
+
+  // ─── Health Monitoring (Unified scoring + rolling trend alerts) ──────────
+  healthMonitoring: {
+    scoring: {
+      model: 'unified-v1',
+      weights: {
+        completeness: 0.35,
+        process: 0.20,
+        delivery: 0.30,
+        detection: 0.15,
+      },
+      penalties: {
+        missingStage: 20,
+        socraticMax: 20,
+        metricsGatePerFailedStage: 5,
+        metricsGateMax: 25,
+      },
+      gradeThresholds: {
+        A: 90,
+        B: 80,
+        C: 70,
+        D: 60,
+      },
+    },
+    trend: {
+      enabled: true,
+      windowSize: 5,
+      minSessions: 3,
+      degradationThreshold: 8,
+      lowScoreThreshold: 75,
+      maxHistoryEntries: 200,
+    },
+  },
 };
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
@@ -92,8 +185,17 @@ function loadConfig(startDir) {
           delete require.cache[require.resolve(fullPath)];
           const userConfig = require(fullPath);
           const merged = _mergeConfig(DEFAULT_CONFIG, userConfig);
+          const { config: governedConfig, report } = applyConfigGovernance(merged);
+          if (report && Array.isArray(report.warnings) && report.warnings.length > 0) {
+            for (const warning of report.warnings.slice(0, 10)) {
+              console.warn(warning);
+            }
+            if (report.warnings.length > 10) {
+              console.warn(`[ConfigGovernance] ${report.warnings.length - 10} additional warning(s) suppressed.`);
+            }
+          }
           console.log(`[ConfigLoader] Loaded config from: ${fullPath}`);
-          return { config: merged, configPath: fullPath };
+          return { config: governedConfig, configPath: fullPath };
         } catch (err) {
           console.warn(`[ConfigLoader] Failed to load config at ${fullPath}: ${err.message}`);
         }
@@ -101,8 +203,14 @@ function loadConfig(startDir) {
     }
   }
 
+  const { config: governedDefaultConfig, report } = applyConfigGovernance({ ...DEFAULT_CONFIG });
+  if (report && Array.isArray(report.warnings) && report.warnings.length > 0) {
+    for (const warning of report.warnings.slice(0, 10)) {
+      console.warn(warning);
+    }
+  }
   console.log(`[ConfigLoader] No workflow.config.js found. Using built-in defaults.`);
-  return { config: { ...DEFAULT_CONFIG }, configPath: null };
+  return { config: governedDefaultConfig, configPath: null };
 }
 
 /**

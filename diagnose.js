@@ -1,0 +1,17 @@
+﻿const { detectIDEEnvironment, isFullIDEAgentMode } = require('./workflow/core/ide-detection');
+const detection = detectIDEEnvironment();
+const caps = detection.capabilities;
+const enabled = Object.entries(caps).filter(([,v]) => v).length;
+const total = Object.keys(caps).length;
+console.log('');
+console.log('══════ 🔍 IDE Agent Diagnostic ══════');
+console.log('');
+console.log('Mode:', detection.isInsideIDE ? ✅ IDE Agent () : 'Standalone');
+console.log('Full Capability:', isFullIDEAgentMode() ? '✅ YES - 11/12 capabilities enabled' : '⚠️ Limited');
+console.log('');
+console.log('Capabilities:', enabled + '/' + total);
+Object.entries(caps).forEach(([k,v]) => console.log(' ', v ? '●' : '○', k));
+console.log('');
+console.log('Detection:', detection.matchedSignals.join(', '));
+console.log('');
+console.log('═════════════════════════════════════');

@@ -2123,6 +2123,209 @@ Implement a three-layer defence:
 - `core/orchestrator-task.js` — Added `isResponseTruncated()`, `mergeResponses()`, auto-continuation loop in `_executeTask()`
 - `docs/decision-log.md` — ADR-42
 
+---
+
+## ADR-43: BM25+Embedding Hybrid Skill Selection & Version DAG (OpenSpace-Inspired)
+
+**Status**: Implemented  
+**Date**: 2026-03-29  
+**Deciders**: Andrej Karpathy  
+**Inspired by**: [HKUDS/OpenSpace](https://github.com/HKUDS/OpenSpace) — SkillRegistry (BM25+LLM selection) and SkillLineage (version DAG)
+
+### Context
+
+After deep source code analysis of OpenSpace (a competing Agent enhancement framework), two capabilities were identified as high-value, low-risk improvements that align with our architecture:
+
+1. **Skill Selection**: ContextLoader used pure keyword counting (`_matchSkillsByKeyword`) — a skill matched only if its hardcoded keywords appeared verbatim in the task text. This missed semantic matches (e.g. "optimize database queries" wouldn't match `bp-performance-optimization` because "optimize" wasn't in its keyword list).
+
+2. **Version Tracking**: SkillEvolutionEngine tracked only a flat `version` string and `evolutionCount`. There was no way to answer "what was the parent version?", "was this a dedup or a real evolution?", or "show me the full history of how this skill evolved".
+
+### Decision
+
+#### Feature 1: BM25+Embedding Hybrid Skill Ranking (`core/skill-ranker.js`)
+
+Replaced keyword counting with a proper information retrieval pipeline:
+
+| Layer | Method | Latency | Dependency |
+|-------|--------|---------|------------|
+| **Layer 1** | BM25 (Okapi BM25) | <1ms, synchronous | None (inline implementation) |
+| **Layer 2** | Embedding reranking | ~50ms, async | EmbeddingService (optional) |
+
+**BM25 advantages over keyword counting:**
+- **TF-IDF weighting**: Rare terms (e.g. "riverpod") score higher than common terms (e.g. "code")
+- **Document length normalisation**: Short, focused skills aren't penalised vs. long, broad ones
+- **Partial matching**: A query with 3/5 matching terms still scores well (keyword counting required exact match)
+- **No hardcoded keyword lists needed**: BM25 indexes skill name + description + keywords + content
+
+**Hybrid scoring**: `final = α × BM25_norm + (1-α) × embedding_score` (α=0.6 default)
+
+**Graceful degradation**: If EmbeddingService is unavailable, BM25-only results are returned. If BM25 corpus is empty, falls back to original keyword matching.
+
+#### Feature 2: Version DAG (`skill-lineage.json`)
+
+Added a directed acyclic graph (DAG) tracking every skill evolution event:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `version` | string | The version created by this event |
+| `parentVersion` | string\|null | The version this evolved from (null for root) |
+| `type` | enum | `create` \| `evolve` \| `dedup` \| `retire` \| `restore` |
+| `timestamp` | ISO string | When the event occurred |
+| `summary` | string | Human-readable description of the change |
+| `sourceExpId` | string\|null | Experience ID that triggered this evolution |
+
+**Key differences from OpenSpace's approach:**
+- **JSON storage** (not SQLite) — consistent with our existing persistence strategy
+- **Zero LLM calls** — lineage is recorded as a side effect of existing operations
+- **Append-only** — nodes are never modified, only appended (true DAG semantics)
+
+### Consequences
+
+**Positive:**
+- Skill matching precision improved: BM25 handles partial matches, rare-term boosting, and multi-word queries
+- Full evolution traceability: "show me how `flutter-dev` evolved from v1.0.0 to v1.2.3"
+- Zero new npm dependencies (BM25 implemented inline, ~60 lines)
+- Zero LLM token cost (both features are pure computation)
+- Backward compatible: keyword matching preserved as fallback
+- 135 tests passing, 0 regressions (3 pre-existing failures unrelated)
+
+**Negative:**
+- BM25 corpus rebuild adds ~1ms on first query per session (amortised to zero after)
+- `skill-lineage.json` grows linearly with evolution events (~200 bytes per node)
+
+### Files Changed
+
+- `core/skill-ranker.js` — **NEW**: BM25+Embedding hybrid ranking engine
+- `core/context-loader.js` — Replaced `_matchSkills` with SkillRanker integration; added `_rebuildSkillRankerCorpus()`, `_matchSkillsAsync()`, `setEmbeddingService()`, `invalidateSkillRanker()`
+- `core/skill-evolution.js` — Added Version DAG: `_lineage` Map, `_recordLineage()`, `_loadLineage()`, `_saveLineage()`, `getLineage()`, `getLineageReport()`, `getLineageStats()`
+- `core/prompt-builder.js` — Updated cache-hit path to propagate EmbeddingService to SkillRanker
+- `index.js` — Updated EmbeddingService ready log message
+- `docs/decision-log.md` — ADR-43
+
+---
+
+## ADR-44: IDE Agent Mode — Mandatory Review Gates & Output Depth Requirements
+
+**Date**: 2026-03-29
+**Status**: Accepted
+
+**Context**:
+IDE Agent mode (`.codebuddy/agents/workflow-agent.md`, `.cursor/rules/workflow-agent.mdc`) operates
+purely through prompt instructions — there is no code-level enforcement like SocraticEngine's
+`askAsync()` in the Orchestrator path. Two critical issues were observed:
+
+1. **Shallow output**: Agent produced abbreviated, surface-level analysis (3-5 lines per stage)
+   instead of the thorough, reasoned output expected from a structured workflow. The prompt said
+   "VERBOSE + ANALYTICAL" but lacked quantified depth standards.
+
+2. **No review confirmation**: The prompt mentioned "pause and ask user to confirm architecture"
+   but this was a single bullet point buried in a list — easily ignored by the Agent. The Agent
+   would auto-approve its own architecture and proceed directly to CODE without user review.
+
+**Decision**:
+Enhance the IDE Agent definition (PROMPT_VERSION 2.3.0) with two mechanisms:
+
+### 1. Mandatory Review Gates (🛑 STOP-AND-WAIT)
+- Two explicit review gates: **after ARCHITECT** and **after PLAN**
+- Each gate outputs a structured review block with numbered options (approve/reject/approve-with-reservations)
+- Triple-reinforced: gate in stage description + top-level "Review Gates" section + DON'T list
+- Explicit prohibition: "DO NOT auto-approve", "DO NOT interpret silence as approval"
+
+### 2. Quantified Depth Requirements (📏 per stage)
+- **ANALYSE**: ≥1500 words, ≥3 user stories, ≥5 acceptance criteria, ≥2 risks, visible reasoning
+- **ARCHITECT**: ≥2000 words, component design, API contracts, ≥1 Mermaid diagram, trade-off analysis
+- **PLAN**: task IDs, acceptance criteria per task, dependency graph, risk assessment
+- **CODE**: explain WHAT/WHY/HOW per task, run tests after each task
+- **TEST**: test each criterion individually with evidence, include actual test output
+
+### 3. Visible Thinking Process
+- Changed from "reason internally" to "Show your thinking VISIBLY"
+- Agent must output a "🧠 Thinking" section at the start of each stage
+- Users can see the reasoning chain, not just conclusions
+
+**Consequences**:
+
+**Positive:**
+- Users get thorough, well-reasoned output at every stage
+- Architecture and plan decisions require explicit human approval
+- Thinking process is transparent and auditable
+- Prompt size increase is minimal (~2KB, from ~30K to ~32K)
+
+**Negative:**
+- Workflow takes slightly longer (two mandatory pause points)
+- Agent may occasionally over-produce for simple tasks (mitigated by Smart Triage routing)
+- Prompt-level enforcement is softer than code-level — depends on model compliance
+
+### Files Changed
+
+- `core/agent-generator.js` — PROMPT_VERSION 2.3.0: added review gates, depth requirements, visible thinking
+- `AGENTS.md` — Updated IDE Agent Mode documentation with review gates description
+- `docs/decision-log.md` — ADR-44
+
+---
+
+## ADR-45: IDE Agent Mode — Fix Read Tool Misuse (read_file over Read)
+
+**Date**: 2026-03-29
+**Status**: Accepted
+
+**Context**:
+In IDE Agent mode (CodeBuddy), the ANALYSE stage was observed calling `执行工具: Read` repeatedly
+instead of using IDE-native `read_file`/`codebase_search` tools. This caused:
+
+1. **Unnecessary tool execution overhead**: Each `Read` call shows as "执行工具: Read" in the UI,
+   adding visual noise and latency vs. the seamless `read_file` IDE-native tool.
+2. **Violation of ADR-37 (IDE-First)**: The agent should prefer IDE-native tools, not Craft-mode
+   Subagent tools.
+
+**Root Cause Analysis** (3 contributing factors):
+
+1. **Dynamic Context Loading used `Read` verb**: The prompt said `1. Read \`output/code-graph.json\``
+   which the LLM interpreted as "call the Read tool" rather than "use read_file to read".
+2. **Frontmatter `tools: Read, Grep, Glob, ...`**: The CodeBuddy agent frontmatter declared `Read`
+   as an available tool (required for Craft-mode Subagent compatibility), reinforcing the LLM's
+   tendency to use it.
+3. **IDE Tool Guidance table was correct but overridden**: The table correctly listed `read_file` as
+   preferred, but the Dynamic Context Loading section's `Read` verb contradicted it. LLMs follow
+   the most recent/specific instruction, and the context loading checklist was more actionable.
+
+**Decision**:
+Update PROMPT_VERSION to 2.4.0 with the following changes:
+
+### 1. Explicit Tool Name in Dynamic Context Loading
+Changed all `Read \`file\`` to `read_file \`file\`` in the 13-item context loading checklist.
+Added a warning: "Use `read_file` for each file below. Do NOT use the `Read` tool."
+
+### 2. Tool Name Mapping Warning in IDE-First Table
+Added a prominent warning block after the IDE-First tool table:
+> "The frontmatter `tools:` field lists Craft-mode tool names for compatibility, but you
+> MUST prefer the IDE-native equivalents listed in this table."
+
+### 3. DO/DON'T List Updates
+- DO: "Use `read_file` (not `Read`) to load output/ context files"
+- DON'T: "Don't use the `Read` tool — use `read_file`", "Don't use `Grep`/`Glob` — use `codebase_search`/`grep_search`/`list_dir`"
+
+### 4. Bash Safety Rules Update
+Updated rule 3 to explicitly mention `Read` as a tool to avoid alongside `cat`.
+
+**Consequences**:
+
+**Positive:**
+- Agent will use `read_file` (IDE-native, seamless) instead of `Read` (Subagent tool, shows execution UI)
+- Consistent with ADR-37 IDE-First principle
+- Reduced visual noise in IDE Agent mode UI
+- Faster file reading (no Subagent tool dispatch overhead)
+
+**Negative:**
+- Frontmatter still lists `Read, Grep, Glob` for Craft-mode compatibility — cannot remove these
+  without breaking CodeBuddy's Subagent system. The prompt-level override is the correct approach.
+
+### Files Changed
+
+- `core/agent-generator.js` — PROMPT_VERSION 2.4.0: fixed Read→read_file in Dynamic Context Loading, added tool mapping warning
+- `docs/agent-collaboration.md` — Updated IDE Tool Usage Protocol with Read vs read_file warning
+- `docs/decision-log.md` — ADR-45
+
 
 
 

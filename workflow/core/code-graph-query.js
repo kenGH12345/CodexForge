@@ -36,6 +36,12 @@ const STOP_WORDS = new Set([
   'before', 'using', 'support', 'refactor', 'implement', 'change', 'update',
 ]);
 
+function _safeLower(value) {
+  if (typeof value === 'string') return value.toLowerCase();
+  if (value === null || value === undefined) return '';
+  return String(value).toLowerCase();
+}
+
 // ─── CodeGraph Query Mixin ───────────────────────────────────────────────────
 
 const CodeGraphQueryMixin = {
@@ -47,11 +53,12 @@ const CodeGraphQueryMixin = {
    * @param {string}  [options.kind]    - Filter by SymbolKind
    * @param {string}  [options.file]    - Filter by file path substring
    * @param {number}  [options.limit]   - Max results (default: 20)
-   * @returns {SymbolEntry[]}
+   * @returns {Promise<SymbolEntry[]>} Async due to lazy loading
    */
-  search(query, { kind = null, file = null, limit = 20 } = {}) {
-    if (this._symbols.size === 0) this._loadFromDisk();
-    const q = query.toLowerCase();
+  async search(query, { kind = null, file = null, limit = 20 } = {}) {
+    // P0-Enhancement: Lazy loading - ensure graph is loaded before query
+    await this.ensureLoaded();
+    const q = _safeLower(query);
 
     // Ensure inverted token index is built
     if (!this._tokenIndex) this._buildTokenIndex();
@@ -62,17 +69,19 @@ const CodeGraphQueryMixin = {
     // Phase 1a: Direct substring match candidates (high priority)
     for (const sym of this._symbols.values()) {
       if (kind && sym.kind !== kind) continue;
-      if (file && !sym.file.includes(file)) continue;
+      if (file && !_safeLower(sym?.file).includes(_safeLower(file))) continue;
 
-      const nameLower = sym.name.toLowerCase();
+      const nameLower = _safeLower(sym?.name);
+      const summaryLower = _safeLower(sym?.summary);
+      const fileLower = _safeLower(sym?.file);
       if (nameLower.includes(q) ||
-          sym.summary?.toLowerCase().includes(q) ||
-          sym.file.toLowerCase().includes(q)) {
+          summaryLower.includes(q) ||
+          fileLower.includes(q)) {
         let score = 100;
         if (nameLower.includes(q)) {
           score = nameLower === q ? 150 : 120;
           if (sym.kind === 'class' || sym.kind === 'interface') score += 10;
-        } else if (sym.summary?.toLowerCase().includes(q)) {
+        } else if (summaryLower.includes(q)) {
           score = 105;
         }
         candidateScores.set(sym.id, score);
@@ -128,7 +137,7 @@ const CodeGraphQueryMixin = {
         const sym = this._symbols.get(symId);
         if (!sym) continue;
         if (kind && sym.kind !== kind) continue;
-        if (file && !sym.file.includes(file)) continue;
+        if (file && !_safeLower(sym?.file).includes(_safeLower(file))) continue;
 
         const nameTokens = this._tokenizeText(sym.name);
         let nameHits = 0;
@@ -166,9 +175,9 @@ const CodeGraphQueryMixin = {
       for (const sym of this._symbols.values()) {
         if (candidateScores.has(sym.id)) continue;
         if (kind && sym.kind !== kind) continue;
-        if (file && !sym.file.includes(file)) continue;
+        if (file && !_safeLower(sym?.file).includes(_safeLower(file))) continue;
 
-        const nameLower = sym.name.toLowerCase();
+        const nameLower = _safeLower(sym?.name);
         const dist = this._editDistancePrefix(q, nameLower);
         if (dist <= 2 && dist < q.length * 0.4) {
           candidateScores.set(sym.id, Math.max(1, 5 - dist));
@@ -217,12 +226,15 @@ const CodeGraphQueryMixin = {
    * @param {boolean} [options.preferIDE] - Force IDE query even in standalone (default: auto-detect)
    * @returns {object|null} Symbol info (sync for regex, async if IDE used)
    */
-  querySymbol(symbolName, { includeCallGraph = true, includeFileSymbols = false, preferIDE = null } = {}) {
-    if (this._symbols.size === 0) this._loadFromDisk();
+  async querySymbol(symbolName, { includeCallGraph = true, includeFileSymbols = false, preferIDE = null } = {}) {
+    // P0-Enhancement: Lazy loading - ensure graph is loaded before query
+    // Skip if IDE is available (we'll use IDE's view_code_item instead)
+    const shouldTryIDE = preferIDE !== null ? preferIDE : this._shouldUseIDE();
+    if (!shouldTryIDE) {
+      await this.ensureLoaded();
+    }
 
     // ADR-37: IDE-First check
-    const shouldTryIDE = preferIDE !== null ? preferIDE : this._shouldUseIDE();
-
     if (shouldTryIDE) {
       // Schedule IDE query and return a thenable for async resolution
       const idePromise = this._querySymbolWithIDEFirst(symbolName, { includeCallGraph, includeFileSymbols });
@@ -316,9 +328,9 @@ const CodeGraphQueryMixin = {
   _querySymbolLocal(symbolName, includeCallGraph, includeFileSymbols) {
     const sym = this._findByName(symbolName);
     if (!sym) {
-      const lower = symbolName.toLowerCase();
+      const lower = _safeLower(symbolName);
       for (const s of this._symbols.values()) {
-        if (s.name.toLowerCase().includes(lower)) {
+        if (_safeLower(s?.name).includes(lower)) {
           return this._buildQueryResult(s, includeCallGraph, includeFileSymbols);
         }
       }
@@ -408,10 +420,13 @@ const CodeGraphQueryMixin = {
    * @returns {{ calls: string[], calledBy: string[] } | Promise<{ calls: string[], calledBy: string[] }>}
    */
   getCallGraph(symbolName, options = {}) {
-    const { preferIDE = null, direction = 'both', async = false } = options;
+    const { preferIDE = null, direction = 'both', async: useAsync } = options;
 
-    // For backward compatibility: if async explicitly requested or we detect async context
-    const shouldUseAsync = async || this._shouldUseAsyncCallGraph();
+    // For backward compatibility: if async explicitly requested or we detect async context.
+    // When async is explicitly set to false, respect that (callers like LSPRouter regex
+    // fallback and APIEndpointExtractor need synchronous results).
+    const asyncExplicitlySet = 'async' in options;
+    const shouldUseAsync = asyncExplicitlySet ? !!useAsync : this._shouldUseAsyncCallGraph();
 
     if (shouldUseAsync) {
       return this._getCallGraphAsync(symbolName, { preferIDE, direction });
@@ -543,9 +558,9 @@ const CodeGraphQueryMixin = {
    * @returns {SymbolEntry|null}
    */
   _findByName(name) {
-    const lower = name.toLowerCase();
+    const lower = _safeLower(name);
     for (const sym of this._symbols.values()) {
-      if (sym.name.toLowerCase() === lower) {
+      if (_safeLower(sym?.name) === lower) {
         return sym;
       }
     }
@@ -590,8 +605,9 @@ const CodeGraphQueryMixin = {
    */
   _tokenizeText(text) {
     if (!text) return [];
+    const normalizedText = typeof text === 'string' ? text : String(text);
     // CamelCase split + lowercase
-    const words = text
+    const words = normalizedText
       .replace(/([a-z])([A-Z])/g, '$1 $2')
       .replace(/[-_]/g, ' ')
       .toLowerCase()
@@ -631,7 +647,8 @@ const CodeGraphQueryMixin = {
       const tokens = this._tokenizeText(sym.name);
 
       // Add file basename tokens
-      const fileBasename = sym.file.split('/').pop()?.replace(/\.[^.]+$/, '') || '';
+      const safeFilePath = typeof sym?.file === 'string' ? sym.file : String(sym?.file || '');
+      const fileBasename = safeFilePath.split('/').pop()?.replace(/\.[^.]+$/, '') || '';
       const fileTokens = this._tokenizeText(fileBasename);
 
       const allTokens = [...new Set([...tokens, ...fileTokens])];

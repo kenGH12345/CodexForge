@@ -15,15 +15,21 @@ const assert = require('assert');
 let passed = 0;
 let failed = 0;
 
+const _testQueue = [];
 function test(name, fn) {
-  try {
-    fn();
-    console.log(`  ✅ PASS: ${name}`);
-    passed++;
-  } catch (err) {
-    console.error(`  ❌ FAIL: ${name}`);
-    console.error(`     ${err.message}`);
-    failed++;
+  _testQueue.push({ name, fn });
+}
+async function _runTests() {
+  for (const { name, fn } of _testQueue) {
+    try {
+      await fn();
+      console.log(`  ✅ PASS: ${name}`);
+      passed++;
+    } catch (err) {
+      console.error(`  ❌ FAIL: ${name}`);
+      console.error(`     ${err.message}`);
+      failed++;
+    }
   }
 }
 
@@ -186,7 +192,7 @@ function writeTempReq(moduleMap) {
   return tmpFile;
 }
 
-test('leaf module (no deps) is auto-calculated as isolatable', () => {
+test('leaf module (no deps) is auto-calculated as isolatable', async () => {
   const orch = mockOrch();
   const tmpFile = writeTempReq({
     modules: [
@@ -194,12 +200,12 @@ test('leaf module (no deps) is auto-calculated as isolatable', () => {
     ],
     crossCuttingConcerns: [],
   });
-  storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
+  await storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
   const mm = orch.stageCtx.get('ANALYSE').meta.moduleMap;
   assertEqual(mm.modules[0].isolatable, true, 'Leaf module should be auto-calculated as isolatable');
 });
 
-test('module with unresolved deps (outside map) is isolatable', () => {
+test('module with unresolved deps (outside map) is isolatable', async () => {
   const orch = mockOrch();
   const tmpFile = writeTempReq({
     modules: [
@@ -207,13 +213,13 @@ test('module with unresolved deps (outside map) is isolatable', () => {
     ],
     crossCuttingConcerns: [],
   });
-  storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
+  await storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
   const mm = orch.stageCtx.get('ANALYSE').meta.moduleMap;
   // 'external-lib' is not in the module map, so it's ignored for isolatable calculation
   assertEqual(mm.modules[0].isolatable, true, 'Module with only external deps should be isolatable');
 });
 
-test('module depending on isolatable module is also isolatable', () => {
+test('module depending on isolatable module is also isolatable', async () => {
   const orch = mockOrch();
   const tmpFile = writeTempReq({
     modules: [
@@ -222,13 +228,13 @@ test('module depending on isolatable module is also isolatable', () => {
     ],
     crossCuttingConcerns: [],
   });
-  storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
+  await storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
   const mm = orch.stageCtx.get('ANALYSE').meta.moduleMap;
   assertEqual(mm.modules[0].isolatable, true, 'DB (leaf) should be isolatable');
   assertEqual(mm.modules[1].isolatable, true, 'Auth (depends on isolatable DB) should be isolatable');
 });
 
-test('circular dependency makes both modules non-isolatable', () => {
+test('circular dependency makes both modules non-isolatable', async () => {
   const orch = mockOrch();
   const tmpFile = writeTempReq({
     modules: [
@@ -238,14 +244,14 @@ test('circular dependency makes both modules non-isolatable', () => {
     ],
     crossCuttingConcerns: [],
   });
-  storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
+  await storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
   const mm = orch.stageCtx.get('ANALYSE').meta.moduleMap;
   assertEqual(mm.modules[0].isolatable, false, 'A (circular with B) should NOT be isolatable');
   assertEqual(mm.modules[1].isolatable, false, 'B (circular with A) should NOT be isolatable');
   assertEqual(mm.modules[2].isolatable, true, 'C (independent) should be isolatable');
 });
 
-test('transitive chain: A→B→C, all should be isolatable', () => {
+test('transitive chain: A→B→C, all should be isolatable', async () => {
   const orch = mockOrch();
   const tmpFile = writeTempReq({
     modules: [
@@ -255,14 +261,14 @@ test('transitive chain: A→B→C, all should be isolatable', () => {
     ],
     crossCuttingConcerns: [],
   });
-  storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
+  await storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
   const mm = orch.stageCtx.get('ANALYSE').meta.moduleMap;
   assertEqual(mm.modules.find(m => m.id === 'mod-c').isolatable, true, 'C (leaf) isolatable');
   assertEqual(mm.modules.find(m => m.id === 'mod-b').isolatable, true, 'B (dep on isolatable C) isolatable');
   assertEqual(mm.modules.find(m => m.id === 'mod-a').isolatable, true, 'A (dep on isolatable B) isolatable');
 });
 
-test('LLM annotation overridden: was true, now false due to circular', () => {
+test('LLM annotation overridden: was true, now false due to circular', async () => {
   const orch = mockOrch();
   const tmpFile = writeTempReq({
     modules: [
@@ -271,7 +277,7 @@ test('LLM annotation overridden: was true, now false due to circular', () => {
     ],
     crossCuttingConcerns: [],
   });
-  storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
+  await storeAnalyseContext(orch, tmpFile, { riskNotes: [] });
   const mm = orch.stageCtx.get('ANALYSE').meta.moduleMap;
   assertEqual(mm.modules[0].isolatable, false, 'X should be overridden to false (circular)');
   assertEqual(mm.modules[1].isolatable, false, 'Y should be overridden to false (circular)');
@@ -281,8 +287,9 @@ test('LLM annotation overridden: was true, now false due to circular', () => {
 // Summary
 // ═══════════════════════════════════════════════════════════════════════════════
 
-console.log(`\n${'='.repeat(60)}`);
-console.log(`  P1 Review Fix Tests: ${passed} passed, ${failed} failed`);
-console.log(`${'='.repeat(60)}\n`);
-
-process.exit(failed > 0 ? 1 : 0);
+_runTests().then(() => {
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`  P1 Review Fix Tests: ${passed} passed, ${failed} failed`);
+  console.log(`${'='.repeat(60)}\n`);
+  process.exit(failed > 0 ? 1 : 0);
+}).catch(err => { console.error('Test runner error:', err); process.exit(1); });

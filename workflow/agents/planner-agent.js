@@ -125,6 +125,17 @@ Format:
 | mod-db    | Database Layer | T-3, T-4 |
 | cross-module | Cross-Module | T-6 |
 
+### 8. Traceability Coverage *(mandatory)*
+- For each requirement/acceptance ID ('REQ-xxx' / 'AC-xxx') visible in upstream context, list mapped task IDs ('T-<N>').
+- Every mapped row should include at least one task.
+- If an item cannot be planned yet, mark as 'UNPLANNED' with reason.
+
+### 9. ADR-to-Task Linkage *(mandatory)*
+- In JSON metadata, include 'adrTaskLinkage.links' entries with shape:
+  - { "reqId": "REQ-001", "adrId": "ADR-001", "taskIds": ["T-1", "T-3"] }
+- 'reqId' can be 'REQ-xxx' or 'AC-xxx'.
+- Keep this linkage lightweight and deterministic.
+
 ${jsonInstruction}
 
 ## Upstream Module Map Context
@@ -190,7 +201,7 @@ Remember: NO code, NO pseudocode – planning and task decomposition ONLY.
       if (!check.valid) {
         console.warn(`[PlannerAgent] ⚠️  JSON block validation failed: ${check.reason}`);
       } else {
-        console.log(`[PlannerAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
+        console.error(`[PlannerAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
       }
     }
 
@@ -200,12 +211,14 @@ Remember: NO code, NO pseudocode – planning and task decomposition ONLY.
       { en: 'Implementation Phases', zh: '实施阶段' },
       { en: 'Task Breakdown', zh: '任务分解' },
       { en: 'Dependency Graph', zh: '依赖图' },
+      { en: 'Traceability Coverage', zh: '追溯覆盖' },
+      { en: 'ADR-to-Task Linkage', zh: 'ADR 到任务关联' },
     ];
     const missingSections = mandatorySections.filter(s => !llmResponse.includes(s.en) && !llmResponse.includes(s.zh));
     if (missingSections.length > 0) {
-      console.warn(`[PlannerAgent] ⚠️  COMPLIANCE: Missing mandatory section(s): ${missingSections.map(s => s.en).join(', ')}. The agent output specification requires these sections.`);
+      throw new Error(`[PlannerAgent] RTM_GATE_FAILED: Missing mandatory section(s): ${missingSections.map(s => s.en).join(', ')}.`);
     } else {
-      console.log(`[PlannerAgent] ✅ Mandatory sections present: ${mandatorySections.map(s => s.en).join(', ')}.`);
+      console.error(`[PlannerAgent] ✅ Mandatory sections present: ${mandatorySections.map(s => s.en).join(', ')}.`);
     }
 
     // Check for acceptance criteria presence
@@ -214,7 +227,7 @@ Remember: NO code, NO pseudocode – planning and task decomposition ONLY.
     const criteriaPattern = /Acceptance Criteria/gi;
     const criteriaCount = (llmResponse.match(criteriaPattern) || []).length;
     if (taskCount > 0 && criteriaCount < taskCount) {
-      console.warn(`[PlannerAgent] ⚠️  Only ${criteriaCount}/${taskCount} tasks have acceptance criteria. All tasks should have acceptance criteria.`);
+      throw new Error(`[PlannerAgent] RTM_GATE_FAILED: Only ${criteriaCount}/${taskCount} tasks have acceptance criteria.`);
     }
 
     // Phase 2.5A: Validate moduleGrouping in JSON block
@@ -223,7 +236,7 @@ Remember: NO code, NO pseudocode – planning and task decomposition ONLY.
       if (Array.isArray(mg.groups) && mg.groups.length > 0) {
         const totalGroupedTasks = mg.groups.reduce((sum, g) => sum + (Array.isArray(g.taskIds) ? g.taskIds.length : 0), 0);
         const crossCount = Array.isArray(mg.crossModuleTasks) ? mg.crossModuleTasks.length : 0;
-        console.log(`[PlannerAgent] ✅ Module-Task Grouping: ${mg.groups.length} module group(s), ${totalGroupedTasks} grouped task(s), ${crossCount} cross-module task(s).`);
+        console.error(`[PlannerAgent] ✅ Module-Task Grouping: ${mg.groups.length} module group(s), ${totalGroupedTasks} grouped task(s), ${crossCount} cross-module task(s).`);
 
         // Validate: every task should appear in some group or crossModuleTasks
         const allGroupedTaskIds = new Set();
@@ -233,14 +246,78 @@ Remember: NO code, NO pseudocode – planning and task decomposition ONLY.
         for (const tid of (mg.crossModuleTasks || [])) allGroupedTaskIds.add(tid);
 
         if (taskCount > 0 && allGroupedTaskIds.size < taskCount) {
-          console.warn(`[PlannerAgent] ⚠️  Module grouping covers ${allGroupedTaskIds.size}/${taskCount} tasks. Some tasks are not assigned to any module.`);
+          throw new Error(`[PlannerAgent] RTM_GATE_FAILED: Module grouping covers ${allGroupedTaskIds.size}/${taskCount} tasks.`);
         }
       } else {
-        console.warn(`[PlannerAgent] ⚠️  moduleGrouping present but has no valid groups.`);
+        throw new Error(`[PlannerAgent] RTM_GATE_FAILED: moduleGrouping present but has no valid groups.`);
       }
     } else if (llmResponse.includes('Functional Module Map')) {
       // Module Map was available but no moduleGrouping was produced
-      console.warn(`[PlannerAgent] ⚠️  Functional Module Map was available but no moduleGrouping was produced in JSON block.`);
+      throw new Error(`[PlannerAgent] RTM_GATE_FAILED: Functional Module Map was available but no moduleGrouping was produced in JSON block.`);
+    }
+
+    // ── Traceability coverage check (REQ/AC -> TASK) ───────────────────────
+    const requirementIds = [...new Set(llmResponse.match(/\b(?:REQ|AC)-\d{3,}\b/g) || [])];
+    if (requirementIds.length > 0) {
+      const mappedIds = new Set();
+      const lineMatches = llmResponse.match(/^.*(?:REQ|AC)-\d{3,}.*$/gim) || [];
+      for (const line of lineMatches) {
+        const idsInLine = line.match(/\b(?:REQ|AC)-\d{3,}\b/g) || [];
+        const hasTask = /\bT-\d+\b/i.test(line);
+        const unplanned = /\bUNPLANNED\b/i.test(line);
+        if (hasTask && !unplanned) {
+          for (const id of idsInLine) mappedIds.add(id.toUpperCase());
+        }
+      }
+
+      if (jsonBlock && jsonBlock.adrTaskLinkage && Array.isArray(jsonBlock.adrTaskLinkage.links)) {
+        for (const link of jsonBlock.adrTaskLinkage.links) {
+          if (link && typeof link.reqId === 'string' && /^((REQ|AC)-\d{3,})$/i.test(link.reqId) && Array.isArray(link.taskIds) && link.taskIds.length > 0) {
+            mappedIds.add(link.reqId.toUpperCase());
+          }
+        }
+      }
+
+      const uncovered = requirementIds.filter(id => !mappedIds.has(id.toUpperCase()));
+      if (uncovered.length > 0) {
+        throw new Error(`[PlannerAgent] RTM_GATE_FAILED: Traceability coverage gap ${uncovered.length}/${requirementIds.length}. Uncovered: ${uncovered.slice(0, 8).join(', ')}${uncovered.length > 8 ? '...' : ''}`);
+      } else {
+        console.error(`[PlannerAgent] ✅ Traceability coverage: ${mappedIds.size}/${requirementIds.length} REQ/AC item(s) mapped to task(s).`);
+      }
+    }
+
+    // ── ADR-to-Task linkage structure check (REQ/AC -> ADR -> TASK) ─────────
+    if (jsonBlock && jsonBlock.adrTaskLinkage) {
+      const links = jsonBlock.adrTaskLinkage.links;
+      if (!Array.isArray(links) || links.length === 0) {
+        throw new Error(`[PlannerAgent] RTM_GATE_FAILED: adrTaskLinkage.links must be a non-empty array.`);
+      } else {
+        let malformed = 0;
+        let brokenChain = 0;
+        for (const link of links) {
+          const validShape = link
+            && typeof link.reqId === 'string'
+            && typeof link.adrId === 'string'
+            && Array.isArray(link.taskIds);
+          if (!validShape) {
+            malformed += 1;
+            continue;
+          }
+          const reqOk = /^((REQ|AC)-\d{3,})$/i.test(link.reqId);
+          const adrOk = /^ADR-\d{3,}$/i.test(link.adrId);
+          const taskOk = link.taskIds.length > 0 && link.taskIds.every(t => /^T-\d+$/i.test(String(t)));
+          if (!reqOk || !adrOk || !taskOk) brokenChain += 1;
+        }
+        if (malformed > 0) {
+          throw new Error(`[PlannerAgent] RTM_GATE_FAILED: adrTaskLinkage.links has ${malformed} malformed item(s). Expected { reqId, adrId, taskIds[] }.`);
+        }
+        if (brokenChain > 0) {
+          throw new Error(`[PlannerAgent] RTM_GATE_FAILED: adrTaskLinkage has ${brokenChain} broken chain item(s). Expected REQ/AC -> ADR -> T-N.`);
+        }
+        console.error(`[PlannerAgent] ✅ ADR-to-Task linkage validated: ${links.length} chain item(s).`);
+      }
+    } else {
+      throw new Error(`[PlannerAgent] RTM_GATE_FAILED: Missing adrTaskLinkage in JSON block.`);
     }
 
     // Detect implementation code (multi-line code blocks with logic)

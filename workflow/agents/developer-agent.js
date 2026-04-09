@@ -140,7 +140,7 @@ First output the JSON metadata block (as instructed above), then write the "Arch
       if (!check.valid) {
         console.warn(`[DeveloperAgent] ⚠️  JSON block validation failed: ${check.reason}`);
       } else {
-        console.log(`[DeveloperAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
+        console.error(`[DeveloperAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
       }
     }
 
@@ -153,7 +153,7 @@ First output the JSON metadata block (as instructed above), then write the "Arch
     if (missingSections.length > 0) {
       console.warn(`[DeveloperAgent] ⚠️  COMPLIANCE: Missing mandatory section(s): ${missingSections.map(s => s.en).join(', ')}. The agent output specification requires these sections.`);
     } else {
-      console.log(`[DeveloperAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan.`);
+      console.error(`[DeveloperAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan.`);
     }
 
     // Extract content from ```diff ... ``` block if present (handle optional diff and \r\n)

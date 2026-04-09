@@ -16,7 +16,7 @@ const { CodeReviewAgent } = require('./code-review-agent');
 const { RollbackCoordinator } = require('./rollback-coordinator');
 const { QualityGate } = require('./quality-gate');
 const { translateMdFile } = require('./i18n-translator');
-const { runEvoMapFeedback } = require('./stage-runner-utils');
+const { runEvoMapFeedback, recordSelfReport, runStageMetricsGate } = require('./stage-runner-utils');
 const { _recordPromptABOutcome } = require('./stage-analyst');
 const {
   buildDeveloperUpstreamCtx,
@@ -26,6 +26,7 @@ const {
 } = require('./orchestrator-stage-helpers');
 const { ContractViolationError } = require('./file-ref-bus');
 const { buildRetryContext } = require('./retry-divergence-guard');
+const { buildAgentPrompt } = require('./prompt-builder');
 
 // Forward reference: _runArchitect is needed for rollback. Lazy-loaded to avoid circular deps.
 let _runArchitect = null;
@@ -45,11 +46,12 @@ function _getRunArchitect() {
  * @returns {Promise<string>} Path to the generated code.diff
  */
 async function _runDeveloper() {
+  const _devStageStartTime = Date.now();
   // Print stage header via handoffLog if available
   if (this.handoffLog) {
     this.handoffLog.printStageHeader('CODE', 'DeveloperAgent');
   } else {
-    console.log(`\n[Orchestrator] Stage: CODE (DeveloperAgent)`);
+    console.error(`\n[Orchestrator] Stage: CODE (DeveloperAgent)`);
   }  const inputPath = this.bus.consume(AgentRole.DEVELOPER);
 
   // ── Read execution plan from PLAN stage ────────────────────────────────
@@ -61,7 +63,7 @@ async function _runDeveloper() {
     try {
       if (fs.existsSync(planMeta.executionPlanPath)) {
         executionPlanContent = fs.readFileSync(planMeta.executionPlanPath, 'utf-8');
-        console.log(`[Orchestrator] 📋 Execution plan loaded (${executionPlanContent.length} chars) from ${planMeta.executionPlanPath}`);
+        console.error(`[Orchestrator] 📋 Execution plan loaded (${executionPlanContent.length} chars) from ${planMeta.executionPlanPath}`);
       }
     } catch (planErr) {
       console.warn(`[Orchestrator] ⚠️  Could not read execution plan (non-fatal): ${planErr.message}`);
@@ -74,13 +76,91 @@ async function _runDeveloper() {
   // Wrap in an object so we can attach executionPlanBlock without silent failure.
   // (Previously: `upstreamCtxForDev.executionPlanBlock = ...` silently failed on primitive string.)
   const upstreamCtxForDev = { text: upstreamCtxForDevStr, executionPlanBlock: '' };
-  if (executionPlanContent) {
+
+  // ── Structured task injection (replaces raw 8000-char truncation) ───────
+  // Prefer structured tasks[] from stageCtx.PLAN.meta (extracted from JSON block).
+  // Fall back to raw markdown truncation only if structured data is unavailable.
+  const planCtxMeta = this.stageCtx?.get(WorkflowState.PLAN)?.meta;
+  const structuredTasks = planCtxMeta?.tasks;
+  const structuredPhases = planCtxMeta?.phases;
+  const adrTaskLinkage = planCtxMeta?.adrTaskLinkage;
+
+  // Build a lookup: taskId → { reqId, adrId } for inline annotation
+  const taskToLinkage = new Map();
+  if (adrTaskLinkage && Array.isArray(adrTaskLinkage.links)) {
+    for (const link of adrTaskLinkage.links) {
+      for (const taskId of link.taskIds) {
+        taskToLinkage.set(taskId, { reqId: link.reqId, adrId: link.adrId });
+      }
+    }
+  }
+
+  if (structuredTasks && structuredTasks.length > 0) {
+    // Build a compact structured task list — DeveloperAgent can precisely locate each task
+    const parts = ['\n## Execution Plan — Structured Task List (from PLAN stage JSON block)'];
+    parts.push(`> Total: ${structuredTasks.length} task(s) across ${structuredPhases ? structuredPhases.length : '?'} phase(s). Implement ALL tasks unless instructed otherwise.`);
+    parts.push('');
+
+    // Emit phases as sections if available
+    if (structuredPhases && structuredPhases.length > 0) {
+      for (const phase of structuredPhases) {
+        const phaseTasks = structuredTasks.filter(t =>
+          phase.taskIds && phase.taskIds.includes(t.id)
+        );
+        if (phaseTasks.length === 0) continue;
+        parts.push(`### Phase ${phase.id}: ${phase.name}`);
+        for (const task of phaseTasks) {
+          parts.push(`#### Task ${task.id}: ${task.title}`);
+          if (task.moduleId) parts.push(`- **Module**: ${task.moduleId}`);
+          if (task.description) parts.push(`- **Description**: ${task.description}`);
+          if (task.files && task.files.length > 0) parts.push(`- **Files**: ${task.files.join(', ')}`);
+          if (task.dependencies && task.dependencies.length > 0) parts.push(`- **Depends on**: ${task.dependencies.join(', ')}`);
+          if (task.estimate) parts.push(`- **Estimate**: ${task.estimate}`);
+          // ADR-Task Linkage: inject requirement traceability as implementation constraint
+          const linkage = taskToLinkage.get(task.id);
+          if (linkage) parts.push(`- **Implements**: Req \`${linkage.reqId}\` via ADR \`${linkage.adrId}\` — ensure implementation satisfies this requirement`);
+          parts.push('');
+        }
+      }
+      // Emit tasks not assigned to any phase
+      const assignedTaskIds = new Set(structuredPhases.flatMap(p => p.taskIds || []));
+      const unassignedTasks = structuredTasks.filter(t => !assignedTaskIds.has(t.id));
+      if (unassignedTasks.length > 0) {
+        parts.push('### Unphased Tasks');
+        for (const task of unassignedTasks) {
+          parts.push(`#### Task ${task.id}: ${task.title}`);
+          if (task.moduleId) parts.push(`- **Module**: ${task.moduleId}`);
+          if (task.description) parts.push(`- **Description**: ${task.description}`);
+          if (task.files && task.files.length > 0) parts.push(`- **Files**: ${task.files.join(', ')}`);
+          parts.push('');
+        }
+      }
+    } else {
+      // No phases: flat task list
+      for (const task of structuredTasks) {
+        parts.push(`#### Task ${task.id}: ${task.title}`);
+        if (task.moduleId) parts.push(`- **Module**: ${task.moduleId}`);
+        if (task.description) parts.push(`- **Description**: ${task.description}`);
+        if (task.files && task.files.length > 0) parts.push(`- **Files**: ${task.files.join(', ')}`);
+        if (task.dependencies && task.dependencies.length > 0) parts.push(`- **Depends on**: ${task.dependencies.join(', ')}`);
+        // ADR-Task Linkage: inject requirement traceability as implementation constraint
+        const linkage = taskToLinkage.get(task.id);
+        if (linkage) parts.push(`- **Implements**: Req \`${linkage.reqId}\` via ADR \`${linkage.adrId}\` — ensure implementation satisfies this requirement`);
+        parts.push('');
+      }
+    }
+
+    upstreamCtxForDev.executionPlanBlock = parts.join('\n');
+    console.error(`[Orchestrator] 📋 Structured task list injected into DeveloperAgent (${structuredTasks.length} tasks, ${upstreamCtxForDev.executionPlanBlock.length} chars — replaces raw 8000-char truncation).`);
+  } else if (executionPlanContent) {
+    // Fallback: raw markdown truncation (no structured JSON block available)
     upstreamCtxForDev.executionPlanBlock = `\n## Execution Plan (from PLAN stage)\n${executionPlanContent.slice(0, 8000)}${executionPlanContent.length > 8000 ? '\n... (truncated)' : ''}`;
+    console.error(`[Orchestrator] 📋 Execution plan injected as raw text (${executionPlanContent.length} chars, structured tasks unavailable).`);
   }
 
   const archMeta = planMeta || this.bus.getMeta(AgentRole.DEVELOPER);
   if (archMeta && archMeta.reviewRounds > 0) {
-    console.log(`[Orchestrator] ℹ️  Architecture was self-corrected in ${archMeta.reviewRounds} round(s) (${archMeta.failedItems} issue(s) fixed). Developer should review architecture.md carefully.`);
+    console.error(`[Orchestrator] ℹ️  Architecture was self-corrected in ${archMeta.reviewRounds} round(s) (${archMeta.failedItems} issue(s) fixed). Developer should review architecture.md carefully.`);
   }
 
   // A-3 fix: buildDeveloperContextBlock now returns { content, injectedExpIds } struct
@@ -105,7 +185,7 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
       if (retryOutputPath && fs.existsSync(retryOutputPath)) {
         const retryContent = fs.readFileSync(retryOutputPath, 'utf-8').trim();
         if (retryContent.length > 0) {
-          console.log(`[Orchestrator] ✅ DEVELOPER retry succeeded (${retryContent.length} chars).`);
+          console.error(`[Orchestrator] ✅ DEVELOPER retry succeeded (${retryContent.length} chars).`);
           outputPath = retryOutputPath;
         } else {
           throw new Error('[DEVELOPER] Agent produced empty output on both attempts. Cannot proceed.');
@@ -116,14 +196,15 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
     }
   }
 
-  // ── Adapter Telemetry ─────────────────────────────────────────────────────
+  // ── Adapter Telemetry ─────────────────────────────────────────────────────────
   if (this._adapterTelemetry && outputPath && fs.existsSync(outputPath)) {
     try {
       const devOutput = fs.readFileSync(outputPath, 'utf-8');
       this._adapterTelemetry.scanReferences(devOutput, 'DEVELOPER');
+      // ── Agent Self-Report: extract self-report from DEVELOPER output ──
+      recordSelfReport('CODE', devOutput, { agentRole: AgentRole.DEVELOPER });
     } catch (_) { /* non-fatal */ }
   }
-
   // ── Code Quality injection ────────────────────────────────────────────────
   let codeQualityContext = '';
   try {
@@ -156,8 +237,38 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
   }
 
   const requirementPath = path.join(PATHS.OUTPUT_DIR, 'requirements.md');
+  const reviewRiskProfile = (() => {
+    const notes = (reviewResultLike => (reviewResultLike?.riskNotes || []).join(' '))({ riskNotes: [] });
+    const diffText = outputPath && fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : '';
+    const corpus = `${notes}\n${diffText}`.toLowerCase();
+    const score = (regex) => (regex.test(corpus) ? 0.75 : 0);
+    return {
+      security: score(/\b(auth|xss|csrf|inject|sql|secret|token|credential|vulnerab)\b/i),
+      performance: score(/\b(perf|latency|throughput|n\+1|memory|blocking|cache|optimi)\b/i),
+      interface: score(/\b(interface|contract|schema|export|signature|breaking|compatib)\b/i),
+    };
+  })();
+  const reviewLlmCall = async (prompt) => {
+    let optimisedPrompt = prompt;
+    try {
+      const result = await buildAgentPrompt('reviewer', prompt, [], {
+        projectRoot: this.projectRoot,
+        riskProfile: reviewRiskProfile,
+      });
+      if (result && result.prompt) {
+        optimisedPrompt = result.prompt;
+      }
+      const injectedSkillNames = result?.meta?.injectedSkillNames || [];
+      if (injectedSkillNames.length > 0) {
+        this.obs.recordSkillUsage(injectedSkillNames);
+      }
+    } catch (err) {
+      console.warn(`[Orchestrator] ⚠️  Reviewer prompt optimisation failed (non-fatal): ${err.message}`);
+    }
+    return this._rawLlmCall(optimisedPrompt);
+  };
   const reviewer = new CodeReviewAgent(
-    this._rawLlmCall,
+    reviewLlmCall,
     {
       maxRounds: 2,
       verbose: true,
@@ -229,7 +340,7 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
               false
             );
           } else {
-            console.log(`[Orchestrator] ✅ Module boundary check passed: ${boundaryCheck.summary}`);
+            console.error(`[Orchestrator] ✅ Module boundary check passed: ${boundaryCheck.summary}`);
           }
         }
       }
@@ -249,12 +360,36 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
   const codeDecision = codeGate.evaluate(reviewResult, WorkflowState.CODE, codeRollbackCountForGate);
   codeGate.recordExperience(codeDecision, WorkflowState.CODE, reviewResult, { skill: 'code-development', category: ExperienceCategory.STABLE_PATTERN });
 
+  if (this.obs && this.obs._skillInjectedCounts && this.obs._skillInjectedCounts.size > 0) {
+    const injectedNames = [...this.obs._skillInjectedCounts.keys()];
+    const falsePositiveSignals = Math.max(0, Number(reviewResult?.failed || 0) - Number(reviewResult?.rounds || 0));
+    this.obs.recordSkillGateOutcome(injectedNames, {
+      passed: !!codeDecision.pass,
+      falsePositiveSignals,
+    });
+  }
+
   _recordPromptABOutcome('developer', codeDecision.pass, reviewResult.rounds ?? 0);
 
   if (codeDecision.pass) {
-    console.log(`[Orchestrator] ✅ Code review passed. Reason: ${codeDecision.reason}`);
+    console.error(`[Orchestrator] ✅ Code review passed. Reason: ${codeDecision.reason}`);
   } else if (codeDecision.rollback) {
-    console.warn(`[Orchestrator] ⚠️  ${reviewResult.failed} high-severity code issue(s) remain. Attempting rollback to ARCHITECT stage.`);
+    // ── Rollback LoopGuard Check ───────────────────────────────────────────
+    // Prevent infinite recursion: CODE → ARCHITECT → CODE → ARCHITECT...
+    const loopGuard = this._loopGuard;
+    const canRetryCodeToArch = loopGuard ? loopGuard.canRetry('CODE', 'ARCHITECT') : true;
+    const codeToArchRetryCount = loopGuard ? loopGuard.getRetryCount('CODE', 'ARCHITECT') : 0;
+    const maxCodeToArchRetries = (this.config?.maxRollbackPerStage?.developer ?? 2);
+
+    if (!canRetryCodeToArch || codeToArchRetryCount >= maxCodeToArchRetries) {
+      console.warn(`[Orchestrator] ⚠️  LoopGuard: CODE→ARCHITECT rollback blocked after ${codeToArchRetryCount} retries (max: ${maxCodeToArchRetries}). Proceeding with risks recorded.`);
+      this.stateMachine.recordRisk('high', `[LoopGuard] CODE→ARCHITECT rollback limit exceeded. ${reviewResult.failed} high-severity issue(s) remain unresolved.`);
+      // Fall through to treat as needsHumanReview
+    } else {
+      // Record retry attempt before proceeding
+      if (loopGuard) loopGuard.recordRetry('CODE', 'ARCHITECT');
+
+    console.warn(`[Orchestrator] ⚠️  ${reviewResult.failed} high-severity code issue(s) remain. Attempting rollback to ARCHITECT stage (retry ${codeToArchRetryCount + 1}/${maxCodeToArchRetries}).`);
     const failedNotes = reviewResult.riskNotes.slice(0, 3).join('; ');
     const failContent = `After ${reviewResult.rounds ?? 'N/A'} self-correction round(s), ${reviewResult.failed} high-severity issue(s) remained. Issues: ${failedNotes}`;
     // P1: Use recordWithContentCheck to avoid duplicate experience entries
@@ -273,7 +408,7 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
       const existingCode = this.stageCtx.get(WorkflowState.CODE) || {};
       this.stageCtx.set(WorkflowState.CODE, {
         ...existingCode,
-        meta: { ...(existingCode.meta || {}), _codeRollbackCount: codeRollbackCount + 1 },
+        meta: { ...(existingCode.meta || {}), _codeRollbackCount: codeRollbackCount + 1, rollbackToArchitect: true },
       });
     }
     try {
@@ -283,10 +418,10 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
       );
 
       if (codeStrategy.type === 'SUBTASK_RETRY' && codeStrategy.cachedResults) {
-        console.log(`[Orchestrator] 🎯 Defect C: Subtask-level retry for CODE. ${codeStrategy.reason}`);
+        console.error(`[Orchestrator] 🎯 Defect C: Subtask-level retry for CODE. ${codeStrategy.reason}`);
 
         const retryCodeReviewer = new CodeReviewAgent(
-          this._rawLlmCall,
+          reviewLlmCall,
           {
             maxRounds: 2,
             verbose: true,
@@ -305,10 +440,10 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
         const retryCodeDecision = retryCodeGate.evaluate(retryReview, WorkflowState.CODE, codeRollbackCount + 1);
 
         if (retryCodeDecision.pass) {
-          console.log(`[Orchestrator] ✅ Subtask-level retry succeeded: CodeReview passed on retry.`);
+          console.error(`[Orchestrator] ✅ Subtask-level retry succeeded: CodeReview passed on retry.`);
           coordinator.cacheSubtaskResult(WorkflowState.CODE, 'CodeReview', retryReview);
 
-          const codeOutputCtx = storeCodeContext(this, outputPath, retryReview);
+          const codeOutputCtx = await storeCodeContext(this, outputPath, retryReview);
           this.bus.publish(AgentRole.DEVELOPER, AgentRole.TESTER, outputPath, {
             reviewRounds:   retryReview.rounds ?? 0,
             failedItems:    retryReview.failed ?? 0,
@@ -318,7 +453,7 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
           return outputPath;
         }
 
-        console.log(`[Orchestrator] ⚠️  Subtask-level retry failed for CODE. Falling through to full-stage rollback.`);
+        console.error(`[Orchestrator] ⚠️  Subtask-level retry failed for CODE. Falling through to full-stage rollback.`);
         coordinator.invalidateSubtaskCache(WorkflowState.CODE);
       }
 
@@ -339,7 +474,7 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
           if (fs.existsSync(codeDiffPath)) previousCodeOutput = fs.readFileSync(codeDiffPath, 'utf-8');
         } catch (_) { /* non-fatal */ }
 
-        const retryContext = buildRetryContext({
+        const retryContext = await buildRetryContext({
           previousOutput: previousCodeOutput,
           failureReason: failedNotes,
           retryCount: codeRollbackCount + 1,
@@ -376,21 +511,31 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
         await this.hooks.emit(HOOK_EVENTS.WORKFLOW_ERROR, { error: archErr, state: 'CODE→ARCHITECT(rollback)' }).catch(() => {});
         throw archErr;
       }
+      // ── LoopGuard: Check if ARCHITECT returned rolledBack sentinel ────────
+      // If ARCHITECT also rolled back (to ANALYSE), this creates a cascade.
+      // Only handle if archRetry is a valid StageResult with rolledBack type.
+      const { StageResult } = require('./types');
+      if (StageResult.isRolledBack(archRetry)) {
+        console.error(`[Orchestrator] ℹ️  ARCHITECT also rolled back (cascade). Propagating rollback sentinel.`);
+        return archRetry; // Propagate the rollback sentinel up the call chain
+      }
+      // Normal completion: ARCHITECT succeeded, continue pipeline
       return archRetry;
     } catch (rollbackErr) {
       console.warn(`[Orchestrator] Code rollback failed (non-fatal): ${rollbackErr.message}. Proceeding with risks recorded.`);
       this.stateMachine.recordRisk('high', `[CodeReview] ${reviewResult.failed} high-severity issue(s) unresolved. Rollback failed: ${rollbackErr.message}`);
     }
+    } // end LoopGuard else block - only executed if retry allowed
   } else if (codeDecision.needsHumanReview) {
     console.warn(`[Orchestrator] ⚠️  Code rollback limit reached (max 1). Proceeding to TEST with ${reviewResult.failed} unresolved issue(s).`);
     this.stateMachine.recordRisk('high', `[CodeReview] ${reviewResult.failed} high-severity issue(s) unresolved after rollback limit reached.`);
   } else {
-    console.log(`[Orchestrator] ℹ️  ${reviewResult.failed} minor code issue(s) remain. Proceeding automatically.`);
+    console.error(`[Orchestrator] ℹ️  ${reviewResult.failed} minor code issue(s) remain. Proceeding automatically.`);
   }
 
   // ── Early Entropy GC ─────────────────────────────────────────────────────
   try {
-    console.log(`\n[Orchestrator] 🔍 Early entropy scan (post-CODE stage)...`);
+    console.error(`\n[Orchestrator] 🔍 Early entropy scan (post-CODE stage)...`);
     const earlyGcResult = await this.entropyGC.run();
     if (earlyGcResult.violations > 0) {
       const highCount = earlyGcResult.details?.high ?? 0;
@@ -400,7 +545,7 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
         this.stateMachine.recordRisk('high', gcMsg);
       }
     } else {
-      console.log(`[Orchestrator] ✅ Early entropy scan: no violations found.`);
+      console.error(`[Orchestrator] ✅ Early entropy scan: no violations found.`);
     }
   } catch (err) {
     console.warn(`[Orchestrator] Early EntropyGC scan failed (non-fatal): ${err.message}`);
@@ -415,7 +560,7 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
     });
   }
 
-  const codeOutputCtx = storeCodeContext(this, outputPath, reviewResult);
+  const codeOutputCtx = await storeCodeContext(this, outputPath, reviewResult);
 
   // ── Publish with ContractViolationError retry ─────────────────────────────
   // If the DEVELOPER output fails the TESTER's content contract (e.g. too short,
@@ -442,13 +587,21 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
         contextSummary: codeOutputCtx.summary,
         contractRetry:  true,
       });
-      console.log(`[Orchestrator] ✅ DEVELOPER contract retry succeeded.`);
+      console.error(`[Orchestrator] ✅ DEVELOPER contract retry succeeded.`);
     } else {
       throw pubErr;
     }
   }
 
   translateMdFile(outputPath, this._rawLlmCall).catch(() => {});
+
+  // ── Metrics Quality Gate: validate DEVELOP stage runtime metrics ──────
+  runStageMetricsGate(this, {
+    stageName: 'DEVELOP',
+    durationMs: Date.now() - _devStageStartTime,
+    errorCount: (reviewResult?.failed || 0),
+    llmCalls: (this.obs && this.obs._llmCallCount) ? this.obs._llmCallCount : 0,
+  });
 
   return outputPath;
 }

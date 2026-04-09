@@ -349,25 +349,22 @@ function Report() {
 
 ---
 
-## Integration: Using with WorkFlowAgent
+## Integration Guide
 
-### When `frontend-patterns` Loads
+### When This Skill Activates
 
-| Phase | Trigger | Purpose |
-|-------|---------|---------|
-| ARCHITECT | Component design tasks | Container/Presentational decisions |
-| CODE | Implementing UI components | State placement, performance optimization |
-| TEST | Component testing strategy | Testable component structure |
+| Context | Trigger | Application |
+|---------|---------|-------------|
+| Design | Component architecture decisions | Container/Presentational pattern selection |
+| Implementation | Writing UI components | State placement, performance optimization |
+| Quality | Component testing strategy | Testable component structure |
 
-### Interaction with Other Skills
+### Related Patterns
 
-```
-frontend-patterns (this skill)
-├── ui-design (visual design decisions)
-├── frontend-review (code review checklist)
-├── testing (component testing patterns)
-└── performance-optimization (render optimization)
-```
+- **Visual Design**: Color, typography, spacing decisions
+- **Code Quality**: Review checklists for frontend code
+- **Testing**: Component and integration testing approaches
+- **Performance**: Render optimization techniques
 
 ---
 

@@ -425,11 +425,12 @@ Rules:
  * @param {object} options
  * @param {string}   options.projectRoot     - Absolute path to project root
  * @param {object}   options.skillEvolution  - SkillEvolutionEngine instance
- * @param {Function} [options.llmCall]       - LLM call function (optional; if absent, generates rule-only skill)
+ * @param {Function} [options.llmCall]       - LLM call function (fallback; used when cheapLlmCall is not available)
+ * @param {Function} [options.cheapLlmCall]  - Cheap LLM call function (preferred; GPT-4o-mini / Gemini Flash tier)
  * @param {boolean}  [options.force=false]   - Force re-discovery even if skill exists
  * @returns {Promise<{ discovered: boolean, signalCount: number, skillName: string|null, usedLLM: boolean }>}
  */
-async function discoverProjectSkills({ projectRoot, skillEvolution, llmCall = null, force = false }) {
+async function discoverProjectSkills({ projectRoot, skillEvolution, llmCall = null, cheapLlmCall = null, force = false }) {
   const SKILL_NAME = 'project-standards';
   const result = { discovered: false, signalCount: 0, skillName: null, usedLLM: false };
 
@@ -474,15 +475,22 @@ async function discoverProjectSkills({ projectRoot, skillEvolution, llmCall = nu
   let skillContent;
   const signalsSummary = formatSignalsForLLM(signals);
 
-  if (llmCall && typeof llmCall === 'function') {
+  // Prefer cheapLlmCall (GPT-4o-mini tier, ~$0.002/call) over main llmCall (~$0.10/call)
+  // for skill refinement. Falls back to llmCall if cheapLlmCall is not available.
+  const effectiveLlmCall = (typeof cheapLlmCall === 'function') ? cheapLlmCall
+    : (typeof llmCall === 'function') ? llmCall
+    : null;
+  const llmTier = (typeof cheapLlmCall === 'function') ? 'cheap' : 'main';
+
+  if (effectiveLlmCall) {
     // LLM refinement path: 1 call, ~2000 tokens
     try {
       const prompt = buildRefinementPrompt(signalsSummary);
-      const refined = await llmCall(prompt);
+      const refined = await effectiveLlmCall(prompt);
       if (refined && refined.trim().length > 50) {
         skillContent = refined.trim();
         result.usedLLM = true;
-        console.log(`[SkillDiscovery] 🤖 LLM refined ${signals.length} signals into standards skill (${skillContent.length} chars).`);
+        console.log(`[SkillDiscovery] 🤖 LLM refined ${signals.length} signals into standards skill (${skillContent.length} chars, tier: ${llmTier}).`);
       }
     } catch (err) {
       console.warn(`[SkillDiscovery] ⚠️  LLM refinement failed (falling back to rule-only): ${err.message}`);

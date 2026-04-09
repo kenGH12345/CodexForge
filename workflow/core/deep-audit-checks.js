@@ -448,7 +448,7 @@ function createDimensionChecks({ addFinding, log, orch, outputDir, AuditSeverity
       }
 
       // 4a. Hub analysis
-      const hotspots = cg.getHotspots({ topN: 30, includeOrphans: false });
+      const hotspots = await cg.getHotspots({ topN: 30, includeOrphans: false });
       const hubs = hotspots.filter(h => h.category === 'hub');
       if (hubs.length > 5) {
         addFinding({
@@ -573,7 +573,7 @@ function createDimensionChecks({ addFinding, log, orch, outputDir, AuditSeverity
     try {
       // 6a. Leverage SelfReflection's existing health audit
       if (orch && orch._selfReflection) {
-        const auditResult = orch._selfReflection.auditHealth();
+        const auditResult = await orch._selfReflection.auditHealth();
         if (auditResult.findings && auditResult.findings.length > 0) {
           for (const f of auditResult.findings) {
             addFinding({

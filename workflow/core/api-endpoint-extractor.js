@@ -476,8 +476,11 @@ class APIEndpointExtractor {
       const isMiddleware = MIDDLEWARE_PATTERNS.some(p => p.test(sym.name));
       if (isMiddleware) continue;
 
-      // Get call graph info
-      const { calls, calledBy } = this._codeGraph.getCallGraph(sym.name);
+      // Get call graph info (force sync to avoid Promise in non-async context)
+      const cgResult = this._codeGraph.getCallGraph(sym.name, { async: false });
+      // Handle both sync result and potential Promise (defensive)
+      const calls = cgResult?.calls || [];
+      const calledBy = cgResult?.calledBy || [];
 
       handlers.push({
         symbol: {

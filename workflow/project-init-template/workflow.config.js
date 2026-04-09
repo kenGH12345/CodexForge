@@ -38,6 +38,21 @@ module.exports = {
     forceStandalone: false,    // Set to true to disable IDE-first mode entirely
   },
 
+  // ─── Remote Workflow Reference ──────────────────────────────────────────────
+  //
+  // Point to an external WorkFlowAgent installation instead of copying workflow/
+  // into this project. All IDE Agent Bridge commands will use this path.
+  //
+  // Examples:
+  //   workflowSource: 'C:\\workspace\\WorkFlowAgent\\workflow',  // Windows
+  //   workflowSource: '/home/user/WorkFlowAgent/workflow',       // Linux/macOS
+  //   workflowSource: '../WorkFlowAgent/workflow',               // Relative path
+  //
+  // Benefits: single source of truth, no version fragmentation, no disk waste.
+  // Leave as null to use the local workflow/ directory inside this project.
+  //
+  workflowSource: null,
+
   // ─── Automated Verification Loop ─────────────────────────────────────────
   //
   // Set testCommand to enable the automated verification loop.
@@ -49,6 +64,7 @@ module.exports = {
   //   'dotnet test'        – .NET / C#
   //
   testCommand: null,  // TODO: replace with your actual test command
+  testProfile: 'fast', // P0: fast=smoke+unit, full=smoke+unit+integration
 
   testFramework: 'auto',
 
@@ -87,5 +103,40 @@ module.exports = {
   // ─── Dry-Run / Sandbox Mode ───────────────────────────────────────────────
   sandbox: {
     dryRun: false,
+  },
+
+  // ─── Health Monitoring (B + D) ─────────────────────────────────────────────
+  // B: Rolling-window trend alerts
+  // D: Externalized unified scoring parameters
+  healthMonitoring: {
+    scoring: {
+      model: 'unified-v1',
+      weights: {
+        completeness: 0.35,
+        process: 0.20,
+        delivery: 0.30,
+        detection: 0.15,
+      },
+      penalties: {
+        missingStage: 20,
+        socraticMax: 20,
+        metricsGatePerFailedStage: 5,
+        metricsGateMax: 25,
+      },
+      gradeThresholds: {
+        A: 90,
+        B: 80,
+        C: 70,
+        D: 60,
+      },
+    },
+    trend: {
+      enabled: true,
+      windowSize: 5,
+      minSessions: 3,
+      degradationThreshold: 8,
+      lowScoreThreshold: 75,
+      maxHistoryEntries: 200,
+    },
   },
 };

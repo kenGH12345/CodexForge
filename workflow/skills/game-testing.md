@@ -118,27 +118,24 @@ description: "Game testing patterns: frame rate validation, physics consistency,
 
 5. **Monkey testing**: Random input generation (AIUI monkey runner, Unity Monkey Test). Can find crash bugs but not logic errors. Run overnight CI. Any crash is a bug, regardless of how weird the input sequence is.
 
-## Integration: Using with WorkFlowAgent
+## Integration Guide
 
-### When `game-testing` Loads
+### When This Skill Activates
 
-| Phase | Trigger | Purpose |
-|-------|---------|---------|
-| TEST | Writing game logic tests | Deterministic testing patterns |
-| TEST | Frame rate optimization | Performance testing standards |
-| TEST | AI behavior validation | Scenario-based testing approach |
-| OPTIMIZE | Memory leak investigation | Long-session testing patterns |
+| Context | Trigger | Application |
+|---------|---------|-------------|
+| Testing | Writing game logic tests | Deterministic testing patterns |
+| Testing | Frame rate validation | Performance testing standards |
+| Testing | AI behavior validation | Scenario-based testing approach |
+| Optimization | Memory leak investigation | Long-session testing patterns |
 
-### Interaction with Other Skills
+### Related Patterns
 
-```
-game-testing (this skill)
-├── game-architecture (ECS testing patterns)
-├── game-ai-patterns (AI behavior tree testing)
-├── unity-csharp (Unity-specific test frameworks)
-├── test-report (general test structure)
-└── performance-optimization (profiling integration)
-```
+- **Game Architecture**: ECS testing patterns
+- **AI Patterns**: Behavior tree testing strategies
+- **Unity/C#**: Engine-specific test frameworks
+- **Reporting**: Test structure and documentation
+- **Performance**: Profiling integration techniques
 
 ## Evolution History
 

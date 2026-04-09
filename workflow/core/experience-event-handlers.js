@@ -119,6 +119,32 @@ function registerExperienceEventHandlers(store, skillEvolution = null, options =
     eventBus.on(ExperienceEvents.PATTERN_EVOLVED, patternEvolvedHandler, { priority: HandlerPriority.BACKGROUND })
   );
 
+  // ─── Handler 7: Quality Gate Pass → Reset Trigger Counters ──────────────
+  // When a quality gate passes, emit event for SkillEvolutionTriggers to
+  // run degradation and staleness checks (piggyback on end-of-run signal).
+  const gatePassHandler = (data) => {
+    // SkillEvolutionTriggers listens to QUALITY_GATE_PASSED directly
+    // This handler just logs for observability
+    if (data && data.gateCount) {
+      console.log(`[EventHandlers] ✅ Quality gates passed (${data.gateCount} gates)`);
+    }
+  };
+  unregisters.push(
+    eventBus.on(ExperienceEvents.QUALITY_GATE_PASSED, gatePassHandler, { priority: HandlerPriority.BACKGROUND })
+  );
+
+  // ─── Handler 8: Quality Gate Failure → Trigger Skill Evolution ──────────
+  // When a quality gate fails, emit enriched event with injected skill names
+  // so SkillEvolutionTriggers can identify which skills may need updating.
+  const gateFailHandler = (data) => {
+    if (data && data.gateName) {
+      console.log(`[EventHandlers] ❌ Quality gate failed: ${data.gateName}`);
+    }
+  };
+  unregisters.push(
+    eventBus.on(ExperienceEvents.QUALITY_GATE_FAILED, gateFailHandler, { priority: HandlerPriority.BACKGROUND })
+  );
+
   console.log(`[EventHandlers] Registered ${unregisters.length} event handlers`);
 
   // Return function to unregister all handlers

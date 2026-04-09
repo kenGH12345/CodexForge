@@ -205,8 +205,9 @@ async function buildDeveloperContextBlock(orch, upstreamCtx) {
     if (process.env.DEBUG) console.warn(`[DeveloperContext] Module scope loading failed: ${err.message}`);
   }
 
-  // ── Recall Memory: cross-session task history ───────────────────────────
+  // ── Recall Memory + Session Memory: cross-session task history ─────────
   let recallMemoryCtx = '';
+  let sessionMemoryCtx = '';
   try {
     const taskHistory = _getTaskHistory();
     if (taskHistory) {
@@ -214,9 +215,14 @@ async function buildDeveloperContextBlock(orch, upstreamCtx) {
       if (recallMemoryCtx) {
         console.log(`[Orchestrator] 📖 Recall Memory injected for DeveloperAgent (${recallMemoryCtx.length} chars)`);
       }
+
+      sessionMemoryCtx = taskHistory.getSessionMemoryBlock(3);
+      if (sessionMemoryCtx) {
+        console.log(`[Orchestrator] 🧠 Session Memory injected for DeveloperAgent (${sessionMemoryCtx.length} chars)`);
+      }
     }
   } catch (err) {
-    if (process.env.DEBUG) console.warn(`[DeveloperContext] Recall memory loading failed: ${err.message}`);
+    if (process.env.DEBUG) console.warn(`[DeveloperContext] Recall/session memory loading failed: ${err.message}`);
   }
 
   // ── Token Budget Guard (DEVELOPER) ─────────────────────────────────────
@@ -228,6 +234,7 @@ async function buildDeveloperContextBlock(orch, upstreamCtx) {
     { label: 'Execution Plan',     content: executionPlanCtx,                                          priority: BLOCK_PRIORITY.UPSTREAM_CTX + 1, _order: 3 },
     { label: 'Module Scope',       content: moduleScopeCtx,                                            priority: BLOCK_PRIORITY.UPSTREAM_CTX + 2, _order: 3.5 },
     { label: 'Experience',          content: expCtx,                                                   priority: BLOCK_PRIORITY.EXPERIENCE, _order: 4 },
+    { label: 'Session Memory',      content: sessionMemoryCtx,                                         priority: BLOCK_PRIORITY.EXTERNAL_EXPERIENCE - 1, _order: 4.5 },
     { label: 'Complaints',          content: complaintBlock,                                           priority: BLOCK_PRIORITY.COMPLAINTS, _order: 5 },
     { label: 'Code Graph',          content: codeGraphCtx ? `\n\n${codeGraphCtx}` : '',                priority: BLOCK_PRIORITY.CODE_GRAPH, _order: 6 },
     { label: 'External Experience', content: devExternalExpBlock,                                      priority: BLOCK_PRIORITY.EXTERNAL_EXPERIENCE, _order: 7 },
@@ -241,7 +248,7 @@ async function buildDeveloperContextBlock(orch, upstreamCtx) {
 
   // Pass telemetry to _applyTokenBudget for lifecycle tracking
   const devTelemetry = orch._adapterTelemetry || null;
-  const { assembled: devAssembled, stats: devStats } = _applyTokenBudget(devAdjustedBlocks, undefined, {
+    const { assembled: devAssembled, stats: devStats } = await _applyTokenBudget(devAdjustedBlocks, undefined, {
     telemetry: devTelemetry,
     stage: 'DEVELOPER',
     profile: _devProfile || null,

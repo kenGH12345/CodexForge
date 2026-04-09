@@ -28,6 +28,9 @@ const MAX_HISTORY_ENTRIES = 20;
 /** Maximum number of entries to inject into prompt */
 const MAX_RECALL_ENTRIES = 5;
 
+/** Maximum number of structured session entries to inject */
+const MAX_SESSION_MEMORY_ENTRIES = 3;
+
 /** Maximum summary length per entry (chars) */
 const MAX_SUMMARY_CHARS = 200;
 
@@ -65,6 +68,8 @@ class TaskHistory {
       taskTitles = [],
       outcome = 'success',
       metrics = {},
+      // L3: structured session memory payload (optional, backward-compatible)
+      sessionMemory = null,
     } = options;
 
     const summary = _buildSummary(goal, taskTitles, outcome);
@@ -84,6 +89,8 @@ class TaskHistory {
         errorCount: metrics.errorCount || 0,
         expRecorded: metrics.expRecorded || 0,
       },
+      // Structured memory is capped in size to avoid store bloat.
+      sessionMemory: _normaliseSessionMemory(sessionMemory),
     };
 
     this.entries.push(entry);
@@ -143,6 +150,63 @@ class TaskHistory {
    */
   getRecent(limit = MAX_RECALL_ENTRIES) {
     return this.entries.slice(-limit).reverse();
+  }
+
+  /**
+   * Returns a compact structured memory block for prompt injection.
+   * This is L3 session memory: low-cost, highly task-continuity-focused.
+   *
+   * @param {number} [limit=MAX_SESSION_MEMORY_ENTRIES]
+   * @returns {string}
+   */
+  getSessionMemoryBlock(limit = MAX_SESSION_MEMORY_ENTRIES) {
+    if (this.entries.length === 0) return '';
+
+    const recent = this.entries
+      .slice(-Math.max(1, limit * 2))
+      .reverse()
+      .filter(e => e && e.sessionMemory)
+      .slice(0, limit);
+
+    if (recent.length === 0) return '';
+
+    const lines = [
+      '## 🧠 Session Memory (Structured, Recent)',
+      '',
+      '_Use this to continue work without repeating completed decisions._',
+      '',
+    ];
+
+    for (const entry of recent) {
+      const date = entry.timestamp ? entry.timestamp.slice(0, 16).replace('T', ' ') : 'unknown-time';
+      const sm = entry.sessionMemory || {};
+
+      lines.push(`### [${date}] ${entry.summary || 'Session summary'}`);
+
+      if (Array.isArray(sm.decisions) && sm.decisions.length > 0) {
+        lines.push('- Key decisions:');
+        sm.decisions.slice(0, 3).forEach(d => lines.push(`  - ${d}`));
+      }
+
+      if (Array.isArray(sm.changedFiles) && sm.changedFiles.length > 0) {
+        lines.push(`- Changed files: ${sm.changedFiles.slice(0, 6).join(', ')}${sm.changedFiles.length > 6 ? ' ...' : ''}`);
+      }
+
+      if (Array.isArray(sm.openItems) && sm.openItems.length > 0) {
+        lines.push('- Open items:');
+        sm.openItems.slice(0, 3).forEach(t => lines.push(`  - ${t}`));
+      }
+
+      if (Array.isArray(sm.risks) && sm.risks.length > 0) {
+        lines.push('- Risks:');
+        sm.risks.slice(0, 3).forEach(r => lines.push(`  - ${r}`));
+      }
+
+      lines.push('');
+    }
+
+    lines.push('> _Prefer this structured memory over verbose historical logs when token budget is tight._');
+    return lines.join('\n');
   }
 
   /**
@@ -208,6 +272,38 @@ function _buildSummary(goal, taskTitles, outcome) {
                      : 'failed';
   const raw = `${goalSnippet}${taskInfo} — ${outcomeLabel}`;
   return raw.slice(0, MAX_SUMMARY_CHARS);
+}
+
+/**
+ * Normalises optional structured session memory payload.
+ * Returns null when payload is absent or invalid.
+ *
+ * @param {object|null} memory
+ * @returns {object|null}
+ */
+function _normaliseSessionMemory(memory) {
+  if (!memory || typeof memory !== 'object') return null;
+
+  const normaliseList = (arr, itemMax = 160, maxItems = 8) => {
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map(v => String(v || '').trim())
+      .filter(Boolean)
+      .slice(0, maxItems)
+      .map(v => v.slice(0, itemMax));
+  };
+
+  const out = {
+    decisions: normaliseList(memory.decisions, 180, 8),
+    changedFiles: normaliseList(memory.changedFiles, 220, 12),
+    openItems: normaliseList(memory.openItems, 180, 8),
+    risks: normaliseList(memory.risks, 180, 8),
+  };
+
+  if (!out.decisions.length && !out.changedFiles.length && !out.openItems.length && !out.risks.length) {
+    return null;
+  }
+  return out;
 }
 
 module.exports = { TaskHistory, MAX_HISTORY_ENTRIES, MAX_RECALL_ENTRIES };

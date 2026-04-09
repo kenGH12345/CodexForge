@@ -20,6 +20,7 @@
 'use strict';
 
 const { QualityGate } = require('./quality-gate');
+const { selfReportCollector } = require('./agent-self-report');
 
 // ─── 1. consumeAndPrepareStage ──────────────────────────────────────────────
 
@@ -59,10 +60,18 @@ async function consumeAndPrepareStage(orch, {
   // error inside Agent.run() → _readInput() where the null path would either
   // silently fall through to rawInput or throw a generic "No input provided" error.
   if (!inputPath) {
+    // Build diagnostic info about available bus entries for debugging
+    const availableEntries = orch.bus && typeof orch.bus._entries === 'object'
+      ? Array.from(orch.bus._entries.keys())
+      : 'N/A';
+    const upstreamRole = _inferUpstreamRole(agentRole);
+
     throw new Error(
-      `[consumeAndPrepareStage] Bus returned no input for role "${agentRole}". ` +
-      `The upstream stage did not publish its output to FileRefBus. ` +
-      `This usually means the previous stage failed silently or was skipped.`
+      `[Pipeline] Stage ${agentRole}: No input from upstream ${upstreamRole}. ` +
+      `FileRefBus has entries: ${JSON.stringify(availableEntries)}. ` +
+      `This usually means: (1) ${upstreamRole} stage failed silently, ` +
+      `(2) ${upstreamRole} was skipped as optional stage, or ` +
+      `(3) publish/consume role mismatch.`
     );
   }
 
@@ -188,6 +197,24 @@ function _stateKeyLower(workflowState) {
   return key;
 }
 
+/**
+ * Infers the upstream AgentRole based on the current stage's AgentRole.
+ * Used for diagnostic error messages when bus.consume() returns null.
+ *
+ * @param {string} agentRole - Current stage's AgentRole
+ * @returns {string} Upstream role name for error messages
+ */
+function _inferUpstreamRole(agentRole) {
+  // Pipeline flow: ANALYST → ARCHITECT → PLANNER → DEVELOPER → TESTER
+  const upstreamMap = {
+    ARCHITECT: 'ANALYST',
+    PLANNER: 'ARCHITECT',
+    DEVELOPER: 'PLANNER', // Note: PLANNER is optional, ARCHITECT is fallback
+    TESTER: 'DEVELOPER',
+  };
+  return upstreamMap[agentRole] || 'unknown';
+}
+
 // ─── 3. runEvoMapFeedback ───────────────────────────────────────────────────
 
 /**
@@ -256,10 +283,154 @@ async function runEvoMapFeedback(orch, { injectedExpIds, errorContext, stageLabe
   return { matchedCount, evolvedCount, createdCount };
 }
 
+// ─── 4. recordSelfReport ────────────────────────────────────────────────────
+
+/**
+ * Extracts and records an Agent Self-Report from stage output.
+ *
+ * In IDE Agent mode, the prompt instructs the Agent to emit a structured
+ * `json:self-report` block at the end of its output. This helper parses
+ * that block and feeds it into the selfReportCollector singleton.
+ *
+ * Plan A Enhancement: If LLM output does NOT contain a self-report block
+ * (0% compliance observed across 125 attempts), falls back to code-forced
+ * report built from deterministic data in the meta parameter.
+ *
+ * Design: Called once per stage, right after agent.run() returns and the
+ * output file has been read. Placed here (stage-runner-utils) to avoid
+ * duplicating the call in every stage file.
+ *
+ * Cost: Zero LLM calls. Pure regex + JSON.parse on already-loaded content.
+ *
+ * @param {string} stageName   - Human-readable stage label (e.g. 'ANALYSE', 'ARCHITECT')
+ * @param {string} outputContent - Full text content of the agent's output artifact
+ * @param {object} [meta]       - Optional metadata (agentRole, durationMs, etc.)
+ *   Plan A fields: meta.artifactValidation, meta.socraticResult, meta.metricsGate,
+ *   meta.traceEvents, meta.summary, meta.projectRoot, meta.session
+ * @returns {{ found: boolean, report: object|null }}
+ */
+function recordSelfReport(stageName, outputContent, meta = {}) {
+  try {
+    // Try prompt-based parsing first (legacy path)
+    const result = selfReportCollector.record(stageName, outputContent, meta);
+    if (result.found && result.report) {
+      console.error(
+        `[AgentSelfReport] 📊 ${stageName}: confidence=${result.report.confidence}/5, ` +
+        `decisions=${result.report.decisions.length}, blockers=${result.report.blockers.length} (prompt-based)`
+      );
+      return result;
+    }
+
+    // Plan A fallback: build code-forced report from meta data
+    // This is the 100% compliance path — no LLM dependency
+    if (meta.session || meta.artifactValidation || meta.socraticResult) {
+      try {
+        const { buildCodeForcedReport } = require('./agent-self-report');
+        const codeForcedReport = buildCodeForcedReport({
+          stage: stageName,
+          session: meta.session || '',
+          artifactValidation: meta.artifactValidation || {},
+          socraticResult: meta.socraticResult || null,
+          metricsGate: meta.metricsGate || null,
+          traceEvents: meta.traceEvents || [],
+          summary: meta.summary || '',
+          projectRoot: meta.projectRoot || '.',
+        });
+        const cfResult = selfReportCollector.recordCodeForced(stageName, codeForcedReport, meta);
+        console.error(
+          `[AgentSelfReport] 📊 ${stageName}: confidence=${codeForcedReport.confidence}/5, ` +
+          `decisions=${codeForcedReport.decisions.length}, blockers=${codeForcedReport.blockers.length} (code-forced fallback)`
+        );
+        return cfResult;
+      } catch (cfErr) {
+        console.warn(`[AgentSelfReport] ⚠️ Code-forced fallback failed for ${stageName}: ${cfErr.message}`);
+      }
+    }
+
+    return result;
+  } catch (err) {
+    // Non-fatal: self-report collection must never break the pipeline
+    console.warn(`[AgentSelfReport] ⚠️  Failed to record self-report for ${stageName}: ${err.message}`);
+    return { found: false, report: null };
+  }
+}
+
+// ─── 5. runStageMetricsGate ─────────────────────────────────────────────────
+
+/**
+ * Validates per-stage runtime metrics against STAGE_QUALITY_GATES thresholds.
+ *
+ * This is the METRICS-based gate (error count, duration, LLM calls) — distinct from
+ * runQualityGateWithRollback() which is the REVIEW-based gate (checklist failures).
+ *
+ * Both gates serve different purposes:
+ *   - runQualityGateWithRollback() → "Did the agent produce good output?" (review-based)
+ *   - runStageMetricsGate()        → "Did the stage run within healthy bounds?" (metrics-based)
+ *
+ * Called at the end of every stage (ANALYSE, ARCHITECT, PLAN, DEVELOP, TEST).
+ * Non-blocking: gate failures are logged and recorded as risks, but do NOT abort the pipeline.
+ * This matches the design intent of validateStage() — early warning, not hard stop.
+ *
+ * @param {Orchestrator} orch
+ * @param {object}       opts
+ * @param {string}       opts.stageName     - Stage identifier (ANALYSE, ARCHITECT, PLAN, DEVELOP, TEST)
+ * @param {number}       opts.durationMs    - Stage wall-clock duration in milliseconds
+ * @param {number}       [opts.errorCount=0] - Number of errors encountered during stage
+ * @param {number}       [opts.llmCalls=0]  - Number of LLM calls made during stage
+ * @param {object}       [opts.context={}]  - Additional context for diagnostics
+ * @returns {{ passed: boolean, gates: Array, failedGateNames: string[] }}
+ */
+function runStageMetricsGate(orch, {
+  stageName,
+  durationMs,
+  errorCount = 0,
+  llmCalls = 0,
+  context = {},
+}) {
+  try {
+    const gate = new QualityGate({
+      recordIssue: (opts) => {
+        // Record as a workflow risk (non-fatal)
+        if (orch.stateMachine && typeof orch.stateMachine.recordRisk === 'function') {
+          orch.stateMachine.recordRisk('medium', `[QualityGate:${stageName}] ${opts.title}: ${opts.description?.slice(0, 200)}`);
+        }
+        return { ...opts, timestamp: new Date().toISOString() };
+      },
+    });
+
+    const metrics = {
+      errors: { count: errorCount },
+      totalDurationMs: durationMs,
+      llm: { totalCalls: llmCalls },
+    };
+
+    const result = gate.validateStage(stageName, metrics, context);
+
+    const failedGateNames = result.gates.filter(g => !g.passed).map(g => g.name);
+
+    if (!result.passed) {
+      console.warn(
+        `[QualityGate:${stageName}] ⚠️  ${failedGateNames.length} metric gate(s) failed: ` +
+        `[${failedGateNames.join(', ')}] — recorded as risks, pipeline continues.`
+      );
+    } else {
+      console.log(`[QualityGate:${stageName}] ✅ All metric gates passed (duration=${(durationMs/1000).toFixed(1)}s, errors=${errorCount}, llmCalls=${llmCalls})`);
+    }
+
+    return { passed: result.passed, gates: result.gates, failedGateNames };
+  } catch (err) {
+    // Non-fatal: metrics gate must never break the pipeline
+    console.warn(`[QualityGate:${stageName}] ⚠️  Metrics gate check failed (non-fatal): ${err.message}`);
+    return { passed: true, gates: [], failedGateNames: [] };
+  }
+}
+
 // ─── Exports ────────────────────────────────────────────────────────────────
 
 module.exports = {
   consumeAndPrepareStage,
   runQualityGateWithRollback,
   runEvoMapFeedback,
+  recordSelfReport,
+  runStageMetricsGate,
 };

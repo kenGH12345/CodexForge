@@ -30,7 +30,38 @@ class SkillEvolutionEngine {
     this.registry = new Map();
     /** @type {Map<string, string>} P1-5 fix: in-memory skill content cache for batch operations */
     this._skillContentCache = new Map();
+    /**
+     * LLM-Lite Skill Refiner (ADR-OpenSpace LLM-Lite).
+     * Optional: injected via setLlmRefiner() when an LLM call function is available.
+     * When set, enables:
+     *   - Post-evolve refinement (consolidate bloated skills)
+     *   - Pre-retire fix attempt (repair underperforming skills)
+     *   - Auto-create content generation (high-quality initial content)
+     * @type {import('./skill-llm-refiner').SkillLlmRefiner|null}
+     */
+    this._llmRefiner = null;
+    /**
+     * Version DAG (ADR-OpenSpace): Tracks the full lineage of every skill evolution.
+     * Inspired by OpenSpace's SkillLineage — each evolution creates a node in a
+     * directed acyclic graph (DAG) that records parent→child version relationships.
+     *
+     * Structure: Map<skillName, LineageNode[]>
+     * Each LineageNode: { version, parentVersion, type, timestamp, summary, sourceExpId }
+     *
+     * Types:
+     *   - 'create'   — Initial skill creation (root node, parentVersion = null)
+     *   - 'evolve'   — Content appended from experience feedback
+     *   - 'dedup'    — Duplicate detected, version bumped but no content change
+     *   - 'retire'   — Skill retired (terminal node)
+     *   - 'restore'  — Skill restored from retirement
+     *
+     * Persistence: Stored alongside the registry in `skill-lineage.json`.
+     * @type {Map<string, Array<{ version: string, parentVersion: string|null, type: string, timestamp: string, summary: string, sourceExpId: string|null }>>}
+     */
+    this._lineage = new Map();
+    this._lineagePath = path.join(path.dirname(this.registryPath), 'skill-lineage.json');
     this._loadRegistry();
+    this._loadLineage();
   }
 
   // ─── Public API ───────────────────────────────────────────────────────────────
@@ -67,6 +98,12 @@ class SkillEvolutionEngine {
       effectiveCount: 0,     // Times injected AND stage passed QualityGate
       lastUsedAt: null,      // ISO timestamp of last injection
       lastEffectiveAt: null, // ISO timestamp of last confirmed effectiveness
+      gatePassCount: 0,      // P2: quality gate pass count when skill was injected
+      gateFailCount: 0,      // P2: quality gate fail count when skill was injected
+      falsePositiveSignals: 0, // P2: noisy/false-positive proxy counter
+      policyWeight: 1.0,     // P2: dynamic weight [0.1, 1.0] for skill ranking
+      policyStatus: 'active', // P2: active | downweighted | retired
+      policyLastUpdatedAt: null,
       retiredAt: null,       // ISO timestamp when retired (null = active)
       filePath: filePath || path.join(this.skillsDir, `${name}.md`),
       createdAt: new Date().toISOString(),
@@ -78,6 +115,17 @@ class SkillEvolutionEngine {
     if (!fs.existsSync(meta.filePath)) {
       this._createSkillFile(meta);
     }
+
+    // Version DAG: record creation as root node
+    this._recordLineage(name, {
+      version: meta.version,
+      parentVersion: null,
+      type: 'create',
+      timestamp: meta.createdAt,
+      summary: `Initial creation: ${description}`,
+      sourceExpId: null,
+    });
+
     console.log(`[SkillEvolution] Skill registered: ${name}`);
     
     // Introspection logging
@@ -251,10 +299,22 @@ class SkillEvolutionEngine {
       fs.renameSync(dedupTmpPath, meta.filePath);
       // P1-5 fix: update content cache
       this._skillContentCache.set(meta.filePath, updatedContent);
+      const prevVersion = meta.version;
       meta.version = dedupVersion;
       meta.evolutionCount += 1;
       meta.lastEvolvedAt = new Date().toISOString();
       this._saveRegistry();
+
+      // Version DAG: record dedup event
+      this._recordLineage(skillName, {
+        version: dedupVersion,
+        parentVersion: prevVersion,
+        type: 'dedup',
+        timestamp: meta.lastEvolvedAt,
+        summary: `Dedup: "${title}" merged into "${dedupMatch.title}" (Jaccard=${dedupMatch.similarity.toFixed(2)})`,
+        sourceExpId,
+      });
+
       return true;
     }
 
@@ -341,10 +401,21 @@ class SkillEvolutionEngine {
     fs.renameSync(skillTmpPath, meta.filePath);
     // P1-5 fix: update content cache after successful write
     this._skillContentCache.set(meta.filePath, skillContent);
+    const oldVersion = meta.version;
     meta.version = newVersion;
     meta.evolutionCount += 1;
     meta.lastEvolvedAt = new Date().toISOString();
     this._saveRegistry();
+
+    // Version DAG: record evolution event
+    this._recordLineage(skillName, {
+      version: newVersion,
+      parentVersion: oldVersion,
+      type: 'evolve',
+      timestamp: meta.lastEvolvedAt,
+      summary: `${section}: ${title}${reason ? ` (${reason})` : ''}`,
+      sourceExpId,
+    });
 
     console.log(`[SkillEvolution] ✨ Skill evolved: ${skillName} → v${meta.version} (${reason || title})`);
     
@@ -359,8 +430,50 @@ class SkillEvolutionEngine {
       title,
       deduped: false,
     });
+
+    // LLM-Lite: Post-evolve refinement via cheap LLM model.
+    // Consolidates bloated skills that have accumulated many evolutions.
+    // Uses cheapLlmCall (GPT-4o-mini tier) — ~$0.002/call, non-blocking.
+    // ADR-37: LLM is enhancement, not dependency (graceful fallback on failure).
+    if (this._llmRefiner) {
+      const currentContent = this._skillContentCache.get(meta.filePath) || skillContent;
+      if (this._llmRefiner.shouldRefine(meta, currentContent)) {
+        this._llmRefiner.refineSkill(meta, currentContent).then(refined => {
+          if (refined) {
+            const refineTmpPath = meta.filePath + '.tmp';
+            fs.writeFileSync(refineTmpPath, refined, 'utf-8');
+            fs.renameSync(refineTmpPath, meta.filePath);
+            this._skillContentCache.set(meta.filePath, refined);
+
+            this._recordLineage(skillName, {
+              version: meta.version,
+              parentVersion: meta.version,
+              type: 'refine',
+              timestamp: new Date().toISOString(),
+              summary: `LLM-Lite refinement: consolidated ${meta.evolutionCount} evolutions`,
+              sourceExpId: null,
+            });
+
+            console.log(`[SkillEvolution] 🧠 LLM-Lite refinement applied to "${skillName}"`);
+          }
+        }).catch(err => {
+          console.warn(`[SkillEvolution] LLM-Lite refinement failed (non-fatal): ${err.message}`);
+        });
+      }
+    }
     
     return true;
+  }
+
+  /**
+   * Injects the LLM-Lite Skill Refiner.
+   * Called from Orchestrator when _rawLlmCall becomes available.
+   *
+   * @param {import('./skill-llm-refiner').SkillLlmRefiner} refiner
+   */
+  setLlmRefiner(refiner) {
+    this._llmRefiner = refiner;
+    console.log(`[SkillEvolution] 🧠 LLM-Lite Skill Refiner injected`);
   }
 
   /**
@@ -457,11 +570,125 @@ class SkillEvolutionEngine {
   }
 
   /**
+   * P2: Records quality gate outcome signals for a skill.
+   *
+   * @param {string} skillName
+   * @param {object} [options]
+   * @param {boolean} [options.passed=true]
+   * @param {number} [options.falsePositiveSignals=0]
+   */
+  recordGateOutcome(skillName, { passed = true, falsePositiveSignals = 0 } = {}) {
+    const meta = this.registry.get(skillName);
+    if (!meta) return;
+
+    if (passed) {
+      meta.gatePassCount = (meta.gatePassCount || 0) + 1;
+    } else {
+      meta.gateFailCount = (meta.gateFailCount || 0) + 1;
+    }
+    if (falsePositiveSignals > 0) {
+      meta.falsePositiveSignals = (meta.falsePositiveSignals || 0) + Number(falsePositiveSignals || 0);
+    }
+    meta.policyLastUpdatedAt = new Date().toISOString();
+  }
+
+  /**
    * Persists accumulated lifecycle stats to the registry file.
    * Call at the end of a session (e.g. from Orchestrator shutdown).
    */
   flushLifecycleStats() {
     this._saveRegistry();
+  }
+
+  /**
+   * P2: Applies effectiveness policy to auto-downweight/retire noisy skills.
+   *
+   * Criteria:
+   * - Low adoption: effectiveCount / usageCount below threshold
+   * - High noise: falsePositiveSignals / (gatePassCount + gateFailCount) above threshold
+   *
+   * @param {object} [options]
+   * @param {number} [options.minUsage=5]
+   * @param {number} [options.lowAdoptionThreshold=0.25]
+   * @param {number} [options.highFalsePositiveRate=0.6]
+   * @param {number} [options.minFalsePositiveSignals=3]
+   * @param {number} [options.downweightStep=0.2]
+   * @param {number} [options.minPolicyWeight=0.1]
+   * @param {number} [options.retireWeightThreshold=0.35]
+   * @param {number} [options.retireGateFailThreshold=4]
+   * @returns {{ downweighted: object[], retired: object[] }}
+   */
+  applyEffectivenessPolicy({
+    minUsage = 5,
+    lowAdoptionThreshold = 0.25,
+    highFalsePositiveRate = 0.6,
+    minFalsePositiveSignals = 3,
+    downweightStep = 0.2,
+    minPolicyWeight = 0.1,
+    retireWeightThreshold = 0.35,
+    retireGateFailThreshold = 4,
+  } = {}) {
+    const downweighted = [];
+    const retired = [];
+    let changed = false;
+
+    for (const meta of this.registry.values()) {
+      if (meta.retiredAt) continue;
+
+      const usage = meta.usageCount || 0;
+      if (usage < minUsage) continue;
+
+      const effective = meta.effectiveCount || 0;
+      const adoptionRate = effective / Math.max(usage, 1);
+
+      const gatePass = meta.gatePassCount || 0;
+      const gateFail = meta.gateFailCount || 0;
+      const gateTotal = gatePass + gateFail;
+      const fpSignals = meta.falsePositiveSignals || 0;
+      const falsePositiveRate = fpSignals / Math.max(gateTotal, 1);
+
+      const lowAdoption = adoptionRate < lowAdoptionThreshold;
+      const highNoise = falsePositiveRate >= highFalsePositiveRate && fpSignals >= minFalsePositiveSignals;
+      if (!lowAdoption || !highNoise) continue;
+
+      const oldWeight = Number(meta.policyWeight || 1);
+      const newWeight = Math.max(minPolicyWeight, +(oldWeight - downweightStep).toFixed(3));
+
+      if (newWeight < oldWeight) {
+        meta.policyWeight = newWeight;
+        meta.policyStatus = 'downweighted';
+        meta.policyLastUpdatedAt = new Date().toISOString();
+        changed = true;
+        downweighted.push({
+          name: meta.name,
+          oldWeight,
+          newWeight,
+          adoptionRate: +adoptionRate.toFixed(3),
+          falsePositiveRate: +falsePositiveRate.toFixed(3),
+          falsePositiveSignals: fpSignals,
+        });
+      }
+
+      const canRetire = meta.loadLevel !== 'global' && meta.loadLevel !== 'project';
+      if (canRetire && newWeight <= retireWeightThreshold && gateFail >= retireGateFailThreshold) {
+        meta.retiredAt = new Date().toISOString();
+        meta.policyStatus = 'retired';
+        meta.policyLastUpdatedAt = meta.retiredAt;
+        changed = true;
+        retired.push({
+          name: meta.name,
+          adoptionRate: +adoptionRate.toFixed(3),
+          falsePositiveRate: +falsePositiveRate.toFixed(3),
+          gateFailCount: gateFail,
+        });
+      }
+    }
+
+    if (changed) {
+      this._saveRegistry();
+    }
+
+    return { downweighted, retired };
   }
 
   /**
@@ -513,8 +740,48 @@ class SkillEvolutionEngine {
       if (hitRate < effectivenessThreshold && daysSinceUse > staleDays) {
         stale.push(meta);
         if (!dryRun) {
+          // LLM-Lite: Attempt to fix the skill before retiring it.
+          // Uses cheapLlmCall (GPT-4o-mini tier) — ~$0.003/call.
+          // If the refiner recommends a fix, apply it instead of retiring.
+          // ADR-37: LLM is enhancement, not dependency (graceful fallback).
+          if (this._llmRefiner && this._llmRefiner.shouldFix(meta)) {
+            const skillContent = this.readSkill(meta.name);
+            if (skillContent) {
+              this._llmRefiner.fixSkill(meta, skillContent).then(result => {
+                if (result && result.action === 'fix' && result.content) {
+                  const fixTmpPath = meta.filePath + '.tmp';
+                  fs.writeFileSync(fixTmpPath, result.content, 'utf-8');
+                  fs.renameSync(fixTmpPath, meta.filePath);
+                  this._skillContentCache.set(meta.filePath, result.content);
+                  meta.retiredAt = null; // Un-retire
+                  this._recordLineage(meta.name, {
+                    version: meta.version,
+                    parentVersion: meta.version,
+                    type: 'restore',
+                    timestamp: new Date().toISOString(),
+                    summary: `LLM-Lite fix restored skill from retirement (hitRate=${(hitRate * 100).toFixed(0)}%)`,
+                    sourceExpId: null,
+                  });
+                  this._saveRegistry();
+                  console.log(`[SkillEvolution] 🔧 LLM-Lite fix restored "${meta.name}" from retirement`);
+                }
+              }).catch(() => { /* Non-fatal: skill stays retired */ });
+            }
+          }
+
           meta.retiredAt = new Date().toISOString();
           retired.push(meta);
+
+          // Version DAG: record retirement
+          this._recordLineage(meta.name, {
+            version: meta.version,
+            parentVersion: meta.version,
+            type: 'retire',
+            timestamp: meta.retiredAt,
+            summary: `Retired: hitRate=${(hitRate * 100).toFixed(0)}%, lastUsed=${Math.round(daysSinceUse)}d ago`,
+            sourceExpId: null,
+          });
+
           console.log(`[SkillEvolution] 📦 Retired stale skill: ${meta.name} (hitRate=${(hitRate * 100).toFixed(0)}%, lastUsed=${Math.round(daysSinceUse)}d ago)`);
         }
       }
@@ -547,6 +814,9 @@ class SkillEvolutionEngine {
     const perSkill = skills.map(s => {
       const usage = s.usageCount || 0;
       const effective = s.effectiveCount || 0;
+      const gatePass = s.gatePassCount || 0;
+      const gateFail = s.gateFailCount || 0;
+      const fpSignals = s.falsePositiveSignals || 0;
       return {
         name: s.name,
         type: s.type,
@@ -556,6 +826,13 @@ class SkillEvolutionEngine {
         usageCount: usage,
         effectiveCount: effective,
         hitRate: usage > 0 ? +(effective / usage).toFixed(3) : null,
+        gatePassCount: gatePass,
+        gateFailCount: gateFail,
+        falsePositiveSignals: fpSignals,
+        falsePositiveRate: (gatePass + gateFail) > 0 ? +(fpSignals / (gatePass + gateFail)).toFixed(3) : null,
+        policyWeight: Number(s.policyWeight || 1),
+        policyStatus: s.policyStatus || (s.retiredAt ? 'retired' : 'active'),
+        policyLastUpdatedAt: s.policyLastUpdatedAt || null,
         lastUsedAt: s.lastUsedAt || null,
         lastEffectiveAt: s.lastEffectiveAt || null,
         retiredAt: s.retiredAt || null,
@@ -856,6 +1133,328 @@ class SkillEvolutionEngine {
     } catch (err) {
       console.warn(`[SkillEvolution] Could not save skill registry: ${err.message}`);
     }
+  }
+
+  // ─── Version DAG (ADR-OpenSpace) ──────────────────────────────────────────
+
+  /**
+   * Records a lineage node for a skill evolution event.
+   *
+   * @param {string} skillName
+   * @param {{ version: string, parentVersion: string|null, type: string, timestamp: string, summary: string, sourceExpId: string|null }} node
+   * @private
+   */
+  _recordLineage(skillName, node) {
+    if (!this._lineage.has(skillName)) {
+      this._lineage.set(skillName, []);
+    }
+    this._lineage.get(skillName).push(node);
+    this._saveLineage();
+  }
+
+  /**
+   * Loads the lineage DAG from disk.
+   * @private
+   */
+  _loadLineage() {
+    try {
+      if (fs.existsSync(this._lineagePath)) {
+        const data = JSON.parse(fs.readFileSync(this._lineagePath, 'utf-8'));
+        this._lineage = new Map(Object.entries(data));
+        const totalNodes = Array.from(this._lineage.values()).reduce((sum, nodes) => sum + nodes.length, 0);
+        console.log(`[SkillEvolution] 🌳 Loaded lineage DAG: ${this._lineage.size} skills, ${totalNodes} nodes`);
+      }
+    } catch (err) {
+      console.warn(`[SkillEvolution] Could not load lineage DAG: ${err.message}`);
+    }
+  }
+
+  /**
+   * Persists the lineage DAG to disk.
+   * @private
+   */
+  _saveLineage() {
+    try {
+      const dir = path.dirname(this._lineagePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const data = Object.fromEntries(this._lineage);
+      const tmpPath = this._lineagePath + '.tmp';
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+      fs.renameSync(tmpPath, this._lineagePath);
+    } catch (err) {
+      console.warn(`[SkillEvolution] Could not save lineage DAG: ${err.message}`);
+    }
+  }
+
+  /**
+   * Returns the full lineage (version history DAG) for a skill.
+   *
+   * @param {string} skillName
+   * @returns {Array<{ version: string, parentVersion: string|null, type: string, timestamp: string, summary: string, sourceExpId: string|null }>}
+   */
+  getLineage(skillName) {
+    return this._lineage.get(skillName) || [];
+  }
+
+  /**
+   * Returns a formatted lineage report for a skill (human-readable).
+   *
+   * @param {string} skillName
+   * @returns {string}
+   */
+  getLineageReport(skillName) {
+    const nodes = this.getLineage(skillName);
+    if (nodes.length === 0) return `No lineage data for skill: ${skillName}`;
+
+    const lines = [
+      `## 🌳 Version Lineage: ${skillName}`,
+      '',
+      '| Version | Parent | Type | Date | Summary |',
+      '|---------|--------|------|------|---------|',
+    ];
+
+    for (const node of nodes) {
+      const date = node.timestamp ? node.timestamp.slice(0, 10) : 'unknown';
+      const parent = node.parentVersion || '—';
+      lines.push(`| v${node.version} | v${parent} | ${node.type} | ${date} | ${node.summary.slice(0, 80)} |`);
+    }
+
+    // Compute lineage stats
+    const types = {};
+    for (const node of nodes) {
+      types[node.type] = (types[node.type] || 0) + 1;
+    }
+    lines.push('');
+    lines.push(`**Stats**: ${nodes.length} versions — ${Object.entries(types).map(([t, c]) => `${c} ${t}`).join(', ')}`);
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Returns lineage statistics across all skills.
+   *
+   * @returns {{ totalSkills: number, totalNodes: number, byType: object, deepestLineage: { skill: string, depth: number } }}
+   */
+  getLineageStats() {
+    const byType = {};
+    let totalNodes = 0;
+    let deepestSkill = '';
+    let deepestDepth = 0;
+
+    for (const [skillName, nodes] of this._lineage) {
+      totalNodes += nodes.length;
+      if (nodes.length > deepestDepth) {
+        deepestDepth = nodes.length;
+        deepestSkill = skillName;
+      }
+      for (const node of nodes) {
+        byType[node.type] = (byType[node.type] || 0) + 1;
+      }
+    }
+
+    return {
+      totalSkills: this._lineage.size,
+      totalNodes,
+      byType,
+      deepestLineage: { skill: deepestSkill, depth: deepestDepth },
+    };
+  }
+
+  // ─── P0-B: OpenSpace-Inspired Health Metrics & Auto-Evolution Triggers ─────
+  //
+  // Ported from OpenSpace's SkillEvolver._diagnose_skill_health() and
+  // process_metric_check(). Adds 4-dimensional quality metrics tracking
+  // (appliedRate, completionRate, effectiveRate, fallbackRate) and
+  // rule-based health diagnosis with relaxed thresholds.
+
+  /**
+   * Records that a skill was selected but NOT applied (fallback).
+   * OpenSpace metric: fallback_rate = fallbacks / selections.
+   *
+   * @param {string} skillName
+   */
+  recordFallback(skillName) {
+    const meta = this.registry.get(skillName);
+    if (!meta) return;
+    meta.totalSelections = (meta.totalSelections || 0) + 1;
+    meta.totalFallbacks = (meta.totalFallbacks || 0) + 1;
+  }
+
+  /**
+   * Records that a skill was selected AND applied (used in the task).
+   * OpenSpace metric: applied_rate = applied / selections.
+   *
+   * @param {string} skillName
+   */
+  recordApplied(skillName) {
+    const meta = this.registry.get(skillName);
+    if (!meta) return;
+    meta.totalSelections = (meta.totalSelections || 0) + 1;
+    meta.totalApplied = (meta.totalApplied || 0) + 1;
+  }
+
+  /**
+   * Records that a skill-applied task completed successfully.
+   * OpenSpace metric: completion_rate = completions / applied.
+   *
+   * @param {string} skillName
+   */
+  recordCompletion(skillName) {
+    const meta = this.registry.get(skillName);
+    if (!meta) return;
+    meta.totalCompletions = (meta.totalCompletions || 0) + 1;
+  }
+
+  /**
+   * Computes the 4-dimensional health metrics for a skill.
+   * Mirrors OpenSpace's SkillRecord computed properties.
+   *
+   * @param {string} skillName
+   * @returns {{ appliedRate: number, completionRate: number, effectiveRate: number, fallbackRate: number, totalSelections: number } | null}
+   */
+  getHealthMetrics(skillName) {
+    const meta = this.registry.get(skillName);
+    if (!meta) return null;
+
+    const selections = meta.totalSelections || 0;
+    const applied = meta.totalApplied || 0;
+    const completions = meta.totalCompletions || 0;
+    const fallbacks = meta.totalFallbacks || 0;
+
+    return {
+      appliedRate: selections > 0 ? applied / selections : 0,
+      completionRate: applied > 0 ? completions / applied : 0,
+      effectiveRate: selections > 0 ? completions / selections : 0,
+      fallbackRate: selections > 0 ? fallbacks / selections : 0,
+      totalSelections: selections,
+    };
+  }
+
+  /**
+   * Diagnoses what type of evolution a skill needs based on health metrics.
+   *
+   * Ported from OpenSpace's SkillEvolver._diagnose_skill_health().
+   * Thresholds are intentionally relaxed — the LLM confirmation step
+   * (in skill-llm-refiner.js) filters out false positives.
+   *
+   * @param {string} skillName
+   * @returns {{ type: string|null, direction: string }}
+   *   type: 'fix' | 'derived' | null
+   *   direction: Human-readable explanation of why evolution is needed
+   */
+  diagnoseSkillHealth(skillName) {
+    const metrics = this.getHealthMetrics(skillName);
+    if (!metrics || metrics.totalSelections < 5) {
+      return { type: null, direction: '' };
+    }
+
+    // Relaxed thresholds (OpenSpace pattern: wide screening + LLM confirmation)
+    const FALLBACK_THRESHOLD = 0.4;
+    const LOW_COMPLETION_THRESHOLD = 0.35;
+    const HIGH_APPLIED_FOR_FIX = 0.4;
+    const MODERATE_EFFECTIVE_THRESHOLD = 0.55;
+    const MIN_APPLIED_FOR_DERIVED = 0.25;
+
+    // High fallback rate → skill frequently selected but not used → FIX
+    if (metrics.fallbackRate > FALLBACK_THRESHOLD) {
+      return {
+        type: 'fix',
+        direction: `High fallback rate (${(metrics.fallbackRate * 100).toFixed(0)}%): skill is frequently selected but not applied, suggesting instructions are unclear or outdated.`,
+      };
+    }
+
+    // Applied often but rarely completes → instructions are wrong → FIX
+    if (metrics.appliedRate > HIGH_APPLIED_FOR_FIX && metrics.completionRate < LOW_COMPLETION_THRESHOLD) {
+      return {
+        type: 'fix',
+        direction: `Low completion rate (${(metrics.completionRate * 100).toFixed(0)}%) despite high applied rate (${(metrics.appliedRate * 100).toFixed(0)}%): skill instructions may be incorrect or incomplete.`,
+      };
+    }
+
+    // Moderate effectiveness → could be better → DERIVED
+    if (metrics.effectiveRate < MODERATE_EFFECTIVE_THRESHOLD && metrics.appliedRate > MIN_APPLIED_FOR_DERIVED) {
+      return {
+        type: 'derived',
+        direction: `Moderate effectiveness (${(metrics.effectiveRate * 100).toFixed(0)}%): skill works sometimes but could be enhanced with better error handling or alternative approaches.`,
+      };
+    }
+
+    return { type: null, direction: '' };
+  }
+
+  /**
+   * Scans all active skills and identifies those needing evolution.
+   *
+   * Ported from OpenSpace's SkillEvolver.process_metric_check().
+   * Two-phase: rule-based candidate screening (relaxed thresholds) →
+   * returns candidates for LLM confirmation by the IDE Agent.
+   *
+   * Anti-loop (data-driven): newly-evolved skills start with
+   * totalSelections=0, requiring minSelections fresh data points
+   * before being re-evaluated. No time-based cooldown needed.
+   *
+   * @param {object} [options]
+   * @param {number} [options.minSelections=5] - Minimum selections before evaluating
+   * @returns {{ candidates: Array<{ name: string, type: string, direction: string, metrics: object }> }}
+   */
+  processMetricCheck({ minSelections = 5 } = {}) {
+    const candidates = [];
+
+    for (const [name, meta] of this.registry) {
+      if (meta.retiredAt) continue;
+
+      const selections = meta.totalSelections || 0;
+      if (selections < minSelections) continue;
+
+      const diagnosis = this.diagnoseSkillHealth(name);
+      if (diagnosis.type === null) continue;
+
+      candidates.push({
+        name,
+        type: diagnosis.type,
+        direction: diagnosis.direction,
+        metrics: this.getHealthMetrics(name),
+      });
+    }
+
+    if (candidates.length > 0) {
+      console.error(`[SkillEvolution] 📊 Metric check found ${candidates.length} candidate(s) for evolution`);
+    }
+
+    return { candidates };
+  }
+
+  /**
+   * Returns a comprehensive health report for all active skills.
+   *
+   * @returns {string} Human-readable health report
+   */
+  getHealthReport() {
+    const lines = [
+      '## 🏥 Skill Health Report',
+      '',
+      '| Skill | Selections | Applied% | Completion% | Effective% | Fallback% | Status |',
+      '|-------|-----------|----------|-------------|------------|-----------|--------|',
+    ];
+
+    for (const [name, meta] of this.registry) {
+      if (meta.retiredAt) continue;
+
+      const metrics = this.getHealthMetrics(name);
+      if (!metrics) continue;
+
+      const diagnosis = this.diagnoseSkillHealth(name);
+      const status = diagnosis.type === 'fix' ? '🔴 FIX'
+        : diagnosis.type === 'derived' ? '🟡 ENHANCE'
+        : metrics.totalSelections < 5 ? '⚪ NEW'
+        : '🟢 HEALTHY';
+
+      lines.push(
+        `| ${name} | ${metrics.totalSelections} | ${(metrics.appliedRate * 100).toFixed(0)}% | ${(metrics.completionRate * 100).toFixed(0)}% | ${(metrics.effectiveRate * 100).toFixed(0)}% | ${(metrics.fallbackRate * 100).toFixed(0)}% | ${status} |`
+      );
+    }
+
+    return lines.join('\n');
   }
 }
 

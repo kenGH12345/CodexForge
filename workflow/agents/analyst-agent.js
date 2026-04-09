@@ -125,7 +125,7 @@ class AnalystAgent extends BaseAgent {
     const { anchorFiles, anchorNames } = extractAnchorFiles(inputContent);
     let anchorSection = '';
     if (anchorFiles.length > 0) {
-      console.log(`[AnalystAgent] \uD83D\uDCCC Anchor files extracted: [${anchorFiles.join(', ')}]`);
+      console.error(`[AnalystAgent] \uD83D\uDCCC Anchor files extracted: [${anchorFiles.join(', ')}]`);
       anchorSection = `\n## Anchor Files (User-Referenced)\nThe user has explicitly referenced the following files. **Focus your codebase research on these files and their direct dependencies ONLY.** Do NOT search broadly across the project.\n${anchorFiles.map(f => `- \`${f}\``).join('\n')}\n\n**Search strategy**: Start by reading these anchor files. Then identify their imports/dependencies and callers. Do NOT search for unrelated files.\n`;
     } else {
       // No explicit file references — extract entity names for focused search
@@ -140,7 +140,7 @@ class AnalystAgent extends BaseAgent {
         }
       }
       if (entities.length > 0) {
-        console.log(`[AnalystAgent] \uD83D\uDD0D Inferred entity names: [${entities.slice(0, 8).join(', ')}]`);
+        console.error(`[AnalystAgent] \uD83D\uDD0D Inferred entity names: [${entities.slice(0, 8).join(', ')}]`);
         anchorSection = `\n## Inferred Entities\nNo explicit file references found. The following entity names were extracted from the requirement. **Search for these specific names only** — do NOT perform broad exploratory searches.\n${entities.slice(0, 8).map(e => `- \`${e}\``).join('\n')}\n`;
       }
     }
@@ -198,6 +198,17 @@ Produce a Markdown document with the following sections:
      \`\`\`
      Cross-cutting concerns: logging, error-handling, configuration`;
 
+    // P1 optimization: structured requirement quality constraints
+    const qualitySection = `9. **Requirements Quality Checks** *(mandatory)*:
+   - Provide stable IDs for requirements and acceptance criteria (e.g. REQ-001, AC-001)
+   - Prefer EARS-style acceptance criteria: use structured forms such as
+     - WHEN <trigger>, the system SHALL <response>
+     - IF <precondition>, THEN the system SHALL <response>
+     - WHILE <state>, the system SHALL <response>
+   - User stories should satisfy INVEST (Independent, Negotiable, Valuable, Estimable, Small, Testable)
+   - Include a **Non-Functional Requirements** subsection with measurable targets (e.g. latency, throughput, error rate, security, reliability)
+   - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance warning.`;
+
     // JSON block instruction: compact for simple tasks
     const jsonSection = isSimple
       ? `${jsonInstruction}
@@ -225,6 +236,7 @@ Produce a Markdown document with the following sections:
 
     return `${coreSections}
 ${extendedSections}
+${qualitySection}
 
 ${jsonSection}
 
@@ -234,7 +246,8 @@ ${anchorSection}${expSection}
 ## Instructions
 First output the JSON metadata block (as instructed above), then write the full Markdown document.
 Remember: NO technical details, NO code, NO architecture.
-**CRITICAL**: Sections 6 (Architecture Design) and 7 (Execution Plan) are MANDATORY. Do not omit them.`;
+**CRITICAL**: Sections 6 (Architecture Design) and 7 (Execution Plan) are MANDATORY. Do not omit them.
+**CRITICAL**: Include stable requirement IDs (REQ-xxx / AC-xxx) and measurable NFR targets.`;
   }
 
   /**
@@ -254,7 +267,7 @@ Remember: NO technical details, NO code, NO architecture.
       if (!check.valid) {
         console.warn(`[AnalystAgent] ⚠️  JSON block validation failed: ${check.reason}`);
       } else {
-        console.log(`[AnalystAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
+        console.error(`[AnalystAgent] ✅ Structured JSON block validated (${Object.keys(jsonBlock).length} fields).`);
       }
     }
 
@@ -273,12 +286,30 @@ Remember: NO technical details, NO code, NO architecture.
       { en: 'Architecture Design', zh: '架构设计' },
       { en: 'Execution Plan', zh: '执行计划' },
       { en: 'Functional Module Map', zh: '功能模块' },
+      { en: 'Requirements Quality Checks', zh: '需求质量检查' },
     ];
     const missingSections = mandatorySections.filter(s => !llmResponse.includes(s.en) && !llmResponse.includes(s.zh));
     if (missingSections.length > 0) {
       console.warn(`[AnalystAgent] ⚠️  COMPLIANCE: Missing mandatory section(s): ${missingSections.map(s => s.en).join(', ')}. The agent output specification requires these sections.`);
     } else {
-      console.log(`[AnalystAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan, Functional Module Map.`);
+      console.error(`[AnalystAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan, Functional Module Map.`);
+    }
+
+    // ── P1 quality diagnostics: EARS / IDs / measurable NFR ───────────────
+    const hasReqIds = /REQ-\d{3,}/i.test(llmResponse) || /AC-\d{3,}/i.test(llmResponse);
+    if (!hasReqIds) {
+      console.warn(`[AnalystAgent] ⚠️  QUALITY: No stable requirement IDs detected (expected REQ-xxx / AC-xxx).`);
+    }
+
+    const hasEarsPattern = /(\bWHEN\b[\s\S]{0,120}\bSHALL\b)|(\bIF\b[\s\S]{0,120}\bTHEN\b[\s\S]{0,120}\bSHALL\b)|(\bWHILE\b[\s\S]{0,120}\bSHALL\b)/i.test(llmResponse);
+    if (!hasEarsPattern) {
+      console.warn(`[AnalystAgent] ⚠️  QUALITY: EARS-style acceptance criteria pattern not detected (WHEN/IF-THEN/WHILE + SHALL).`);
+    }
+
+    const hasMeasurableNfr = /(latency|throughput|error\s*rate|availability|uptime|p95|p99|qps|rps|sla|slo|mttr|security|reliability)/i.test(llmResponse)
+      && /(\d+\s*(ms|s|sec|seconds|%|qps|rps|requests|req\/s|ops))/i.test(llmResponse);
+    if (!hasMeasurableNfr) {
+      console.warn(`[AnalystAgent] ⚠️  QUALITY: Measurable NFR targets not clearly detected (e.g. p95 latency < 200ms, error rate < 0.1%).`);
     }
 
     // ── Module Map validation ──────────────────────────────────────────────
@@ -290,7 +321,7 @@ Remember: NO technical details, NO code, NO architecture.
       if (Array.isArray(mm.modules) && mm.modules.length > 0) {
         const validModules = mm.modules.filter(m => m.id && m.name);
         const isolatableCount = mm.modules.filter(m => m.isolatable).length;
-        console.log(`[AnalystAgent] 🗺️  Module Map: ${validModules.length} module(s), ${isolatableCount} isolatable, ${(mm.crossCuttingConcerns || []).length} cross-cutting concern(s).`);
+        console.error(`[AnalystAgent] 🗺️  Module Map: ${validModules.length} module(s), ${isolatableCount} isolatable, ${(mm.crossCuttingConcerns || []).length} cross-cutting concern(s).`);
         if (validModules.length < mm.modules.length) {
           console.warn(`[AnalystAgent] ⚠️  Module Map: ${mm.modules.length - validModules.length} module(s) missing required 'id' or 'name' field.`);
         }
@@ -341,7 +372,7 @@ Remember: NO technical details, NO code, NO architecture.
             console.warn(`[AnalystAgent]    ... and ${warnings.length - 8} more`);
           }
         } else {
-          console.log(`[AnalystAgent] ✅ Module Map structural validation passed (${validModules.length} module(s), all fields valid).`);
+          console.error(`[AnalystAgent] ✅ Module Map structural validation passed (${validModules.length} module(s), all fields valid).`);
         }
       } else {
         console.warn(`[AnalystAgent] ⚠️  Module Map: 'modules' array is empty or missing. Downstream ARCHITECT may not benefit from parallel design.`);

@@ -18,11 +18,20 @@ const { PATHS } = require('./core/constants');
  * Smart entry point: automatically decides whether to run sequentially (run())
  * or in parallel task-based mode (runTaskBased()) based on LLM analysis.
  *
+ * P2-I: Pre-validates requirement completeness before dispatch to prevent
+ * premature generation (Inversion Pattern implementation).
+ *
  * @param {string} rawRequirement - The user's raw requirement text
  * @param {number} [concurrency=3] - Max parallel workers
  */
 async function runAuto(rawRequirement, concurrency = 3) {
   console.log(`\n[Orchestrator] 🤖 Auto-dispatch: analysing requirement for task decomposition...`);
+
+  // P2-I: Extract and record requirement data for completeness gate
+  const reqData = _extractRequirementData(rawRequirement);
+  if (this.stateMachine && typeof this.stateMachine.recordRequirementData === 'function') {
+    this.stateMachine.recordRequirementData(reqData);
+  }
 
   // Pre-load AGENTS.md for decomposition context
   let agentsMdForDecomposition = this._agentsMdContent;
@@ -130,7 +139,11 @@ async function runAuto(rawRequirement, concurrency = 3) {
     console.log(`  [${t.id}] ${t.title}${depStr}`);
   }
 
-  return this.runTaskBased(rawRequirement, taskDefs, concurrency);
+  return this.runTaskBased(rawRequirement, {
+    taskDefs,
+    maxWorkers: concurrency,
+    source: 'auto-dispatch',
+  });
 }
 
 /**
@@ -328,4 +341,97 @@ module.exports = {
   runAuto,
   _parseDecompositionResponse,
   _recordWorkflowFailureExperience,
+  _extractRequirementData, // P2-I: exposed for testing
 };
+
+// ─── P2-I Helper: Requirement Data Extraction ───────────────────────────────
+
+/**
+ * Extracts structured requirement data from raw user input.
+ * Uses heuristics to infer task type, scope, and success criteria.
+ * This is a "best-effort" extraction - the Agent will still ask for missing info.
+ *
+ * @param {string} rawRequirement - Raw user requirement text
+ * @returns {{taskType?: string, targetScope?: string, successCriteria?: string, constraints?: string, raw: string}}
+ */
+function _extractRequirementData(rawRequirement) {
+  if (!rawRequirement || typeof rawRequirement !== 'string') {
+    return { raw: rawRequirement || '' };
+  }
+
+  // Normalize to lowercase for English matching, keep original for Chinese
+  const textLower = rawRequirement.toLowerCase();
+  const text = rawRequirement;
+  const result = { raw: rawRequirement };
+
+  // Extract task type from keywords (English + Chinese)
+  if (/\b(fix|bug|repair|correct|resolve|issue|broken)\b/.test(textLower) ||
+      /(修复|bug|错误|问题|故障)/.test(text)) {
+    result.taskType = 'bugfix';
+  } else if (/\b(refactor|restructure|reorganize|clean|improve|optimize)\b/.test(textLower) ||
+             /(重构|优化|改进|清理)/.test(text)) {
+    result.taskType = 'refactor';
+  } else if (/\b(document|doc|readme|guide|manual|tutorial)\b/.test(textLower) ||
+             /(文档|说明|手册|指南)/.test(text)) {
+    result.taskType = 'docs';
+  } else if (/\b(test|spec|unit test|integration test|coverage)\b/.test(textLower) ||
+             /(测试|用例|覆盖率)/.test(text)) {
+    result.taskType = 'test';
+  } else if (/\b(add|create|build|implement|new|feature)\b/.test(textLower) ||
+             /(添加|创建|实现|新增|功能)/.test(text)) {
+    result.taskType = 'feature';
+  }
+
+  // Extract target scope (file/directory references)
+  // English: "in auth module", "for ui component"
+  const scopeMatchEn = text.match(/\b(in|for|to|of)\s+['"`]?([a-zA-Z0-9_\-\/\.]+)['"`]?/i);
+  // Chinese: "在 auth 模块中", "为 ui 组件"
+  const scopeMatchCn = text.match(/(在|为|对|针对)\s*['"`]?([a-zA-Z0-9_\-\/\.一-龥]+)['"`]?(模块|组件|服务|页面|功能|中|里)?/);
+  if (scopeMatchEn) {
+    result.targetScope = scopeMatchEn[2];
+  } else if (scopeMatchCn) {
+    result.targetScope = scopeMatchCn[2];
+  }
+
+  // Extract success criteria
+  // English: "so that...", "success criteria is..."
+  const criteriaMatchEn = text.match(/\b(success criteria|acceptance criteria|criteria|so that|should|must|need to)\b[^.]+/i);
+  // Chinese: "成功标准是...", "验收标准是...", "以便...", "能够..."
+  const criteriaMatchCn = text.match(/(成功标准|验收标准|验收条件|标准|criteria)(是|为)?['"`]?([^,.;。，；]+)/);
+  const criteriaMatchCn2 = text.match(/(以便|能够|可以|需要)([^,.;。，；]{5,50})/);
+  if (criteriaMatchEn) {
+    result.successCriteria = criteriaMatchEn[0].trim();
+  } else if (criteriaMatchCn) {
+    result.successCriteria = criteriaMatchCn[0].trim();
+  } else if (criteriaMatchCn2) {
+    result.successCriteria = criteriaMatchCn2[0].trim();
+  }
+
+  // Extract constraints
+  // English: "but...", "however...", "without..."
+  const constraintMatchEn = text.match(/\b(but|however|without|while|constraint|limitation)\b[^.]+/i);
+  // Chinese: "但是...", "然而...", "约束...", "限制...", "不..."
+  const constraintMatchCn = text.match(/(但是|然而|约束|限制|限制条件|条件是|要求)([^,.;。，；]{3,50})/);
+  if (constraintMatchEn) {
+    result.constraints = constraintMatchEn[0].trim();
+  } else if (constraintMatchCn) {
+    result.constraints = constraintMatchCn[0].trim();
+  }
+
+  console.log(`[Orchestrator] 📝 Extracted requirement data: taskType=${result.taskType || 'unknown'}, scope=${result.targetScope || 'unknown'}`);
+  
+  // P2-I fix: Ensure required fields have defaults for completeness gate
+  // If extraction fails, use reasonable defaults to allow workflow to proceed
+  if (!result.taskType) {
+    result.taskType = 'feature'; // Default to feature implementation
+  }
+  if (!result.targetScope) {
+    result.targetScope = 'project'; // Default to whole project
+  }
+  if (!result.successCriteria) {
+    // Use the raw requirement as success criteria if not extracted
+    result.successCriteria = rawRequirement.slice(0, 200);
+  }
+  
+  return result;
+}

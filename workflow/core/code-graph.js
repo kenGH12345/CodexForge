@@ -1,5 +1,5 @@
 /**
- * Code Graph – Facade Module (ADR-33 P0 Decomposition)
+ * Code Graph – Facade Module (ADR-33 P0 Decomposition, ADR-37 Lazy Loading)
  *
  * This file aggregates all CodeGraph mixins into a unified class.
  * All implementation code has been extracted to dedicated modules:
@@ -10,6 +10,10 @@
  *   - code-graph-cache.js      – Cache I/O (save, load, format upgrade)
  *   - code-graph-parsers.js    – Language-specific parsers
  *   - code-graph-types.js      – SymbolKind enum and type definitions
+ *
+ * P0-Enhancement: Lazy Loading Support
+ *   - IDE environment: CodeGraph operates in fallback-only mode, no build on init
+ *   - Non-IDE environment: lazy-loaded on first query, not on constructor
  *
  * Original size: 90.12 KB (2037 lines)
  * Refactored size: ~3 KB (this file + class shell)
@@ -33,6 +37,29 @@ const _processCache = new Map();
 // All methods are provided via mixins from dedicated modules.
 
 class CodeGraph {
+  /**
+   * Check if a symbol name is "noisy" — too short or too generic to be
+   * meaningful in hotspot / importance analysis.
+   *
+   * @param {string} name - Symbol name to check
+   * @returns {boolean} true if the name should be excluded from analysis
+   */
+  static isNoisyName(name) {
+    const baseName = name.includes(':') ? name.split(':').pop() : name;
+    if (baseName.length <= 3) return true;
+    // Common generic names that produce false-positive cross-file call edges
+    const NOISY = new Set([
+      'main', 'init', 'setup', 'start', 'stop', 'run', 'exec',
+      'test', 'describe', 'before', 'after',
+      'toString', 'valueOf', 'constructor', 'dispose',
+      'then', 'catch', 'next', 'done', 'callback',
+      'data', 'result', 'value', 'item', 'self', 'this',
+      'print', 'log', 'debug', 'info', 'warn', 'error',
+      'true', 'false', 'null', 'undefined', 'None', 'True', 'False',
+    ]);
+    return NOISY.has(baseName);
+  }
+
   /**
    * @param {object} options
    * @param {string}   options.projectRoot  - Root directory to scan
@@ -92,8 +119,92 @@ class CodeGraph {
     this._lspCache = new Map();
     this._needsFormatUpgrade = false;
     this._upgradePromise = null;
+
+    // P0-Enhancement: Lazy loading state
+    this._lazyLoaded = false;
+    this._loadingPromise = null;
+
+    // Skip build in IDE environment or if lazy loading is enabled
+    if (this._ideSearchAvailable) {
+      console.log(`[CodeGraph] ✅ IDE search available - skipping graph initialization (lazy mode)`);
+      this._lazyLoaded = true; // Mark as loaded - we don't need to load
+    }
   }
-}
+
+  /**
+   * Ensures the CodeGraph is loaded before use.
+   * P0-Enhancement: Lazy loading support - only builds graph on first access.
+   *
+   * @param {boolean} [force=false] - Force rebuild even if already loaded
+   * @returns {Promise<void>}
+   */
+  async ensureLoaded(force = false) {
+    // If IDE search is available, we don't need to build
+    if (this._ideSearchAvailable && !force) {
+      return;
+    }
+
+    // Already loaded and not forcing rebuild
+    if (this._lazyLoaded && !force) {
+      return;
+    }
+
+    // Loading in progress, wait for it
+    if (this._loadingPromise) {
+      return this._loadingPromise;
+    }
+
+    // Start loading
+    this._loadingPromise = this._doLoad();
+    try {
+      await this._loadingPromise;
+      this._lazyLoaded = true;
+    } finally {
+      this._loadingPromise = null;
+    }
+  }
+
+  /**
+   * @private
+   */
+  async _doLoad() {
+    console.log(`[CodeGraph] 🔄 Lazy loading graph...`);
+    const startTime = Date.now();
+
+    try {
+      // Try to load from cache first
+      const cacheLoaded = await this._tryLoadFromCache();
+
+      if (!cacheLoaded) {
+        // Build from scratch
+        await this.build();
+      }
+
+      const duration = Date.now() - startTime;
+      console.log(`[CodeGraph] ✅ Lazy load complete in ${duration}ms (${this._symbols.size} symbols)`);
+    } catch (error) {
+      console.warn(`[CodeGraph] ⚠️ Lazy load failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Attempts to load graph from cache.
+   * @private
+   */
+  async _tryLoadFromCache() {
+    try {
+      if (!this._outputDir) return false;
+
+      const cachePath = path.join(this._outputDir, 'code-graph.json');
+      if (!fs.existsSync(cachePath)) return false;
+
+      const cached = await this.load();
+      return cached && this._symbols.size > 0;
+    } catch (_e) {
+      return false;
+    }
+  }}
 
 // ─── Apply Builder Mixin ───────────────────────────────────────────────────────
 const { CodeGraphBuilderMixin, NON_CODE_DIRS, WORKER_FILE_THRESHOLD } = require('./code-graph-builder');
@@ -119,5 +230,60 @@ Object.assign(CodeGraph.prototype, CodeGraphEnrichmentMixin);
 const { CodeGraphCacheMixin, setProcessCache } = require('./code-graph-cache');
 setProcessCache(_processCache);
 Object.assign(CodeGraph.prototype, CodeGraphCacheMixin);
+
+// ─── Static Factory Methods ─────────────────────────────────────────────────────
+
+/**
+ * Creates a lazy-loading CodeGraph instance.
+ * The graph is not built until first query.
+ *
+ * @param {object} options - Same as constructor options
+ * @returns {CodeGraph} Lazy-loading CodeGraph instance
+ */
+CodeGraph.createLazy = function(options) {
+  const graph = new CodeGraph(options);
+  // Do NOT call ensureLoaded() - lazy loading starts here
+  return graph;
+};
+
+/**
+ * Creates and immediately builds a CodeGraph (traditional eager loading).
+ * Use this when you know you'll need the graph immediately.
+ *
+ * @param {object} options - Same as constructor options
+ * @returns {Promise<CodeGraph>} Built CodeGraph instance
+ */
+CodeGraph.createAndBuild = async function(options) {
+  const graph = new CodeGraph(options);
+  if (!graph._ideSearchAvailable) {
+    await graph.ensureLoaded();
+  }
+  return graph;
+};
+
+/**
+ * Checks if lazy loading is enabled for this CodeGraph.
+ * @returns {boolean}
+ */
+CodeGraph.prototype.isLazyLoaded = function() {
+  return this._lazyLoaded;
+};
+
+/**
+ * Pre-builds the graph in background without blocking.
+ * Useful for warming up cache while other operations run.
+ *
+ * @returns {Promise<void>}
+ */
+CodeGraph.prototype.warmup = async function() {
+  if (this._ideSearchAvailable) return;
+  if (this._lazyLoaded) return;
+  if (this._loadingPromise) return;
+
+  // Start background load without awaiting
+  this.ensureLoaded().catch(err => {
+    console.warn(`[CodeGraph] ⚠️ Warmup failed (non-fatal): ${err.message}`);
+  });
+};
 
 module.exports = { CodeGraph, SymbolKind };

@@ -78,6 +78,8 @@ class ReviewAgentBase {
     this.checklist = [...checklist, ...extraChecklist];
     this.outputDir = outputDir || path.resolve(__dirname, '..', 'output');
     this.investigationTools = investigationTools || null;
+    // Expose options object for subclass inspection and testing
+    this.options = { maxRounds, verbose, checklist, extraChecklist, outputDir, investigationTools, adversarialLlmCall };
   }
 
   // ─── Abstract methods (subclasses MUST override) ──────────────────────────

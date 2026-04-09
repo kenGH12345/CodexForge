@@ -19,8 +19,13 @@ const { getConfig } = require('../core/config-loader');
 const { estimateTokens } = require('../tools/thin-tools');
 const { ContextLoader } = require('./context-loader');
 const { PromptSlotManager } = require('./prompt-slot-manager');
-const { generateIDEToolGuidance } = require('./ide-detection');
+const { generateIDEToolGuidance, getIDEDetectionResult } = require('./ide-detection');
 const { introspectionCollector } = require('./workflow-introspection-collector');
+const { SELF_REPORT_INSTRUCTION } = require('./agent-self-report');
+
+// ─── Pattern Library (P2: Cross-platform prompt patterns) ────────────────────
+
+const { PromptPatternLibrary, createWorkflowPatternLibrary, detectPlatform } = require('./prompt-pattern-library');
 
 // ─── Agent Fixed Prefixes (extracted to prompt-agent-prefixes.js) ───────────
 
@@ -268,6 +273,21 @@ function setOrchestrator(orch) {
 let _embeddingService = null;
 
 /**
+ * Module-level cheap LLM call for ContextLoader ADR digest enhancement.
+ * Injected by Orchestrator during initialisation via setContextLoaderCheapLlm().
+ * @type {Function|null}
+ */
+let _contextLoaderCheapLlm = null;
+
+/**
+ * Module-level ExperienceStore reference for ContextLoader Prevention Rule injection.
+ * Injected by Orchestrator during initialisation via setContextLoaderExperienceStore().
+ * ADR-55: MemGPT retrieval pattern — retrieve relevant memories on demand.
+ * @type {object|null}
+ */
+let _contextLoaderExperienceStore = null;
+
+/**
  * Sets the module-level EmbeddingService reference (Plan-C).
  * Called by Orchestrator during initialisation.
  *
@@ -275,6 +295,37 @@ let _embeddingService = null;
  */
 function setEmbeddingService(service) {
   _embeddingService = service;
+}
+
+/**
+ * Sets the module-level cheap LLM call for ContextLoader ADR digest.
+ * Called by Orchestrator during initialisation.
+ *
+ * @param {Function} llmCall - Async function: (prompt: string) => string
+ */
+function setContextLoaderCheapLlm(llmCall) {
+  if (typeof llmCall === 'function') {
+    _contextLoaderCheapLlm = llmCall;
+    // Inject into cached loader if already created
+    if (_cachedLoader && typeof _cachedLoader.setCheapLlmCall === 'function') {
+      _cachedLoader.setCheapLlmCall(llmCall);
+    }
+  }
+}
+
+/**
+ * Sets the module-level ExperienceStore for ContextLoader Prevention Rule injection.
+ * Called by Orchestrator during initialisation.
+ * ADR-55: MemGPT retrieval pattern — retrieve relevant memories on demand.
+ *
+ * @param {object} store - ExperienceStore instance
+ */
+function setContextLoaderExperienceStore(store) {
+  _contextLoaderExperienceStore = store || null;
+  // Inject into cached loader if already created
+  if (_cachedLoader) {
+    _cachedLoader._experienceStore = _contextLoaderExperienceStore;
+  }
 }
 
 /**
@@ -364,6 +415,7 @@ function _getOrCreateLoader(options) {
     options.alwaysLoadSkills,
     options.globalSkills,
     options.projectSkills,
+    options.riskProfile || null,
   ]);
   if (_cachedLoader && _cachedLoaderKey === key) {
     // Gap 1 fix: update retiredSkills even on cache hit, so newly-retired skills
@@ -384,12 +436,40 @@ function _getOrCreateLoader(options) {
     // Plan-C: update embeddingService reference on cache hit
     if (options.embeddingService) {
       _cachedLoader._embeddingService = options.embeddingService;
+      // ADR-OpenSpace: also update SkillRanker's embedding reference
+      if (_cachedLoader._skillRanker) {
+        _cachedLoader._skillRanker.setEmbeddingService(options.embeddingService);
+      }
+    }
+    // P1.5: update risk profile on cache hit for risk-driven skill packs
+    if (options.riskProfile && typeof options.riskProfile === 'object') {
+      _cachedLoader._riskProfile = options.riskProfile;
+    } else {
+      _cachedLoader._riskProfile = null;
+    }
+    // ADR-55: update experienceStore reference on cache hit (Prevention Rule injection)
+    if (_contextLoaderExperienceStore) {
+      _cachedLoader._experienceStore = _contextLoaderExperienceStore;
+    }
+    // Inject cheap LLM call on cache hit (in case it was set after loader creation)
+    if (_contextLoaderCheapLlm && typeof _cachedLoader.setCheapLlmCall === 'function' && !_cachedLoader._cheapLlmCall) {
+      _cachedLoader.setCheapLlmCall(_contextLoaderCheapLlm);
     }
     return _cachedLoader;
   }
   const isFirstCreation = !_cachedLoader;
   _cachedLoader = new ContextLoader(options);
   _cachedLoaderKey = key;
+
+  // Inject cheap LLM call into newly created loader
+  if (_contextLoaderCheapLlm && typeof _cachedLoader.setCheapLlmCall === 'function') {
+    _cachedLoader.setCheapLlmCall(_contextLoaderCheapLlm);
+  }
+
+  // ADR-55: inject experienceStore into newly created loader (Prevention Rule injection)
+  if (_contextLoaderExperienceStore) {
+    _cachedLoader._experienceStore = _contextLoaderExperienceStore;
+  }
 
   // Fire one-shot callbacks when ContextLoader is first created.
   // This allows deferred SkillWatcher startup from orchestrator-lifecycle.js.
@@ -564,6 +644,127 @@ What should happen next
   },
 };
 
+// ─── Pattern Library Integration (P2) ────────────────────────────────────────
+
+/**
+ * Module-level Pattern Library instance.
+ * Lazily initialized on first access.
+ * @type {PromptPatternLibrary|null}
+ */
+let _patternLibrary = null;
+
+/**
+ * Returns the singleton Pattern Library instance.
+ * @returns {PromptPatternLibrary}
+ */
+function _getPatternLibrary() {
+  if (!_patternLibrary) {
+    _patternLibrary = createWorkflowPatternLibrary();
+  }
+  return _patternLibrary;
+}
+
+/**
+ * Pattern configurations for different agent roles.
+ * Maps role to default patterns that should be applied.
+ */
+const ROLE_PATTERNS = {
+  analyst: ['chain-of-thought', 'structured-output'],
+  architect: ['chain-of-thought', 'analytical', 'verification-loop'],
+  developer: ['session-checkpoint', 'structured-output', 'verification-loop'],
+  tester: ['structured-output', 'tool-use', 'session-checkpoint'],
+  'coding-agent': ['session-checkpoint', 'tool-use', 'structured-output', 'verification-loop'],
+  pm: ['chain-of-thought', 'structured-output'],
+};
+
+/**
+ * Applies pattern library templates to the fixed prefix.
+ * Integrates with PromptBuilder's output style system.
+ *
+ * @param {string} role - Agent role
+ * @param {string} fixedPrefix - Base fixed prefix
+ * @param {object} [options]
+ * @param {string[]} [options.patterns] - Explicit patterns to use
+ * @param {object} [options.patternParams] - Pattern parameters
+ * @returns {string} Enhanced prefix with patterns applied
+ */
+function _applyPatterns(role, fixedPrefix, options = {}) {
+  const library = _getPatternLibrary();
+
+  // Determine which patterns to apply
+  let patternNames = options.patterns;
+  if (!patternNames) {
+    patternNames = ROLE_PATTERNS[role] || ['structured-output'];
+  }
+
+  // Build pattern sections
+  const patternSections = [];
+  for (const name of patternNames) {
+    const pattern = library.getPattern(name, options.patternParams?.[name] || {});
+    if (pattern) {
+      const parts = [];
+      if (pattern.prefix) parts.push(pattern.prefix);
+      if (pattern.structure) parts.push(pattern.structure);
+      if (pattern.suffix) parts.push(pattern.suffix);
+      patternSections.push(parts.join('\n\n'));
+    }
+  }
+
+  // Compose final prefix: original + patterns
+  if (patternSections.length === 0) {
+    return fixedPrefix;
+  }
+
+  return fixedPrefix + '\n\n===\n\n' + patternSections.join('\n\n---\n\n');
+}
+
+/**
+ * Pre-populates the ContextLoader's ADR digest cache using cheap LLM.
+ * Must be called (and awaited) BEFORE buildAgentPrompt() so that the
+ * synchronous resolve() path can use the cached LLM digest.
+ *
+ * Safe to call when no cheapLlmCall is configured — returns immediately.
+ * Safe to call multiple times — the cache prevents redundant LLM calls.
+ *
+ * @param {string} taskText - The current task description
+ * @param {object} [options] - Same options as buildAgentPrompt
+ * @returns {Promise<void>}
+ */
+async function preloadAdrDigest(taskText, options = {}) {
+  if (!_contextLoaderCheapLlm || !taskText) return;
+
+  try {
+    const loaderOptions = {
+      workflowRoot:     WORKFLOW_ROOT,
+      projectRoot:      options && options.projectRoot ? options.projectRoot : null,
+      skillKeywords:    options && options.skillKeywords ? options.skillKeywords : {},
+      alwaysLoadSkills: options && options.alwaysLoadSkills ? options.alwaysLoadSkills : [],
+      globalSkills:     options && options.globalSkills ? options.globalSkills : (getConfig().globalSkills || []),
+      projectSkills:    options && options.projectSkills ? options.projectSkills : (getConfig().projectSkills || []),
+      retiredSkills:    _skillEvolutionEngine ? _getRetiredSkillNames(_skillEvolutionEngine) : null,
+      codeGraph:        options && options.codeGraph ? options.codeGraph : null,
+      orchestrator:     _orchestrator,
+      embeddingService: _embeddingService,
+      riskProfile:      options && options.riskProfile ? options.riskProfile : null,
+    };
+    const loader = _getOrCreateLoader(loaderOptions);
+    if (!loader._cheapLlmCall) return;
+
+    // Read decision-log.md (same path as ContextLoader uses)
+    const logPath = nodePath.join(WORKFLOW_ROOT, 'docs', 'decision-log.md');
+    if (!fs.existsSync(logPath)) return;
+
+    const logContent = fs.readFileSync(logPath, 'utf-8');
+    if (!logContent || logContent.length < 50) return;
+
+    // ADR token budget: 600 tokens (same as MAX_ADR_TOKENS in context-loader-config)
+    await loader.preloadAdrDigest(logContent, taskText, 600);
+  } catch (err) {
+    // Non-fatal: buildAgentPrompt will fall back to heuristic ADR extraction
+    console.warn(`[PromptBuilder] ⚠️ preloadAdrDigest failed (non-fatal): ${err.message}`);
+  }
+}
+
 /**
  * Builds a complete, optimised prompt for a specific agent role.
  *
@@ -572,33 +773,50 @@ What should happen next
  * @param {string[]} [contextFiles] - Additional context file paths
  * @param {object} [options]
  * @param {string} [options.outputStyle] - Output style: 'concise'|'verbose'|'structured'|'analytical'|'stepByStep'
- * @returns {{ prompt: string, meta: PromptMeta }}
+ * @param {boolean} [options.usePatterns=true] - Whether to apply Pattern Library templates
+ * @param {string[]} [options.patterns] - Explicit patterns to use (overrides role defaults)
+ * @param {object} [options.patternParams] - Pattern-specific parameters
+ * @param {boolean} [options.trackMetrics=true] - Whether to log timing metrics
+ * @returns {Promise<{ prompt: string, meta: PromptMeta }>}
  */
-function buildAgentPrompt(role, dynamicInput, contextFiles = [], options = {}) {
+async function buildAgentPrompt(role, dynamicInput, contextFiles = [], options = {}) {
   // P1-6 fix: refactored from 200-line monolith into a coordinator that
   // delegates to focused helper functions, each handling one phase.
 
   // Phase 1: Resolve fixed prefix (A/B testing + output style)
   let { fixedPrefix, _resolvedVariantId, _isExploration } = _resolveFixedPrefix(role);
 
-  // P3: Inject output style instruction if specified
+// P3: Inject output style instruction if specified
   if (options.outputStyle && OUTPUT_STYLES[options.outputStyle]) {
     fixedPrefix = fixedPrefix + '\n\n' + OUTPUT_STYLES[options.outputStyle].instruction;
+  }
+
+  // P2: Apply Pattern Library templates (unless explicitly disabled)
+  if (options.usePatterns !== false) {
+    const patternStartTime = Date.now();
+    fixedPrefix = _applyPatterns(role, fixedPrefix, {
+      patterns: options.patterns,
+      patternParams: options.patternParams,
+    });
+    if (options.trackMetrics !== false) {
+      console.log(`[PromptBuilder] Patterns applied in ${Date.now() - patternStartTime}ms`);
+    }
   }
 
   // Phase 2: Collect explicit context file sections
   const autoContextFiles = _prepareContextFiles(role, contextFiles, options);
 
   // Phase 3: Load skills + ADR digest via ContextLoader
-  const { autoSections, injectedSkillNames } = _loadAutoInjectedSections(role, dynamicInput, options);
+  const { autoSections, injectedSkillNames } = await _loadAutoInjectedSections(role, dynamicInput, options);
 
   // Phase 4: Read context files from disk
   const contextSections = _readContextFileSections(autoContextFiles);
 
-  // Phase 5: Inject runtime environment info + self-reflection + IDE tool guidance
+  // Phase 5: Inject runtime environment info + self-reflection + IDE tool guidance + self-report
   _injectRuntimeInfo(autoSections);
   _injectIDEToolGuidance(autoSections);
   _injectSelfReflection(autoSections, options);
+  _injectAgentSelfReportInstruction(autoSections, role);
 
   // Phase 6: Assemble and apply degradation
   let dynamicSuffix = [...autoSections, ...contextSections, `### Input\n${dynamicInput}`].join('\n\n');
@@ -689,7 +907,7 @@ function _prepareContextFiles(role, contextFiles, options) {
 /**
  * Phase 3: Load auto-injected sections (skills + ADR digest) via ContextLoader.
  */
-function _loadAutoInjectedSections(role, dynamicInput, options) {
+async function _loadAutoInjectedSections(role, dynamicInput, options) {
   // P1 fix: expand query with synonyms before passing to ContextLoader
   const expandedInput = _expandQueryWithSynonyms(dynamicInput);
 
@@ -704,9 +922,10 @@ function _loadAutoInjectedSections(role, dynamicInput, options) {
     codeGraph:        options && options.codeGraph ? options.codeGraph : null,
     orchestrator:     _orchestrator,  // ADR-45: for lazy skill enrichment
     embeddingService: _embeddingService, // Plan-C: for semantic skill matching
+    riskProfile:      options && options.riskProfile ? options.riskProfile : null, // P1.5: diff risk driven skill packs
   };
   const loader = _getOrCreateLoader(loaderOptions);
-  const { sections: autoSections, sources: autoSources } = loader.resolve(expandedInput, role);
+  const { sections: autoSections, sources: autoSources } = await loader.resolve(expandedInput, role);
 
   const injectedSkillNames = (autoSources || [])
     .filter(s => s.endsWith('.md') && !s.includes('decision-log') && !s.includes('architecture-constraints') && !s.includes('code-graph'))
@@ -842,6 +1061,25 @@ function _injectSelfReflection(autoSections, options) {
 }
 
 /**
+ * Phase 5c: Inject Agent Self-Report instruction when running in IDE Agent mode.
+ *
+ * This asks the Agent to emit a structured JSON block at the end of its output,
+ * reporting confidence, decisions, files touched, and blockers.
+ * Only injected when IDE is detected (to avoid wasting tokens in CLI/standalone mode
+ * where Observability already captures this data via hooks).
+ *
+ * Cost: ~400 tokens of prompt space. Benefit: fills the IDE-mode observability gap.
+ */
+function _injectAgentSelfReportInstruction(autoSections, role) {
+  try {
+    const ideResult = getIDEDetectionResult();
+    if (ideResult.isInsideIDE) {
+      autoSections.push(SELF_REPORT_INSTRUCTION);
+    }
+  } catch (_) { /* Non-fatal: self-report instruction is optional enhancement */ }
+}
+
+/**
  * Phase 6 (degradation): Delegated to prompt-context-degradation.js (ADR-33 Phase 4).
  */
 const { applyContextDegradation } = require('./prompt-context-degradation');
@@ -888,8 +1126,24 @@ module.exports = {
   setOrchestrator,
   // Plan-C: EmbeddingService for semantic skill matching
   setEmbeddingService,
-  // P3: Output style constants and helpers
+  // Cheap LLM for ContextLoader ADR digest
+  setContextLoaderCheapLlm,
+  // ADR-55: ExperienceStore for ContextLoader Prevention Rule injection (MemGPT retrieval pattern)
+  setContextLoaderExperienceStore,
+  preloadAdrDigest,
+// P3: Output style constants and helpers
   OUTPUT_STYLES,
+  // P2: Pattern Library integration
+  /**
+   * Get the Pattern Library instance for advanced pattern operations.
+   * @returns {import('./prompt-pattern-library').PromptPatternLibrary}
+   */
+  getPatternLibrary: _getPatternLibrary,
+  /**
+   * Role-to-patterns mapping for customization.
+   * Modify this to change default patterns for each role.
+   */
+  ROLE_PATTERNS,
   // Long-running agent pattern modules
   FeatureList:    require('./feature-list').FeatureList,
   FeatureStatus:  require('./feature-list').FeatureStatus,

@@ -430,26 +430,31 @@ class CodeReviewAgent extends ReviewAgentBase {
    * @param {number}   [options.maxRounds=2]           - Max self-correction rounds
    * @param {boolean}  [options.verbose=true]
    * @param {object[]} [options.extraChecklist=[]]     - Additional checklist items
+   * @param {object[]} [options.checklist]             - Override default checklist entirely
    * @param {string}   [options.outputDir]             - Where to write code-review.md
    * @param {object}   [options.investigationTools]    - Optional tools for deep investigation
    * @param {Function} [options.adversarialLlmCall]    - Optional independent LLM for adversarial verification
+   * @param {string}   [options.extraContext]          - Additional context to inject into review prompt
+   * @param {string}   [options.reportFileName]        - Custom report file name (default: code-review.md)
    */
   constructor(llmCall, options = {}) {
+    const checklist = options.checklist || DEFAULT_CHECKLIST;
     super(llmCall, {
       ...options,
-      checklist: DEFAULT_CHECKLIST,
+      checklist,
     });
+    this.extraContext = options.extraContext || '';
+    this._reportFileName = options.reportFileName || 'code-review.md';
   }
 
   // ─── Abstract method implementations ───────────────────────────────────────
 
-  _getReviewContent(inputPath) {
-    if (!fs.existsSync(inputPath)) return null;
-    return fs.readFileSync(inputPath, 'utf-8');
-  }
-
   _buildReviewPrompt(content, requirementText) {
-    return buildReviewPrompt(this.checklist, content, requirementText);
+    // Merge extraContext with requirementText for enriched reviews (e.g., architecture)
+    const enrichedReqText = this.extraContext
+      ? `${requirementText}\n\n${this.extraContext}`
+      : requirementText;
+    return buildReviewPrompt(this.checklist, content, enrichedReqText);
   }
 
   _buildAdversarialPrompt(content, mainResults, requirementText) {
@@ -491,12 +496,20 @@ class CodeReviewAgent extends ReviewAgentBase {
     return currentContent;
   }
 
+  // ─── Abstract method: _getReviewContent ───────────────────────────────────
+  _getReviewContent(inputPath) {
+    if (!inputPath || !fs.existsSync(inputPath)) {
+      return null;
+    }
+    return fs.readFileSync(inputPath, 'utf-8');
+  }
+
   _writeBackArtifact(inputPath, content) {
     fs.writeFileSync(inputPath, content, 'utf-8');
   }
 
   _writeReport(result) {
-    const reportPath = path.join(this.outputDir, 'code-review.md');
+    const reportPath = path.join(this.outputDir, this._reportFileName);
     const report = this.formatReport(result);
     fs.writeFileSync(reportPath, report, 'utf-8');
     this._log(`[CodeReview] 📄 Review report written to: ${reportPath}`);

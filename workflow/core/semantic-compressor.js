@@ -51,6 +51,14 @@ class SemanticCompressor {
     this.preserveCodeBlocks = options.preserveCodeBlocks !== false;
     this.preserveLists = options.preserveLists !== false;
     
+    /**
+     * Cheap LLM call for semantic summarisation. Injected at runtime.
+     * When available, compress() prefers LLM summary over heuristic selection
+     * for natural language content > 2000 chars.
+     * @type {Function|null}
+     */
+    this._cheapLlmCall = null;
+    
     // Stop words for sentence importance calculation
     this.stopWords = new Set([
       'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -65,6 +73,19 @@ class SemanticCompressor {
   }
 
   /**
+   * Injects a cheap LLM call function for semantic summarisation.
+   * Called by the Orchestrator during initialisation.
+   *
+   * @param {Function} llmCall - Async function: (prompt: string) => string
+   */
+  setCheapLlmCall(llmCall) {
+    if (typeof llmCall === 'function') {
+      this._cheapLlmCall = llmCall;
+      console.log(`[SemanticCompressor] 🤖 Cheap LLM enabled for semantic summarisation.`);
+    }
+  }
+
+  /**
    * Compress text content using semantic analysis.
    *
    * @param {string} content - Original text content
@@ -72,20 +93,26 @@ class SemanticCompressor {
    * @param {string} [options.strategy='auto'] - Compression strategy
    * @param {number} [options.maxTokens] - Override target token limit
    * @param {string} [options.contentType='text'] - 'text', 'code', 'mixed'
-   * @returns {{ content: string, saved: number, strategy: string, ratio: number }}
+   * @returns {Promise<{ content: string, saved: number, strategy: string, ratio: number }>}
    */
-  compress(content, options = {}) {
+  async compress(content, options = {}) {
     if (!content || content.length < 200) {
       return { content, saved: 0, strategy: 'none', ratio: 1.0 };
     }
 
     const contentType = options.contentType || this._detectContentType(content);
-    const strategy = options.strategy === 'auto' 
+    const strategy = (!options.strategy || options.strategy === 'auto')
       ? this._selectStrategy(contentType, content.length)
       : options.strategy;
 
     const originalLength = content.length;
     let compressed = content;
+
+    // LLM-first: for natural language content > 2000 chars, try LLM summary
+    // before falling back to heuristic strategies.
+    if (this._cheapLlmCall && contentType !== 'code' && content.length > 2000) {
+      return this._compressWithLlmFallback(content, strategy, options);
+    }
 
     switch (strategy) {
       case CompressionStrategy.CODE_STRUCTURE:
@@ -119,11 +146,12 @@ class SemanticCompressor {
 
   /**
    * Batch compress multiple content blocks.
+   * Supports async LLM compression when cheapLlmCall is available.
    *
    * @param {Array<{label: string, content: string}>} blocks
-   * @returns {{ totalSaved: number, results: Array<Object> }}
+   * @returns {Promise<{ totalSaved: number, results: Array<Object> }>}
    */
-  compressBlocks(blocks) {
+  async compressBlocks(blocks) {
     let totalSaved = 0;
     const results = [];
 
@@ -133,7 +161,7 @@ class SemanticCompressor {
         continue;
       }
 
-      const result = this.compress(block.content, {
+      const result = await this.compress(block.content, {
         contentType: this._detectContentType(block.content),
       });
 
@@ -188,8 +216,77 @@ class SemanticCompressor {
     return CompressionStrategy.REDUNDANCY_REMOVAL;
   }
 
-  // ─── Compression Implementations ─────────────────────────────────────────────
+  // ─── LLM-Enhanced Compression ─────────────────────────────────────────────────
 
+  /**
+   * Attempts LLM-based summarisation, falls back to heuristic strategy on failure.
+   *
+   * @param {string} content - Original text content
+   * @param {string} fallbackStrategy - Heuristic strategy to use if LLM fails
+   * @param {Object} options - Compression options
+   * @returns {Promise<{ content: string, saved: number, strategy: string, ratio: number }>}
+   */
+  async _compressWithLlmFallback(content, fallbackStrategy, options = {}) {
+    const originalLength = content.length;
+    const targetRatio = options.targetRatio || this.targetRatio;
+    const targetChars = Math.max(Math.floor(originalLength * targetRatio), this.minTokens * 4);
+
+    try {
+      const truncated = content.slice(0, 6000); // Bound input tokens
+      const targetWords = Math.floor(targetChars / 5); // Rough chars-to-words
+
+      const prompt = [
+        `Summarise the following text to approximately ${targetWords} words.`,
+        'Preserve ALL key information: decisions, numbers, names, technical terms, code references.',
+        'Remove filler words, redundant explanations, and verbose descriptions.',
+        'If the text contains lists, keep the list structure but make items concise.',
+        'If the text is in Chinese, output the summary in Chinese.',
+        'Output ONLY the summary, no preamble or explanation.',
+        '',
+        '--- TEXT ---',
+        truncated,
+        '--- END ---',
+      ].join('\n');
+
+      const response = await this._cheapLlmCall(prompt);
+      if (response && typeof response === 'string') {
+        const summary = response.trim();
+        // Validate: summary should be shorter than original and non-trivial
+        if (summary.length > 50 && summary.length < originalLength * 0.95) {
+          const saved = originalLength - summary.length;
+          const ratio = summary.length / originalLength;
+          console.log(`[SemanticCompressor] 🤖 LLM summary: ${originalLength} → ${summary.length} chars (ratio=${ratio.toFixed(2)}, saved=${saved})`);
+          return { content: summary, saved, strategy: 'llm_summary', ratio };
+        }
+      }
+    } catch (err) {
+      console.warn(`[SemanticCompressor] ⚠️ LLM summarisation failed (falling back to ${fallbackStrategy}): ${err.message}`);
+    }
+
+    // Fallback to heuristic strategy
+    let compressed = content;
+    switch (fallbackStrategy) {
+      case CompressionStrategy.SENTENCE_SELECTION:
+        compressed = this._compressBySentenceSelection(content, options.maxTokens);
+        break;
+      case CompressionStrategy.HIERARCHICAL:
+        compressed = this._compressHierarchical(content);
+        break;
+      case CompressionStrategy.PARAGRAPH_SUMMARY:
+        compressed = this._compressBySummary(content, options.maxTokens);
+        break;
+      case CompressionStrategy.REDUNDANCY_REMOVAL:
+      default:
+        compressed = this._compressByRedundancyRemoval(content);
+        break;
+    }
+
+    const saved = originalLength - compressed.length;
+    const ratio = compressed.length / originalLength;
+    return { content: compressed, saved, strategy: fallbackStrategy, ratio };
+  }
+
+  // ─── Compression Implementations ───────────────────────────────────────────────
   /**
    * Strategy: Remove redundant/repeated information.
    */
@@ -610,7 +707,7 @@ class UnifiedCompressionPipeline {
   /**
    * Process blocks through both compressors in optimal order.
    */
-  process(blocks) {
+  async process(blocks) {
     // Phase 1: Block compression (structured data)
     let processed = blocks;
     let totalSaved = 0;
@@ -630,7 +727,7 @@ class UnifiedCompressionPipeline {
 
     // Phase 2: Semantic compression (natural language)
     if (this.enableSemantic) {
-      const semanticResult = this.semanticCompressor.compressBlocks(
+      const semanticResult = await this.semanticCompressor.compressBlocks(
         processed.filter(b => !this._isStructuredBlock(b.label))
       );
       

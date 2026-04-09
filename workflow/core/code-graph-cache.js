@@ -148,10 +148,10 @@ const CodeGraphCacheMixin = {
 
     console.log(`[CodeGraph] 🔄 Auto-upgrade: scheduling v1 → v2 format re-write for ${path.basename(jsonPath)}`);
 
-    this._upgradePromise = new Promise((resolve) => {
-      const run = () => {
+    this._upgradePromise = new Promise(async (resolve) => {
+      const run = async () => {
         try {
-          const result = this._writeOutput();
+          const result = await this._writeOutput();
           this._needsFormatUpgrade = false;
           this._upgradePromise = null;
           if (result) {
@@ -176,6 +176,20 @@ const CodeGraphCacheMixin = {
   _loadCache(cachePath) {
     try {
       if (!fs.existsSync(cachePath)) return null;
+
+      // Fast path: read lightweight mtimes-only sidecar file (avoids parsing 1GB+ cache)
+      const mtimesPath = cachePath.replace(/\.json$/, '-mtimes.json');
+      if (fs.existsSync(mtimesPath)) {
+        const raw = JSON.parse(fs.readFileSync(mtimesPath, 'utf-8'));
+        if (raw.version !== 1 || raw.projectRoot !== this._root) {
+          console.log(`[CodeGraph] ♻️  Cache invalidated (version or root mismatch)`);
+          return null;
+        }
+        console.log(`[CodeGraph] 📦 Cache loaded (fast): ${Object.keys(raw.fileMtimes || {}).length} files cached`);
+        return raw;
+      }
+
+      // Fallback: read full cache (legacy or first run)
       const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
       if (raw.version !== 1 || raw.projectRoot !== this._root) {
         console.log(`[CodeGraph] ♻️  Cache invalidated (version or root mismatch)`);
@@ -222,12 +236,34 @@ const CodeGraphCacheMixin = {
 
       fs.writeFileSync(cachePath, JSON.stringify(cacheData), 'utf-8');
       console.log(`[CodeGraph] 💾 Cache saved: ${Object.keys(fileMtimes).length} files`);
+
+      // Save lightweight mtimes-only sidecar for fast incremental detection
+      const mtimesPath = cachePath.replace(/\.json$/, '-mtimes.json');
+      fs.writeFileSync(mtimesPath, JSON.stringify({
+        version: 1,
+        projectRoot: this._root,
+        savedAt: cacheData.savedAt,
+        fileMtimes,
+      }), 'utf-8');
+      
+      // P0: Save structural fingerprints for refined change detection
+      if (this._fingerprintEngine) {
+        this._fingerprintEngine.saveCache();
+      }
     } catch (err) {
       if (err.message && err.message.includes('Invalid string length') && cacheData) {
         try {
           console.log(`[CodeGraph] ⚠️  Cache too large for single stringify, using streaming write...`);
           this._writeJsonStreaming(cachePath, cacheData);
           console.log(`[CodeGraph] 💾 Cache saved (streamed)`);
+          // Also save mtimes sidecar for fast incremental detection
+          const mtimesPath = cachePath.replace(/\.json$/, '-mtimes.json');
+          fs.writeFileSync(mtimesPath, JSON.stringify({
+            version: 1,
+            projectRoot: this._root,
+            savedAt: cacheData.savedAt,
+            fileMtimes: cacheData.fileMtimes,
+          }), 'utf-8');
           return;
         } catch (streamErr) {
           console.warn(`[CodeGraph] ⚠️  Cache streaming write also failed: ${streamErr.message}`);
@@ -334,7 +370,7 @@ const CodeGraphCacheMixin = {
     }
   },
 
-  _writeOutput() {
+  async _writeOutput() {
     // P0-1 fix: Declare graphData outside try so the catch fallback can access it.
     // Previously, graphData was a const inside try, causing ReferenceError in the
     // "Invalid string length" catch path — silently losing the entire code graph output.
@@ -345,8 +381,8 @@ const CodeGraphCacheMixin = {
       }
 
       const jsonPath = path.join(this._outputDir, 'code-graph.json');
-      const hotspots = this.getHotspots({ topN: 30 });
-      const stats = this.getCategoryStats();
+      const hotspots = await this.getHotspots({ topN: 30 });
+      const stats = await this.getCategoryStats();
 
       // ── Path Dictionary Compression (v2 format) ──
       const pathSet = new Set();
@@ -431,7 +467,8 @@ const CodeGraphCacheMixin = {
       _processCache.delete(jsonPath);
 
       const mdPath = path.join(this._outputDir, 'code-graph.md');
-      fs.writeFileSync(mdPath, this.toMarkdown(), 'utf-8');
+      const mdContent = await this.toMarkdown();
+      fs.writeFileSync(mdPath, mdContent, 'utf-8');
 
       translateMdFile(mdPath, this._llmCall).catch(() => {});
 
@@ -445,7 +482,8 @@ const CodeGraphCacheMixin = {
           this._writeJsonStreaming(jsonPath, graphData);
           _processCache.delete(jsonPath);
           const mdPath = path.join(this._outputDir, 'code-graph.md');
-          fs.writeFileSync(mdPath, this.toMarkdown(), 'utf-8');
+          const mdContent = await this.toMarkdown();
+          fs.writeFileSync(mdPath, mdContent, 'utf-8');
           translateMdFile(mdPath, this._llmCall).catch(() => {});
           console.log(`[CodeGraph] 📄 Written (streamed): ${jsonPath}`);
           return jsonPath;

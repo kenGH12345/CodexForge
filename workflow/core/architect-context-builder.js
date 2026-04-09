@@ -154,8 +154,9 @@ async function buildArchitectContextBlock(orch, techStackPrefix, upstreamCtx) {
     }
   }
 
-  // ── Recall Memory: cross-session task history ──────────────────────────
+  // ── Recall Memory + Session Memory: cross-session continuity ───────────
   let archRecallMemoryCtx = '';
+  let archSessionMemoryCtx = '';
   try {
     const taskHistory = _getArchTaskHistory();
     if (taskHistory) {
@@ -163,9 +164,14 @@ async function buildArchitectContextBlock(orch, techStackPrefix, upstreamCtx) {
       if (archRecallMemoryCtx) {
         console.log(`[Orchestrator] 📖 Recall Memory injected for ArchitectAgent (${archRecallMemoryCtx.length} chars)`);
       }
+
+      archSessionMemoryCtx = taskHistory.getSessionMemoryBlock(3);
+      if (archSessionMemoryCtx) {
+        console.log(`[Orchestrator] 🧠 Session Memory injected for ArchitectAgent (${archSessionMemoryCtx.length} chars)`);
+      }
     }
   } catch (err) {
-    if (process.env.DEBUG) console.warn(`[ArchitectContext] Recall memory loading failed: ${err.message}`);
+    if (process.env.DEBUG) console.warn(`[ArchitectContext] Recall/session memory loading failed: ${err.message}`);
   }
 
   // ── Token Budget Guard ──────────────────────────────────────────────────
@@ -177,6 +183,7 @@ async function buildArchitectContextBlock(orch, techStackPrefix, upstreamCtx) {
     { label: 'Upstream Context',    content: upstreamCtx,                                              priority: BLOCK_PRIORITY.UPSTREAM_CTX, _order: 3 },
     { label: 'Experience',          content: expCtx,                                                   priority: BLOCK_PRIORITY.EXPERIENCE, _order: 4 },
     { label: 'External Experience', content: externalExpBlock,                                         priority: BLOCK_PRIORITY.EXTERNAL_EXPERIENCE, _order: 5 },
+    { label: 'Session Memory',      content: archSessionMemoryCtx,                                     priority: BLOCK_PRIORITY.EXTERNAL_EXPERIENCE - 1, _order: 5.5 },
     { label: 'Complaints',          content: complaintBlock,                                           priority: BLOCK_PRIORITY.COMPLAINTS, _order: 6 },
     { label: 'Recall Memory',       content: archRecallMemoryCtx,                                      priority: BLOCK_PRIORITY.EXTERNAL_EXPERIENCE - 1, _order: 7 },
     // Dynamic adapter blocks from plugin registry (starts at _order: 20)
@@ -188,7 +195,7 @@ async function buildArchitectContextBlock(orch, techStackPrefix, upstreamCtx) {
 
   // Pass telemetry to _applyTokenBudget for lifecycle tracking
   const archTelemetry = orch._adapterTelemetry || null;
-  const { assembled, stats } = _applyTokenBudget(adjustedBlocks, undefined, {
+    const { assembled, stats } = await _applyTokenBudget(adjustedBlocks, undefined, {
     telemetry: archTelemetry,
     stage: 'ARCHITECT',
     profile: _archProfile || null,

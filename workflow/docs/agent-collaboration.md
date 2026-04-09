@@ -50,11 +50,21 @@ Every session MUST begin in this order:
 When running inside an IDE (auto-detected by `core/ide-detection.js`), agents receive an
 **IDE Tool Guidance** block in their prompt. Follow these rules:
 
-### Search Strategy
-- **Semantic search** → Use `codebase_search` (IDE's vector/semantic search)
-- **Exact text search** → Use `grep_search` (IDE's ripgrep engine)
+### Search & Read Strategy
+- **Semantic search** → Use `codebase_search` (IDE's vector/semantic search), NOT `Glob`
+- **Exact text search** → Use `grep_search` (IDE's ripgrep engine), NOT `Grep`
 - **Symbol lookup** → Use `view_code_item` (compiler-accurate via IDE LSP)
-- **File reading** → Use `read_file` (real-time file content from IDE)
+- **File reading** → Use `read_file` (real-time file content from IDE), NOT `Read`
+
+> ⚠️ **CRITICAL**: `Read`, `Grep`, `Glob` are low-level Craft-mode Subagent tools.
+> They appear in the agent frontmatter `tools:` field for compatibility, but you MUST
+> prefer the IDE-native equivalents (`read_file`, `grep_search`, `codebase_search`, `list_dir`).
+> Using `Read` instead of `read_file` causes unnecessary "执行工具: Read" overhead.
+
+### File Writing Strategy (CRITICAL — prevents workflow hanging)
+- **Create/Edit files** → Use `edit_file`, `replace_in_file`, `Write`, `MultiEdit` (IDE-native tools)
+- **NEVER use Bash for file writes** — `echo >>`, `sed -i`, `cat >`, `tee`, `python -c "open(...).write(...)"` will cause the workflow to hang
+- Bash is ONLY acceptable for: running test commands, `node workflow/init-project.js`, and other non-file-write operations
 
 ### When to Use Self-Built Context
 Self-built context is **always injected** into your prompt for capabilities the IDE cannot provide:

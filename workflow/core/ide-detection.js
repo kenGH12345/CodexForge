@@ -413,6 +413,10 @@ function generateIDEToolGuidance() {
     lines.push('| Read file content | `read_file` (real-time) | ContextLoader cache (static snapshot) |');
   }
 
+  if (detection.capabilities.editFile) {
+    lines.push('| Write/Edit files | `Write`, `MultiEdit`, `edit_file`, `replace_in_file` (IDE-native) | Bash (`echo >>`, `sed -i`, `cat >`) ⚠️ causes hanging |');
+  }
+
   lines.push('');
   lines.push('### When to Use Built-in Tools');
   lines.push('');
@@ -432,6 +436,7 @@ function generateIDEToolGuidance() {
   }
   
   lines.push('- **Exploring structure**: Use `list_dir` to explore directory structure.');
+  lines.push('- **Writing/Editing files**: Use `Write`, `MultiEdit`, `edit_file`, `replace_in_file` for ALL file modifications. NEVER use Bash (`echo >>`, `sed -i`, `cat >`) to write files — this is the #1 cause of workflow hanging.');
   lines.push('');
 
   // Add Call Hierarchy guidance if available
@@ -478,6 +483,174 @@ function getIDEDetectionResult() {
   return detectIDEEnvironment();
 }
 
+/**
+ * Displays a visual banner showing the current running mode.
+ * This function prints a clear, colorful ASCII banner to the console
+ * indicating whether WorkFlowAgent is running in:
+ *   - Full IDE Agent Mode (with LSP support)
+ *   - Limited IDE Mode (CLI tools only)
+ *   - Standalone Mode (Node Orchestrator)
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.showCapabilities=true] - Show detailed capabilities
+ * @param {boolean} [options.compact=false] - Show compact single-line version
+ * @returns {string} The formatted banner text
+ */
+function displayModeBanner(options = {}) {
+  const detection = detectIDEEnvironment();
+  const { showCapabilities = true, compact = false } = options;
+
+  const isFullIDE = detection.isInsideIDE && detection.capabilities.builtinLSP;
+  const isLimitedIDE = detection.isInsideIDE && !detection.capabilities.builtinLSP;
+  const isStandalone = !detection.isInsideIDE;
+
+  // Color codes for terminal (work in most terminals)
+  const colors = {
+    reset: '\x1b[0m',
+    bright: '\x1b[1m',
+    dim: '\x1b[2m',
+    red: '\x1b[31m',
+    green: '\x1b[32m',
+    yellow: '\x1b[33m',
+    blue: '\x1b[34m',
+    magenta: '\x1b[35m',
+    cyan: '\x1b[36m',
+    white: '\x1b[37m',
+    bgGreen: '\x1b[42m',
+    bgYellow: '\x1b[43m',
+    bgBlue: '\x1b[44m',
+    bgMagenta: '\x1b[45m',
+  };
+
+  // Mode-specific configuration
+  const modeConfig = {
+    fullIDE: {
+      icon: '🏠',
+      title: 'FULL IDE AGENT MODE',
+      subtitle: `Running inside ${detection.ideName || 'IDE'} with full LSP support`,
+      color: colors.green,
+      bgColor: colors.bgGreen,
+      borderChar: '═',
+      status: '✅ ACTIVE',
+    },
+    limitedIDE: {
+      icon: '⌨️',
+      title: 'LIMITED IDE MODE',
+      subtitle: `Running inside ${detection.ideName || 'CLI'} (no LSP)`,
+      color: colors.yellow,
+      bgColor: colors.bgYellow,
+      borderChar: '─',
+      status: '⚠️  LIMITED',
+    },
+    standalone: {
+      icon: '🖥️',
+      title: 'STANDALONE MODE',
+      subtitle: 'Node Orchestrator (no IDE detected)',
+      color: colors.blue,
+      bgColor: colors.bgBlue,
+      borderChar: '─',
+      status: '🔄 FALLBACK',
+    },
+  };
+
+  const mode = isFullIDE ? 'fullIDE' : isLimitedIDE ? 'limitedIDE' : 'standalone';
+  const cfg = modeConfig[mode];
+
+  if (compact) {
+    // Compact single-line version
+    const banner = `${cfg.color}${cfg.icon} ${cfg.title}${colors.reset} | ${cfg.status}`;
+    console.log(banner);
+    return banner;
+  }
+
+  // Full banner with box drawing
+  const width = 60;
+  const border = cfg.color + cfg.borderChar.repeat(width) + colors.reset;
+  const emptyLine = cfg.color + '║' + ' '.repeat(width - 2) + '║' + colors.reset;
+
+  const center = (text, padChar = ' ') => {
+    const padding = Math.max(0, width - 2 - text.length);
+    const left = Math.floor(padding / 2);
+    const right = padding - left;
+    return cfg.color + '║' + colors.reset + padChar.repeat(left) + text + padChar.repeat(right) + cfg.color + '║' + colors.reset;
+  };
+
+  const lines = [
+    '',
+    border,
+    emptyLine,
+    center(`${cfg.icon}  ${cfg.title}`, ' '),
+    emptyLine,
+    center(`${colors.dim}${cfg.subtitle}${colors.reset}`, ' '),
+    emptyLine,
+    border,
+  ];
+
+  // Add environment details
+  if (detection.isInsideIDE) {
+    const caps = Object.entries(detection.capabilities)
+      .filter(([, v]) => v)
+      .map(([k]) => k.replace(/([A-Z])/g, ' $1').trim().toLowerCase());
+
+    lines.push(`${cfg.color}┌${'─'.repeat(width - 2)}┐${colors.reset}`);
+    lines.push(`${cfg.color}│${colors.reset} ${cfg.icon} Environment${' '.repeat(width - 17)}${cfg.color}│${colors.reset}`);
+    lines.push(`${cfg.color}├${'─'.repeat(width - 2)}┤${colors.reset}`);
+    lines.push(`${cfg.color}│${colors.reset} IDE:     ${detection.ideName}${' '.repeat(Math.max(0, width - 12 - (detection.ideName?.length || 0)))}${cfg.color}│${colors.reset}`);
+
+    const keyCap = caps[0]?.substring(0, 20) || 'none';
+    lines.push(`${cfg.color}│${colors.reset} Key Cap: ${keyCap}${' '.repeat(Math.max(0, width - 12 - keyCap.length))}${cfg.color}│${colors.reset}`);
+
+    if (showCapabilities && caps.length > 1) {
+      const more = `+${caps.length - 1} more`;
+      lines.push(`${cfg.color}│${colors.reset} Others:  ${more}${' '.repeat(Math.max(0, width - 12 - more.length))}${cfg.color}│${colors.reset}`);
+    }
+
+    lines.push(`${cfg.color}└${'─'.repeat(width - 2)}┘${colors.reset}`);
+  } else {
+    lines.push(`${cfg.color}┌${'─'.repeat(width - 2)}┐${colors.reset}`);
+    lines.push(`${cfg.color}│${colors.reset} ${cfg.icon} Using self-built modules:${' '.repeat(width - 29)}${cfg.color}│${colors.reset}`);
+    lines.push(`${cfg.color}│${colors.reset}   • CodeGraph (search/indexing)${' '.repeat(width - 33)}${cfg.color}│${colors.reset}`);
+    lines.push(`${cfg.color}│${colors.reset}   • LSPAdapter (language features)${' '.repeat(width - 36)}${cfg.color}│${colors.reset}`);
+    lines.push(`${cfg.color}└${'─'.repeat(width - 2)}┘${colors.reset}`);
+  }
+
+  // Add tool priority guide
+  lines.push('');
+  lines.push(`${colors.bright}Tool Priority:${colors.reset}`);
+  if (isFullIDE) {
+    lines.push(`  ${colors.green}1. IDE-native tools${colors.reset} (codebase_search, grep_search, view_code_item)`);
+    lines.push(`  ${colors.dim}2. Self-built fallback${colors.reset} (CodeGraph, LSPAdapter)`);
+  } else if (isLimitedIDE) {
+    lines.push(`  ${colors.yellow}1. Available IDE tools${colors.reset} (codebase_search, grep_search, read_file)`);
+    lines.push(`  ${colors.dim}2. Self-built modules${colors.reset} (CodeGraph for navigation)`);
+  } else {
+    lines.push(`  ${colors.blue}1. Self-built modules${colors.reset} (CodeGraph, LSPAdapter)`);
+    lines.push(`  ${colors.dim}2. No IDE tools available${colors.reset}`);
+  }
+  lines.push('');
+
+  const bannerText = lines.join('\n');
+  console.log(bannerText);
+  return bannerText;
+}
+
+/**
+ * Quick check function - returns true if running in full IDE Agent mode
+ * @returns {boolean}
+ */
+function isFullIDEAgentMode() {
+  const detection = detectIDEEnvironment();
+  return detection.isInsideIDE && detection.capabilities.builtinLSP;
+}
+
+/**
+ * Quick check function - returns true if running in any IDE mode
+ * @returns {boolean}
+ */
+function isInsideIDE() {
+  return detectIDEEnvironment().isInsideIDE;
+}
+
 module.exports = {
   detectIDEEnvironment,
   shouldSkipLSPAdapter,
@@ -487,5 +660,8 @@ module.exports = {
   ideHasGoToDefinition,
   generateIDEToolGuidance,
   getIDEDetectionResult,
+  displayModeBanner,
+  isFullIDEAgentMode,
+  isInsideIDE,
   IDE_SIGNATURES,
 };

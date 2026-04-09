@@ -235,9 +235,11 @@ function estimateTaskComplexity(requirementText) {
  * @returns {object} Strategy parameters with source annotation
  */
 function deriveStrategy(outputDir, defaults = {}) {
+  // ADR-52: Raised defaults from 2 to 4 to match Anthropic's "改到能过验收才算结束" philosophy.
+  // The adaptive rules below can further adjust based on historical data.
   const defaultStrategy = {
-    maxFixRounds:       defaults.maxFixRounds       ?? 2,
-    maxReviewRounds:    defaults.maxReviewRounds    ?? 2,
+    maxFixRounds:       defaults.maxFixRounds       ?? 4,
+    maxReviewRounds:    defaults.maxReviewRounds    ?? 4,
     skipEntropyOnClean: defaults.skipEntropyOnClean ?? false,
     maxClarificationRounds: defaults.maxClarificationRounds ?? 2,
     source: 'defaults',
@@ -265,23 +267,26 @@ function deriveStrategy(outputDir, defaults = {}) {
   const trends = computeTrends(filteredHistory);
 
   // ── Rule 1: maxFixRounds ───────────────────────────────────────────────
+  // ADR-52: Raised limits to support "改到能过验收才算结束" philosophy.
+  // Max can now reach 8 rounds for high failure rate scenarios.
   const recentTestFailures = recent.filter(h => (h.testFailed ?? 0) > 0).length;
   const testFailRate = recentTestFailures / recent.length;
   let maxFixRounds = defaultStrategy.maxFixRounds;
   if (testFailRate >= 0.6) {
-    maxFixRounds = Math.min(defaultStrategy.maxFixRounds + 2, 5);
+    maxFixRounds = Math.min(defaultStrategy.maxFixRounds + 2, 8);
   } else if (testFailRate >= 0.4) {
-    maxFixRounds = Math.min(defaultStrategy.maxFixRounds + 1, 4);
+    maxFixRounds = Math.min(defaultStrategy.maxFixRounds + 1, 6);
   } else if (testFailRate === 0 && recent.length >= 3) {
-    maxFixRounds = Math.max(defaultStrategy.maxFixRounds - 1, 1);
+    maxFixRounds = Math.max(defaultStrategy.maxFixRounds - 1, 2);
   }
 
   // ── Rule 2: maxReviewRounds ────────────────────────────────────────────
+  // ADR-52: Raised limits to support deeper review cycles.
   let maxReviewRounds = defaultStrategy.maxReviewRounds;
   if (trends && trends.errorTrend === 'increasing') {
-    maxReviewRounds = Math.min(defaultStrategy.maxReviewRounds + 1, 4);
+    maxReviewRounds = Math.min(defaultStrategy.maxReviewRounds + 2, 6);
   } else if (trends && trends.errorTrend === 'decreasing' && trends.avgErrorCount === 0) {
-    maxReviewRounds = Math.max(defaultStrategy.maxReviewRounds - 1, 1);
+    maxReviewRounds = Math.max(defaultStrategy.maxReviewRounds - 1, 2);
   }
 
   // ── Rule 3: skipEntropyOnClean (with periodic forced scan) ─────────────

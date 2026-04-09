@@ -25,6 +25,14 @@ const path = require('path');
 const os   = require('os');
 const { Worker } = require('worker_threads');
 
+// ─── P0 AST Integration: Structural Fingerprint Engine ────────────────────────
+let FingerprintEngine = null;
+try {
+  ({ FingerprintEngine } = require('./ast-parsers/fingerprint-engine'));
+} catch (err) {
+  console.log('[CodeGraph] FingerprintEngine not available, using mtime-based detection');
+}
+
 // ─── Worker Threads Configuration ─────────────────────────────────────────────
 const WORKER_FILE_THRESHOLD = 500;
 const WORKER_SCRIPT = path.join(__dirname, 'code-graph-worker.js');
@@ -101,15 +109,54 @@ const CodeGraphBuilderMixin = {
     let isIncremental = false;
     let changedFiles = [];
 
+    // ── P0: Initialize FingerprintEngine for structural change detection ────
+    if (!this._fingerprintEngine && FingerprintEngine) {
+      this._fingerprintEngine = new FingerprintEngine({
+        projectRoot: this._root,
+        cacheDir: this._outputDir,
+        useTreeSitter: true,
+      });
+      console.log('[CodeGraph] 🔍 Structural fingerprinting enabled');
+    }
+
     // Try incremental build
     if (incremental && !force) {
       const loaded = this._loadCache(cachePath);
       if (loaded) {
         changedFiles = this._detectChangedFiles(cachePath);
+        
+        // P0: Apply structural fingerprint classification
+        if (this._fingerprintEngine && changedFiles.length > 0) {
+          const filePaths = changedFiles.map(f => path.join(this._root, f));
+          const classified = this._fingerprintEngine.detectChanges(filePaths);
+          const recommendation = this._fingerprintEngine.getRebuildRecommendation(classified);
+          
+          console.log(`[CodeGraph] 📊 Change classification: ${classified.format.length} format, ${classified.signature.length} signature, ${classified.api_breaking.length} API-breaking`);
+          
+          // If only formatting changes, skip rebuild entirely
+          if (recommendation.action === 'skip') {
+            console.log(`[CodeGraph] ✅ Format-only changes detected – skipping rebuild`);
+              this._buildTokenIndex();
+            const graphPath = writeOutput ? await this._writeOutput() : null;
+            return {
+              symbolCount: this._symbols.size,
+              fileCount: 0,
+              edgeCount: [...this._callEdges.values()].reduce((n, v) => n + v.length, 0),
+              graphPath,
+              incremental: true,
+              changedFiles: 0,
+              patchMode: false,
+            };
+          }
+
+          // Use refined file list
+          changedFiles = recommendation.affectedFiles;
+        }
+
         if (changedFiles.length === 0) {
-          console.log(`[CodeGraph] ✅ No changes detected – using cached graph (${this._symbols.size} symbols)`);
+          console.log(`[CodeGraph] ✅ No structural changes detected – using cached graph (${this._symbols.size} symbols)`);
           this._buildTokenIndex();
-          const graphPath = writeOutput ? this._writeOutput() : null;
+          const graphPath = writeOutput ? await this._writeOutput() : null;
           return {
             symbolCount: this._symbols.size,
             fileCount: 0,
@@ -190,7 +237,7 @@ try {
     this._sortedTokenKeys = null;
     this._saveCache(cachePath, files);
 
-    const graphPath = writeOutput ? this._writeOutput() : null;
+    const graphPath = writeOutput ? await this._writeOutput() : null;
     if (!writeOutput) {
       console.log(`[CodeGraph] ⏭️  Skipping disk write (writeOutput=false, will be written later)`);
     }
@@ -260,7 +307,7 @@ try {
     console.log(`[CodeGraph] ✅ Patch complete: ${this._symbols.size} symbols, ${edgeCount} call edges`);
 
     if (writeOutput) {
-      this._writeOutput();
+      await this._writeOutput();
     }
 
     return {
@@ -326,30 +373,51 @@ try {
 
       const worker = new Worker(WORKER_SCRIPT, {
         workerData: {
-          files: chunk,
-          root: this._root,
+          filePaths: chunk,
+          projectRoot: this._root,
           extensions: [...this._extensions],
         },
       });
 
       workers.push(
         new Promise((resolve) => {
-          worker.on('message', (result) => {
-            // Merge results into main data structures
-            for (const sym of result.symbols || []) {
-              this._symbols.set(sym.id, sym);
-            }
-            for (const [id, calls] of Object.entries(result.callEdges || {})) {
-              this._callEdges.set(id, calls);
-            }
-            for (const [file, imports] of Object.entries(result.importEdges || {})) {
-              this._importEdges.set(file, imports);
-            }
-            for (const [file, tokens] of Object.entries(result.tokenCache || {})) {
-              tokenCache.set(file, new Set(tokens));
-            }
-            for (const [file, mtime] of Object.entries(result.fileMtimes || {})) {
-              this._fileMtimes.set(file, mtime);
+          worker.on('message', (fileResults) => {
+            // fileResults is an array: [{ relPath, ext, symbols[], imports[], wordTokens[], lineCount }, ...]
+            for (const fileResult of fileResults) {
+              if (!fileResult || fileResult.error) continue;
+              const { relPath, symbols, imports, wordTokens } = fileResult;
+
+              // Merge symbols into main _symbols Map
+              for (const sym of (symbols || [])) {
+                const id = `${relPath}::${sym.name}`;
+                this._symbols.set(id, {
+                  id,
+                  name: sym.name,
+                  kind: sym.kind,
+                  file: relPath,
+                  line: sym.line,
+                  signature: sym.signature || '',
+                  summary: sym.summary || '',
+                });
+              }
+
+              // Merge import edges
+              if (imports && imports.length > 0) {
+                this._importEdges.set(relPath, imports);
+              }
+
+              // Populate tokenCache for Pass 2 call-edge extraction
+              if (wordTokens && wordTokens.length > 0) {
+                tokenCache.set(relPath, new Set(wordTokens));
+              }
+
+              // Record mtime for incremental cache
+              try {
+                const absPath = path.join(this._root, relPath);
+                this._fileMtimes.set(relPath, fs.statSync(absPath).mtimeMs);
+              } catch (_) {
+                // File may have been deleted
+              }
             }
             resolve();
           });
@@ -422,11 +490,46 @@ try {
 
   /**
    * Extract symbols from file content.
+   * P0: AST-first extraction with regex fallback for dual accuracy.
    * @param {string} content
    * @param {string} relPath
    * @param {string} ext
+   * @param {boolean} [useAST=true] - Whether to try AST extraction first
    */
-  _extractSymbols(content, relPath, ext) {
+  _extractSymbols(content, relPath, ext, useAST = true) {
+    // ── P0: Try AST extraction first ───────────────────────────────────────
+    if (useAST && this._fingerprintEngine) {
+      try {
+        const fp = this._fingerprintEngine.generateFingerprint(content, ext, relPath);
+        
+        if (fp.symbols && fp.symbols.length > 0) {
+          console.log(`[CodeGraph] 🌲 AST extraction: ${relPath} (+${fp.symbols.length} symbols)`);
+          
+          for (const sym of fp.symbols) {
+            const id = `${relPath}::${sym.name}`;
+            this._symbols.set(id, {
+              id,
+              name: sym.name,
+              kind: sym.kind,
+              file: relPath,
+              line: sym.line,
+              signature: sym.signature || content.split('\n')[sym.line - 1]?.trim() || '',
+              summary: sym.summary || '',
+              decorators: sym.decorators || [],
+              isAsync: sym.isAsync || false,
+            });
+          }
+          
+          // Update fingerprint cache
+          this._fingerprintEngine.updateFingerprints([relPath]);
+          return;
+        }
+      } catch (err) {
+        console.warn(`[CodeGraph] AST extraction failed for ${relPath}, falling back to regex`);
+      }
+    }
+    
+    // ── Fallback: Regex-based extraction ───────────────────────────────────
     const patterns = this._getSymbolPatterns(ext);
     if (!patterns) return;
 

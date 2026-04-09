@@ -54,6 +54,8 @@ const PATHS = {
   PROMPT_VARIANTS_JSON: path.join(WORKFLOW_ROOT, 'output', 'prompt-variants.json'),
   /** Cross-session task history (Recall Memory) */
   TASK_HISTORY_JSON: path.join(WORKFLOW_ROOT, 'output', 'task-history.json'),
+  /** P0 runtime recovery checkpoint (event-driven task restore) */
+  TASK_RECOVERY_CHECKPOINT_JSON: path.join(WORKFLOW_ROOT, 'output', 'task-recovery-checkpoint.json'),
 };
 
 // ─── Output Artifact File Names ────────────────────────────────────────────────
@@ -164,6 +166,8 @@ const HOOK_EVENTS = {
   STAGE_ENDED:        'stage_ended',         // A workflow stage ended
   STAGE_ARTIFACT_PRODUCED: 'stage_artifact_produced', // A stage produced an output artifact
   LLM_CALL_RECORDED:  'llm_call_recorded',   // An LLM call was recorded
+  ROUTER_DECISION_MADE:'router_decision_made', // LLM routing decision metadata captured
+  ROUTER_FALLBACK_TRIGGERED:'router_fallback_triggered', // Fallback chain triggered for routing
   // CI integration events
   CI_PIPELINE_STARTED:  'ci_pipeline_started',
   CI_PIPELINE_COMPLETE: 'ci_pipeline_complete',
@@ -207,6 +211,9 @@ const HOOK_EVENTS = {
   // ADR-42: Output truncation detection events
   OUTPUT_TRUNCATED:         'output_truncated',         // LLM response was truncated (stop_reason=max_tokens)
   OUTPUT_CONTINUATION:      'output_continuation',      // Auto-continuation attempt after truncation
+  // Agent Self-Report events (Prompt-level observability for IDE Agent mode)
+  AGENT_SELF_REPORT_FOUND:  'agent_self_report_found',  // Self-report block parsed from agent output
+  AGENT_SELF_REPORT_MISSING:'agent_self_report_missing',// Agent output lacked self-report block
 };
 
 module.exports = {

@@ -68,6 +68,98 @@ module.exports = {
   // ─── LLM Tuning ──────────────────────────────────────────────────────────────
   //
   // Fine-tune LLM prompt behaviour for your specific model and context window.
+
+  // ─── P2: Socratic Challenge Rules (stage + artifact aware) ─────────────────
+  //
+  // Externalized rules inspired by everything-claude-code style configuration.
+  // SocraticChallenger merges these rules with built-in defaults and generates
+  // questions based on BOTH workflow stage and actual artifact signals.
+  //
+  // Key fields:
+  // - enabled: global switch
+  // - maxQuestions: upper bound of final challenge questions
+  // - maxQuestionsPerSignal: controls question expansion for matched signals
+  // - universalRules: rules applied to all stages
+  // - stageRules: per-stage rules (ANALYSE/ARCHITECT/PLAN/CODE/TEST)
+  // - artifactRules: structural rules based on artifact length/heading depth
+  //
+  socraticChallenge: {
+    enabled: true,
+    maxQuestions: 8,
+    maxQuestionsPerSignal: 2,
+    universalRules: [
+      {
+        id: 'vague-language',
+        whenAny: ['大约', '可能', 'roughly', 'approximately', 'maybe'],
+        question: '当前阶段产物存在模糊表达（{signal}），请给出可验证边界与量化标准。',
+        blindSpot: '[清晰度] 关键表达缺少可验证边界',
+      },
+      {
+        id: 'missing-rationale',
+        whenMissingAll: ['因为', '由于', 'because', 'therefore', 'rationale', 'reason'],
+        question: '当前阶段产物给出结论但未体现推导链。核心决策如何从事实推导？',
+        blindSpot: '[逻辑性] 结论缺少推理链',
+      },
+    ],
+    stageRules: {
+      ANALYSE: [
+        {
+          id: 'analyse-acceptance',
+          whenMissingAll: ['验收', 'acceptance', 'success criteria', 'done when'],
+          question: 'ANALYSE 产物缺少验收标准，如何判断需求被完整实现？',
+          blindSpot: '[精确性][ANALYSE] 缺少验收标准',
+        },
+      ],
+      ARCHITECT: [
+        {
+          id: 'architect-fallback',
+          whenMissingAll: ['回滚', 'rollback', '降级', 'fallback'],
+          question: 'ARCHITECT 产物未体现故障回退路径，关键依赖失效时如何降级？',
+          blindSpot: '[边界条件][ARCHITECT] 缺少故障回退策略',
+        },
+      ],
+      PLAN: [
+        {
+          id: 'plan-dependency',
+          whenMissingAll: ['依赖', 'depend', 'before', 'after'],
+          question: 'PLAN 产物未体现任务依赖关系，执行顺序依据是什么？',
+          blindSpot: '[广度][PLAN] 缺少任务依赖映射',
+        },
+      ],
+      CODE: [
+        {
+          id: 'code-test-evidence',
+          whenMissingAll: ['test', '测试', 'spec', 'assert'],
+          question: 'CODE 产物缺少测试证据，如何证明改动可用且无回归？',
+          blindSpot: '[结论依据][CODE] 缺少测试证据',
+        },
+      ],
+      TEST: [
+        {
+          id: 'test-verdict',
+          whenMissingAll: ['pass', 'fail', '✅', '❌', '通过', '失败'],
+          question: 'TEST 产物未给出明确通过/失败结论，实际执行结果和退出状态是什么？',
+          blindSpot: '[精确性][TEST] 缺少明确测试结论',
+        },
+      ],
+    },
+    artifactRules: [
+      {
+        id: 'artifact-min-length',
+        appliesToStages: ['ANALYSE', 'ARCHITECT', 'PLAN', 'TEST'],
+        minLength: 180,
+        question: '当前阶段产物内容偏短，是否足以支持下游执行与验收决策？',
+        blindSpot: '[深度] 产物信息密度不足',
+      },
+      {
+        id: 'artifact-heading-structure',
+        appliesToStages: ['ANALYSE', 'ARCHITECT', 'PLAN'],
+        minHeadingCount: 2,
+        question: '当前阶段产物结构层次偏少，是否遗漏关键决策章节？',
+        blindSpot: '[清晰度] 产物结构化程度不足',
+      },
+    ],
+  },
   //
   // hallucinationRiskThreshold (tokens):
   //   When a prompt exceeds this token count, the PromptBuilder enters "degradation
@@ -124,12 +216,16 @@ module.exports = {
 
   // autoFixLoop: When testCommand is set and tests fail, automatically invoke
   //   DeveloperAgent to fix the failures and re-run tests.
-  //   maxFixRounds: maximum fix-and-retest cycles (default: 2)
+  //   maxFixRounds: maximum fix-and-retest cycles (default: 4, raised from 2 per ADR-52)
   //   failOnUnfixed: mark workflow failed when tests still fail after all rounds
+  //
+  //   ADR-52: Raised from 2 to 4 to match Anthropic's "改到能过验收才算结束" philosophy.
+  //   The adaptive strategy in observability-strategy.js can further adjust this
+  //   based on historical test failure rates (up to 5 rounds).
   //
   autoFixLoop: {
     enabled: true,
-    maxFixRounds: 2,
+    maxFixRounds: 4,
     failOnUnfixed: false,
   },
 
@@ -359,6 +455,102 @@ module.exports = {
     maxMetricsHistory: 1000,  // Max metrics records to keep in memory
   },
 
+  // ─── Configuration Governance (anti-sprawl for rules/skills/hooks) ───────
+  // Borrowed from everything-claude-code style configurable governance:
+  // keep policy executable while preventing unbounded config growth.
+  configurationGovernance: {
+    enabled: true,
+    limits: {
+      maxGlobalSkills: 8,
+      maxProjectSkills: 16,
+      maxBuiltinSkills: 64,
+      maxClassificationRules: 40,
+      maxCustomDetectionRulesPerType: 20,
+      maxSocraticUniversalRules: 16,
+      maxSocraticStageRulesPerStage: 12,
+      maxSocraticArtifactRules: 12,
+      maxHookPolicies: 24,
+      maxToolHookMetricsHistory: 5000,
+    },
+  },
+
+  // ─── Runtime Policy (制度化约束: runtime-enforced) ───────────────────────
+  runtimePolicy: {
+    enabled: true,
+    requireReadBeforeWrite: true,
+    blockScopeExpansion: true,
+    requireApprovalForRiskyOps: true,
+    maxRequirementChars: 8000,
+  },
+
+  // ─── Independent Acceptance Gate (做事/验收分离) ────────────────────────
+  acceptanceGate: {
+    enabled: true,
+    strict: false,
+    requireArtifacts: ['requirement.md', 'architecture.md', 'execution-plan.md', 'code.diff', 'test-report.md'],
+  },
+
+  // ─── Tool Governance Pipeline (pre/post/fallback) ───────────────────────
+  toolGovernance: {
+    enabled: true,
+    maxInputLength: 12000,
+    allowFallback: true,
+  },
+
+  // ─── Context Budget Policy (产品级预算策略) ───────────────────────────────
+  contextBudgetPolicy: {
+    enabled: true,
+    requirementMaxChars: 8000,
+    stageBudgets: {
+      ANALYSE: 12000,
+      ARCHITECT: 14000,
+      PLAN: 10000,
+      CODE: 14000,
+      TEST: 12000,
+    },
+  },
+
+  // ─── Capability Catalog (模型可见能力清单) ───────────────────────────────
+  capabilityCatalog: {
+    enabled: true,
+    includeRuntimeCapabilities: true,
+  },
+
+  // ─── Health Monitoring (B + D) ─────────────────────────────────────────────
+  // B: Rolling-window trend alerts
+  // D: Externalized unified scoring parameters
+  healthMonitoring: {
+    scoring: {
+      model: 'unified-v1',
+      weights: {
+        completeness: 0.35,
+        process: 0.20,
+        delivery: 0.30,
+        detection: 0.15,
+      },
+      penalties: {
+        missingStage: 20,
+        socraticMax: 20,
+        metricsGatePerFailedStage: 5,
+        metricsGateMax: 25,
+      },
+      gradeThresholds: {
+        A: 90,
+        B: 80,
+        C: 70,
+        D: 60,
+      },
+    },
+    trend: {
+      enabled: true,
+      windowSize: 5,
+      minSessions: 3,
+      degradationThreshold: 8,
+      lowScoreThreshold: 75,
+      maxHistoryEntries: 200,
+    },
+  },
+
   // ─── MCP (Model Context Protocol) ────────────────────────────────────────────
   //
   // Connect external systems (TAPD, CI/CD, DevTools, Web Search) via MCP adapters.
@@ -501,6 +693,29 @@ module.exports = {
     //   litellmBaseUrl: 'http://localhost:4000',  // LiteLLM base URL (if using litellm)
     //   cacheTtlMs: 3600000,      // Pricing cache TTL in ms (default: 1h)
     // },
+
+    // SkillLlm: Cost-aware LLM routing for skill maintenance tasks.
+    // SkillLlmRefiner uses a cheap model (GPT-4o-mini / Gemini Flash tier) for:
+    //   - Post-evolve refinement (consolidate bloated skills after ≥5 evolutions)
+    //   - Pre-retire fix attempt (repair underperforming skills before retirement)
+    //   - Auto-create content generation (high-quality initial content for new skills)
+    //   - Trigger-driven fix/refine (degradation + quality gate failure triggers)
+    //   - Experience distillation semantic merge (3x quality vs heuristic)
+    //   - Clarification semantic signal detection (50x cheaper than main model)
+    //   - Quality gate failure root-cause analysis
+    //   - Health audit narrative summary generation
+    //   - Skill discovery LLM refinement
+    // By default, uses LlmRouter's 'fast' tier if configured via llmTiers.
+    // Falls back to the main workflow model if no 'fast' tier is available.
+    // Cost: ~$0.002-0.003/call (vs ~$0.10/call for main model) = 50x cheaper.
+    // Disable skill LLM entirely with: skillLlm: false
+    //
+    // To configure the 'fast' tier, pass llmTiers to the Orchestrator:
+    //   llmTiers: {
+    //     fast: cheapLlmCall,     // GPT-4o-mini, Gemini Flash, DeepSeek V3
+    //     default: defaultLlmCall,
+    //     strong: strongLlmCall,
+    //   }
 
     // ContainerSandbox: Docker/Podman container-based sandboxed execution.
     // Runs tests and code verification in isolated containers with:

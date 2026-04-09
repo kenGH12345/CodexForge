@@ -9,6 +9,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { PATHS, HOOK_EVENTS } = require('./constants');
 const { AgentRole, WorkflowState } = require('./types');
 const { ExperienceType, ExperienceCategory } = require('./experience-store');
@@ -20,7 +21,7 @@ const { DECISION_QUESTIONS } = require('./socratic-engine');
 const { RollbackCoordinator } = require('./rollback-coordinator');
 const { QualityGate } = require('./quality-gate');
 const { translateMdFile } = require('./i18n-translator');
-const { runEvoMapFeedback } = require('./stage-runner-utils');
+const { runEvoMapFeedback, recordSelfReport, runStageMetricsGate } = require('./stage-runner-utils');
 const { scanSourceFiles } = require('./file-scanner');
 const { _recordPromptABOutcome } = require('./stage-analyst');
 const { TestFailureExperienceRecorder } = require('./test-failure-recorder');
@@ -37,6 +38,8 @@ const {
   buildWebSearchContext,
 } = require('./stage-tester-prompts');
 const { buildRetryContext, compareOutputFingerprint } = require('./retry-divergence-guard');
+const { ExecutionLogValidator } = require('./execution-log-validator');
+const { EvolutionLoop } = require('./evolution-loop');
 
 // Forward reference: _runDeveloper is needed for rollback. Lazy-loaded to avoid circular deps.
 let _runDeveloper = null;
@@ -56,6 +59,14 @@ function _getRunDeveloper() {
  * @returns {Promise<string|null>} Path to the test report, or null on failure
  */
 async function _runTester() {
+  const _testStageStartTime = Date.now();
+  // Print stage header via handoffLog if available
+  if (this.handoffLog) {
+    this.handoffLog.printStageHeader('TEST', 'TesterAgent');
+  } else {
+    console.error(`\n[Orchestrator] Stage: TEST (TesterAgent)`);
+  }
+
   const MAX_TEST_ITERATIONS = 2;
   let testIteration = 0;
 
@@ -64,7 +75,14 @@ async function _runTester() {
     const fixConversationHistory = [];
     const iterResult = await _runTesterOnce.call(this, testIteration, MAX_TEST_ITERATIONS, fixConversationHistory);
 
-    if (iterResult.__done) {
+  if (iterResult.__done) {
+      // ── Metrics Quality Gate: validate TEST stage runtime metrics ──────
+      runStageMetricsGate(this, {
+        stageName: 'TEST',
+        durationMs: Date.now() - _testStageStartTime,
+        errorCount: 0,
+        llmCalls: (this.obs && this.obs._llmCallCount) ? this.obs._llmCallCount : 0,
+      });
       return iterResult.outputPath;
     }
 
@@ -72,7 +90,7 @@ async function _runTester() {
       return iterResult;
     }
 
-    console.log(`[Orchestrator] 🔄 Re-running TEST stage (iteration ${testIteration + 1}/${MAX_TEST_ITERATIONS}) after developer retry...`);
+    console.error(`[Orchestrator] 🔄 Re-running TEST stage (iteration ${testIteration + 1}/${MAX_TEST_ITERATIONS}) after developer retry...`);
   }
 
   console.warn(`[Orchestrator] ⚠️  TEST stage iteration limit reached without resolution.`);
@@ -99,21 +117,21 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
   if (this.handoffLog) {
     this.handoffLog.printStageHeader('TEST', 'TesterAgent');
     if (testIteration > 1) {
-      console.log(`  🔄 Retry iteration ${testIteration}/${maxIterations}`);
+      console.error(`  🔄 Retry iteration ${testIteration}/${maxIterations}`);
     }
   } else {
-    console.log(`\n[Orchestrator] Stage: TEST (TesterAgent)${iterationSuffix}`);
+    console.error(`\n[Orchestrator] Stage: TEST (TesterAgent)${iterationSuffix}`);
   }  const inputPath = this.bus.consume(AgentRole.TESTER);
 
   const upstreamCtxForTest = buildTesterUpstreamCtx(this);
 
   const devMeta = this.bus.getMeta(AgentRole.TESTER);
   if (devMeta && devMeta.reviewRounds > 0) {
-    console.log(`[Orchestrator] ℹ️  Code was self-corrected in ${devMeta.reviewRounds} round(s) (${devMeta.failedItems} issue(s) fixed). Tester should pay attention to corrected areas.`);
+    console.error(`[Orchestrator] ℹ️  Code was self-corrected in ${devMeta.reviewRounds} round(s) (${devMeta.failedItems} issue(s) fixed). Tester should pay attention to corrected areas.`);
   }
 
   // ── Step 0: Pre-generate test cases ──────────────────────────────────────
-  console.log(`\n[Orchestrator] 📋 Pre-generating test cases (test-first planning)...`);
+  console.error(`\n[Orchestrator] 📋 Pre-generating test cases (test-first planning)...`);
   let tcGenResult = { skipped: true, caseCount: 0 };
   let isDetailedMode = false;
   
@@ -128,14 +146,14 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
     
     if (useDetailedTestGen && fs.existsSync(PATHS.CODE_DIFF_FILE)) {
       // Advanced mode: generate detailed test document from code.diff
-      console.log(`[Orchestrator] 🔬 Using ADVANCED test generation mode (from code.diff)`);
+      console.error(`[Orchestrator] 🔬 Using ADVANCED test generation mode (from code.diff)`);
       tcGenResult = await tcGen.generateAdvanced();
       isDetailedMode = true;
       
       if (!tcGenResult.skipped) {
-        console.log(`[Orchestrator] ✅ Detailed test plan generated: ${tcGenResult.caseCount} case(s) for ${tcGenResult.features?.length || 0} feature(s) → output/test-cases-detailed.md`);
+        console.error(`[Orchestrator] ✅ Detailed test plan generated: ${tcGenResult.caseCount} case(s) for ${tcGenResult.features?.length || 0} feature(s) → output/test-cases-detailed.md`);
       } else {
-        console.log(`[Orchestrator] ⏭️  Advanced generation skipped, falling back to basic mode...`);
+        console.error(`[Orchestrator] ⏭️  Advanced generation skipped, falling back to basic mode...`);
         tcGenResult = await tcGen.generate();
         isDetailedMode = false;
       }
@@ -145,9 +163,9 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
     }
     
     if (!tcGenResult.skipped && !isDetailedMode) {
-      console.log(`[Orchestrator] ✅ Test cases generated: ${tcGenResult.caseCount} case(s) → output/test-cases.md`);
+      console.error(`[Orchestrator] ✅ Test cases generated: ${tcGenResult.caseCount} case(s) → output/test-cases.md`);
     } else if (tcGenResult.skipped && !useDetailedTestGen) {
-      console.log(`[Orchestrator] ⏭️  Test case generation skipped (no requirements.md found).`);
+      console.error(`[Orchestrator] ⏭️  Test case generation skipped (no requirements.md found).`);
     }
   } catch (err) {
     console.warn(`[Orchestrator] ⚠️  Test case generation failed (non-fatal): ${err.message}`);
@@ -156,7 +174,7 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
   // ── Step 0.5: Execute generated test cases ─────────────────────────────────
   let tcExecutionReport = null;
   if (!tcGenResult.skipped && tcGenResult.caseCount > 0) {
-    console.log(`\n[Orchestrator] 🔬 Executing generated test cases (real execution)...`);
+    console.error(`\n[Orchestrator] 🔬 Executing generated test cases (real execution)...`);
     try {
       const tcExecutor = new TestCaseExecutor({
         projectRoot: this.projectRoot,
@@ -170,25 +188,25 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
       if (!tcExecutionReport.skipped) {
         const _manualPending = tcExecutionReport.manualPending ?? 0;
         const _automatedTotal = tcExecutionReport.automatedTotal ?? (tcExecutionReport.total - _manualPending);
-        console.log(`[Orchestrator] 📊 Test case execution: ${tcExecutionReport.passed}/${_automatedTotal} passed, ${tcExecutionReport.failed} failed, ${tcExecutionReport.blocked} blocked, ${_manualPending} manual-pending`);
+        console.error(`[Orchestrator] 📊 Test case execution: ${tcExecutionReport.passed}/${_automatedTotal} passed, ${tcExecutionReport.failed} failed, ${tcExecutionReport.blocked} blocked, ${_manualPending} manual-pending`);
         const execReportPath = path.join(PATHS.OUTPUT_DIR, 'test-execution-report.md');
         fs.writeFileSync(execReportPath, tcExecutionReport.summaryMd, 'utf-8');
-        console.log(`[Orchestrator] 📝 Execution report saved → output/test-execution-report.md`);
+        console.error(`[Orchestrator] 📝 Execution report saved → output/test-execution-report.md`);
         if (tcExecutionReport.failed > 0) {
           this.stateMachine.recordRisk('medium',
             `[TestCaseExecutor] ${tcExecutionReport.failed}/${_automatedTotal} automated test case(s) failed real execution. See output/test-execution-report.md.`);
         }
         if (_manualPending > 0) {
-          console.log(`[Orchestrator] 🖐️  ${_manualPending} manual test case(s) require human verification – not counted as failures.`);
+          console.error(`[Orchestrator] 🖐️  ${_manualPending} manual test case(s) require human verification – not counted as failures.`);
         }
       } else {
-        console.log(`[Orchestrator] ⏭️  Test case execution skipped: ${tcExecutionReport.skipReason}`);
+        console.error(`[Orchestrator] ⏭️  Test case execution skipped: ${tcExecutionReport.skipReason}`);
       }
     } catch (err) {
       console.warn(`[Orchestrator] ⚠️  Test case execution failed (non-fatal): ${err.message}`);
     }
   } else {
-    console.log(`[Orchestrator] ⏭️  Test case execution skipped (no cases generated).`);
+    console.error(`[Orchestrator] ⏭️  Test case execution skipped (no cases generated).`);
   }
 
   // A-3 fix: buildTesterContextBlock now returns { content, injectedExpIds } struct
@@ -198,14 +216,15 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
   this.obs.recordExpUsage({ injected: testInjectedExpIds.length });
 const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, testExpContext, this.handoffLog);
 
-  // ── Adapter Telemetry ─────────────────────────────────────────────────────
+  // ── Adapter Telemetry ─────────────────────────────────────────────────────────
   if (this._adapterTelemetry && outputPath && fs.existsSync(outputPath)) {
     try {
       const testOutput = fs.readFileSync(outputPath, 'utf-8');
       this._adapterTelemetry.scanReferences(testOutput, 'TESTER');
+      // ── Agent Self-Report: extract self-report from TESTER output ──
+      recordSelfReport('TEST', testOutput, { agentRole: AgentRole.TESTER });
     } catch (_) { /* non-fatal */ }
   }
-
   let testContent = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : '';
   if (!testContent) {
     console.warn(`[Orchestrator] ⚠️  TesterAgent produced an empty test report at: ${outputPath}. Skipping self-correction.`);
@@ -217,6 +236,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
         maxRounds: 2,
         verbose: true,
         semanticMode: true,
+        cheapLlmCall: this.llmRouter?.getTierConfig()?.fast || null,
         investigationTools: this._buildInvestigationTools('TestReport'),
       }
     );
@@ -226,7 +246,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
       const tmpPath = outputPath + '.tmp';
       fs.writeFileSync(tmpPath, corrResult.content, 'utf-8');
       fs.renameSync(tmpPath, outputPath);
-      console.log(`[Orchestrator] Test report self-corrected in ${corrResult.rounds} round(s).`);
+      console.error(`[Orchestrator] Test report self-corrected in ${corrResult.rounds} round(s).`);
     }
 
     const report = formatClarificationReport(corrResult);
@@ -240,7 +260,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
       console.warn(`[Orchestrator] ⚠️  High-severity test report issues detected.`);
       try {
         const defectDecision = this.socratic.askAsync(DECISION_QUESTIONS.TEST_DEFECTS_ACTION, 0);
-        console.log(`[Orchestrator] ⚡ Defect handling decision (non-blocking): "${defectDecision.optionText}"`);
+        console.error(`[Orchestrator] ⚡ Defect handling decision (non-blocking): "${defectDecision.optionText}"`);
         this.stateMachine.recordRisk('low', `[SocraticEngine] Defect handling: ${defectDecision.optionText}`);
       } catch (err) {
         this.stateMachine.recordRisk('low', `[SocraticEngine] Defect handling decision skipped (engine unavailable): ${err.message}`);
@@ -294,7 +314,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
             if (fs.existsSync(testReportPath)) previousTestOutput = fs.readFileSync(testReportPath, 'utf-8');
           } catch (_) { /* non-fatal */ }
 
-          const retryContext = buildRetryContext({
+          const retryContext = await buildRetryContext({
             previousOutput: previousTestOutput,
             failureReason: riskMsg,
             retryCount: testRollbackCount + 1,
@@ -344,7 +364,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
               testRollbackRetry: testRollbackCount + 1,
             });
           }
-          console.log(`[Orchestrator] 🔄 Signalling TEST stage retry (rollback round ${testRollbackCount + 1}) – iterative loop will continue...`);
+          console.error(`[Orchestrator] 🔄 Signalling TEST stage retry (rollback round ${testRollbackCount + 1}) – iterative loop will continue...`);
           this._pendingTestMeta = null;
           return { __retry: true };
         } catch (rollbackErr) {
@@ -355,7 +375,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
         console.warn(`[Orchestrator] ⚠️  Test rollback limit reached (max 1). Proceeding with ${corrResult.signals.filter(s => s.severity === 'high').length} unresolved high-severity issue(s).`);
       }
     } else {
-      console.log(`[Orchestrator] ✅ Test report passed self-correction. Workflow proceeding.`);
+      console.error(`[Orchestrator] ✅ Test report passed self-correction. Workflow proceeding.`);
       const testPassTitle = 'Test report passed self-correction with no high-severity issues';
       this.experienceStore.recordIfAbsent(testPassTitle, {
         type: ExperienceType.POSITIVE,
@@ -369,32 +389,55 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
   }
 
   // ── Real Test Execution + Auto-Fix Loop ──────────────────────────────────
-  const testCommand = this._config.testCommand || null;
+  const baseTestCommand = this._config.testCommand || null;
   const autoFixCfg = this._config.autoFixLoop || {};
+  const configuredTestProfile = _normalizeTestProfile(this._config.testProfile || 'fast');
+  const hasHighRiskChanges = _hasHighRiskTestScope(this);
+  const effectiveTestProfile = hasHighRiskChanges ? 'full' : configuredTestProfile;
+
+  const changedFiles = _collectChangedFilesFromCodeDiff();
+  const impactedSuites = effectiveTestProfile === 'full' ? ['smoke', 'unit', 'integration'] : _inferImpactedSuites(changedFiles);
+
+  const baselineTestCommand = _buildProfiledTestCommand.call(this, baseTestCommand, effectiveTestProfile, null);
+  const testCommand = _buildProfiledTestCommand.call(this, baseTestCommand, effectiveTestProfile, impactedSuites);
   const autoFixEnabled = autoFixCfg.enabled !== false && !!testCommand;
   const maxFixRounds = this._adaptiveStrategy.maxFixRounds ?? autoFixCfg.maxFixRounds ?? 2;
   const failOnUnfixed = autoFixCfg.failOnUnfixed ?? false;
 
+  if (baseTestCommand && testCommand !== baseTestCommand) {
+    console.error(`[Orchestrator] 🧪 TEST profile active: ${effectiveTestProfile} (command adapted)`);
+  } else if (baseTestCommand) {
+    console.error(`[Orchestrator] 🧪 TEST profile active: ${effectiveTestProfile}`);
+  }
+
+  if (!hasHighRiskChanges && effectiveTestProfile !== 'full' && impactedSuites.length > 0) {
+    console.error(`[Orchestrator] 🎯 Impact-driven suites: ${impactedSuites.join(', ')}${changedFiles.length > 0 ? ` (from ${changedFiles.length} changed file(s))` : ''}`);
+  }
+
+  if (hasHighRiskChanges && configuredTestProfile !== 'full') {
+    console.error(`[Orchestrator] ⚠️  High-risk core changes detected. Escalating test profile: ${configuredTestProfile} → full`);
+  }
+
   if (maxFixRounds !== (autoFixCfg.maxFixRounds ?? 2)) {
-    console.log(`[Orchestrator] 📈 Adaptive maxFixRounds: ${maxFixRounds} (history-adjusted from default ${autoFixCfg.maxFixRounds ?? 2})`);
+    console.error(`[Orchestrator] 📈 Adaptive maxFixRounds: ${maxFixRounds} (history-adjusted from default ${autoFixCfg.maxFixRounds ?? 2})`);
   }
 
   if (!testCommand) {
-    console.log(`[Orchestrator] ℹ️  No testCommand configured – skipping real test execution.`);
-    console.log(`[Orchestrator] 💡 Set testCommand in workflow.config.js to enable automated verification.`);
+    console.error(`[Orchestrator] ℹ️  No testCommand configured – skipping real test execution.`);
+    console.error(`[Orchestrator] 💡 Set testCommand in workflow.config.js to enable automated verification.`);
   } else {
-    await _runRealTestLoop.call(this, { testCommand, autoFixEnabled, maxFixRounds, failOnUnfixed, testReportPath: outputPath, lintCommand: this._config?.lintCommand || null, fixConversationHistory, injectedExpIds: testInjectedExpIds });
+    await _runRealTestLoop.call(this, { testCommand, baselineTestCommand: baselineTestCommand || testCommand, autoFixEnabled, maxFixRounds, failOnUnfixed, testReportPath: outputPath, lintCommand: this._config?.lintCommand || null, fixConversationHistory, injectedExpIds: testInjectedExpIds });
   }
 
   // ── CIIntegration ────────────────────────────────────────────────────────
   try {
-    console.log(`\n[Orchestrator] 🚀 Running CI pipeline validation (post-test)...`);
-    await this.hooks.emit(HOOK_EVENTS.CI_PIPELINE_STARTED, { command: this._config.testCommand || null });
+    console.error(`\n[Orchestrator] 🚀 Running CI pipeline validation (post-test)...`);
+    await this.hooks.emit(HOOK_EVENTS.CI_PIPELINE_STARTED, { command: testCommand || null });
     const ciResult = await this.ci.runLocalPipeline({ skipEntropy: this._adaptiveStrategy.skipEntropyOnClean });
     this.obs.recordCIResult(ciResult);
     await this.hooks.emit(HOOK_EVENTS.CI_PIPELINE_COMPLETE, { result: ciResult });
     if (ciResult.status === 'success') {
-      console.log(`[Orchestrator] ✅ CI pipeline passed: ${ciResult.message}`);
+      console.error(`[Orchestrator] ✅ CI pipeline passed: ${ciResult.message}`);
     } else {
       const ciMsg = `[CIIntegration] Pipeline ${ciResult.status}: ${ciResult.message}`;
       console.warn(`[Orchestrator] ⚠️  ${ciMsg}`);
@@ -407,10 +450,10 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
 
   // ── Entropy GC ───────────────────────────────────────────────────────────
   if (this._adaptiveStrategy.skipEntropyOnClean) {
-    console.log(`[Orchestrator] ⏭️  Entropy scan skipped (last 3 sessions had 0 violations – adaptive strategy).`);
+    console.error(`[Orchestrator] ⏭️  Entropy scan skipped (last 3 sessions had 0 violations – adaptive strategy).`);
     this.obs._entropySkipped = true;
   } else {
-    console.log(`\n[Orchestrator] 🔍 Running entropy scan after Tester stage...`);
+    console.error(`\n[Orchestrator] 🔍 Running entropy scan after Tester stage...`);
     try {
       const gcResult = await this.entropyGC.run();
       this.obs.recordEntropyResult(gcResult);
@@ -431,7 +474,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
           fs.appendFileSync(outputPath, entropyNote, 'utf-8');
         }
       } else {
-      console.log(`[Orchestrator] ✅ Entropy scan: no violations found.`);
+      console.error(`[Orchestrator] ✅ Entropy scan: no violations found.`);
       }
     } catch (err) {
       console.warn(`[Orchestrator] EntropyGC scan failed (non-fatal): ${err.message}`);
@@ -443,15 +486,136 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
   try {
     if (this.experienceStore && typeof this.experienceStore.flushDirty === 'function') {
       await this.experienceStore.flushDirty();
-      console.log(`[Orchestrator] 💾 ExperienceStore flushed (hitCount increments persisted).`);
+      console.error(`[Orchestrator] 💾 ExperienceStore flushed (hitCount increments persisted).`);
     }
   } catch (flushErr) {
     console.warn(`[Orchestrator] ⚠️  ExperienceStore flush failed (non-fatal): ${flushErr.message}`);
   }
 
-  storeTestContext(this, outputPath, tcGenResult, tcExecutionReport, corrResult ?? null);
+  // ── Document Output Validation (打点日志审查) ─────────────────────────────
+  // ADR-XX: Document output validation is part of TEST stage, not just teardown.
+  // This ensures output artifacts are verified BEFORE the workflow completes.
+  console.error(`\n[Orchestrator] 📋 Running document output validation (打点日志审查)...`);
 
-  return { __done: true, outputPath };
+  let outputValidationResult = { passed: true, details: {} };
+
+  const stageOutputDir = this._outputDir || PATHS.OUTPUT_DIR;
+
+  try {
+    // 1. Validate required output files exist
+    const requiredFiles = [
+      'requirement.md',
+      'architecture.md',
+      'test-report.md',
+      'code.diff',
+    ];
+
+    const missingFiles = [];
+    const emptyFiles = [];
+
+    for (const file of requiredFiles) {
+      const filePath = path.join(stageOutputDir, file);
+      if (!fs.existsSync(filePath)) {
+        missingFiles.push(file);
+      } else {
+        const stats = fs.statSync(filePath);
+        if (stats.size === 0) {
+          emptyFiles.push(file);
+        }
+      }
+    }
+
+    // 2. Run ExecutionLogValidator for structured validation
+    const execValidator = new ExecutionLogValidator({
+      outputDir: stageOutputDir,
+      verbose: false,
+      strictMode: false,
+      reportOutputDir: stageOutputDir,
+    });
+
+    const execValidation = await execValidator.validate();
+    const { summary, stageValidations } = execValidation.report;
+
+    // 3. Run EvolutionLoop output verification
+    const evolutionLoop = new EvolutionLoop({ outputDir: stageOutputDir, verbose: false });
+    const evolutionVerification = evolutionLoop.verifyOutputFiles([`health/${this._runCategory || 'prod'}/evolution-log.json`, `health/${this._runCategory || 'prod'}/quality-report.md`]);
+
+    // 4. Aggregate results
+    outputValidationResult = {
+      passed: missingFiles.length === 0 && emptyFiles.length === 0 && summary.status !== 'failed',
+      summary: {
+        status: summary.status,
+        score: summary.score,
+        completedStages: summary.completedStages,
+        totalStages: summary.totalStages,
+      },
+      missingFiles,
+      emptyFiles,
+      evolutionFiles: evolutionVerification,
+      stageValidations: Object.fromEntries(
+        Object.entries(stageValidations).map(([k, v]) => [k, { status: v.status, score: v.score }])
+      ),
+    };
+
+    // 5. Log results
+    const statusEmoji = outputValidationResult.passed ? '✅' : '❌';
+    console.error(`[Orchestrator] ${statusEmoji} Document Output Validation: ${outputValidationResult.passed ? 'PASSED' : 'FAILED'}`);
+    console.error(`[Orchestrator]    Execution Score: ${summary.score}/100 (${summary.status})`);
+    console.error(`[Orchestrator]    Stages: ${summary.completedStages}/${summary.totalStages} completed`);
+
+    if (missingFiles.length > 0) {
+      console.error(`[Orchestrator]    ❌ Missing: ${missingFiles.join(', ')}`);
+      this.stateMachine.recordRisk('high', `[OutputValidation] Missing required files: ${missingFiles.join(', ')}`);
+    }
+
+    if (emptyFiles.length > 0) {
+      console.error(`[Orchestrator]    ⚠️  Empty: ${emptyFiles.join(', ')}`);
+      this.stateMachine.recordRisk('medium', `[OutputValidation] Empty output files: ${emptyFiles.join(', ')}`);
+    }
+
+    if (!evolutionVerification.passed) {
+      console.error(`[Orchestrator]    ⚠️  Evolution files: ${evolutionVerification.missingFiles.concat(evolutionVerification.emptyFiles).join(', ')}`);
+    }
+
+    // 6. Record to ExperienceStore if score is low
+    if (summary.score < 80 && this.experienceStore) {
+      this.experienceStore.recordIfAbsent('test-stage-output-validation-low-score', {
+        type: ExperienceType.NEGATIVE,
+        category: ExperienceCategory.PITFALL,
+        title: 'Output document validation score below threshold',
+        content: `TEST stage output validation score: ${summary.score}/100. Missing: ${missingFiles.join(', ')}. Empty: ${emptyFiles.join(', ')}.`,
+        skill: 'test-validation',
+        tags: ['output-validation', 'quality-gate', 'test-stage'],
+        metrics: { score: summary.score },
+      });
+    }
+
+    // 7. Generate output validation report
+    const validationReportPath = path.join(stageOutputDir, 'test-output-validation.json');
+    fs.writeFileSync(validationReportPath, JSON.stringify(outputValidationResult, null, 2), 'utf-8');
+    console.error(`[Orchestrator] 📝 Output validation report: output/test-output-validation.json`);
+
+    // 8. Signal to EvolutionLoop for potential retry
+    if (this._evolutionLoop) {
+      this._evolutionLoop.processSignal({
+        type: summary.score < 80 ? 'QUALITY_GATE_FAILURE' : 'OUTPUT_VALIDATION_PASSED',
+        severity: summary.score < 80 ? 'high' : 'info',
+        stage: 'TEST',
+        evidence: `Output validation score: ${summary.score}/100. Missing: ${missingFiles.length}, Empty: ${emptyFiles.length}`,
+        confidence: 0.95,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+  } catch (validationErr) {
+    console.warn(`[Orchestrator] ⚠️  Document output validation failed (non-fatal): ${validationErr.message}`);
+    this.stateMachine.recordRisk('medium', `[OutputValidation] Validation error: ${validationErr.message}`);
+    outputValidationResult = { passed: false, error: validationErr.message };
+  }
+
+  await storeTestContext(this, outputPath, tcGenResult, tcExecutionReport, corrResult ?? null);
+
+  return { __done: true, outputPath, outputValidation: outputValidationResult };
 }
 
 /**
@@ -460,7 +624,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
  * @this {import('./orchestrator').Orchestrator}
  * @param {object} opts - Loop configuration
  */
-async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, failOnUnfixed, testReportPath, lintCommand = null, fixConversationHistory = null, injectedExpIds = [] }) {
+async function _runRealTestLoop({ testCommand, baselineTestCommand = testCommand, autoFixEnabled, maxFixRounds, failOnUnfixed, testReportPath, lintCommand = null, fixConversationHistory = null, injectedExpIds = [] }) {
   const fixHistory = fixConversationHistory || [];
   const runner = new TestRunner({
     projectRoot: this.projectRoot,
@@ -469,7 +633,7 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
     verbose: true,
   });
 
-  console.log(`\n[Orchestrator] 🔬 Running real test suite: ${testCommand}`);
+  console.error(`\n[Orchestrator] 🔬 Running real test suite: ${testCommand}`);
   let result;
   try {
     result = runner.run();
@@ -486,23 +650,47 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
   }
 
   if (result.passed) {
-    console.log(`[Orchestrator] ✅ Real tests PASSED on first run.`);
-    this.obs.recordTestResult({ passed: result.passed ? 1 : 0, failed: 0, skipped: 0, rounds: 1 });
-    await runEvoMapFeedback(this, {
-      injectedExpIds,
-      errorContext: '',
+    console.error(`[Orchestrator] ✅ Real tests PASSED on first run.`);
+
+    const securityAudit = await _runSecurityAuditForTestStage.call(this, {
+      testReportPath,
       stageLabel: 'TEST (first-run pass)',
     });
-    // P1: Use recordWithContentCheck to avoid duplicate experience entries
-    this.experienceStore.recordWithContentCheck({
-      type: ExperienceType.POSITIVE,
-      category: ExperienceCategory.STABLE_PATTERN,
-      title: `Real tests passed: ${testCommand}`,
-      content: `All tests passed on first run. Command: ${testCommand}. Duration: ${result.durationMs}ms.`,
-      skill: 'test-report',
-      tags: ['real-test', 'passed', 'first-run'],
-    });
-    return;
+
+    if (securityAudit.passed) {
+      this.obs.recordTestResult({ passed: result.passed ? 1 : 0, failed: 0, skipped: 0, rounds: 1 });
+      await runEvoMapFeedback(this, {
+        injectedExpIds,
+        errorContext: '',
+        stageLabel: 'TEST (first-run pass)',
+      });
+      // P1: Use recordWithContentCheck to avoid duplicate experience entries
+      this.experienceStore.recordWithContentCheck({
+        type: ExperienceType.POSITIVE,
+        category: ExperienceCategory.STABLE_PATTERN,
+        title: `Real tests passed: ${testCommand}`,
+        content: `All tests and security checks passed on first run. Command: ${testCommand}. Duration: ${result.durationMs}ms.`,
+        skill: 'test-report',
+        tags: ['real-test', 'security-audit', 'passed', 'first-run'],
+      });
+      return;
+    }
+
+    const securityMsg = `[SecurityTest] Blocking findings detected after first-run pass: ${securityAudit.blockingReasons.join('; ')}`;
+    this.stateMachine.recordRisk('high', securityMsg);
+    console.warn(`[Orchestrator] ⚠️  ${securityMsg}`);
+
+    if (!autoFixEnabled) {
+      if (failOnUnfixed) throw new Error(securityMsg);
+      return;
+    }
+
+    result = {
+      ...result,
+      passed: false,
+      exitCode: result.exitCode || 1,
+      failureSummary: [...(result.failureSummary || []), ...securityAudit.blockingReasons],
+    };
   }
 
   console.warn(`[Orchestrator] ❌ Real tests FAILED (exit ${result.exitCode}).`);
@@ -518,7 +706,7 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
 
   while (!result.passed && fixRound < maxFixRounds) {
     fixRound++;
-    console.log(`\n[Orchestrator] 🔧 Auto-fix round ${fixRound}/${maxFixRounds}...`);
+    console.error(`\n[Orchestrator] 🔧 Auto-fix round ${fixRound}/${maxFixRounds}...`);
 
     const _rawFailureContext = TestRunner.formatResultAsMarkdown(result);
     const failureContext = _rawFailureContext.length > 6000
@@ -570,7 +758,7 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
 
       if (fileSnippets.length > 0) {
         sourceFilesContext = `## Current Source Files (${fileSnippets.length} file(s))\n\n${fileSnippets.join('\n\n')}`;
-        console.log(`[Orchestrator] 📂 Fix Agent context: ${fileSnippets.length} source file(s) injected (${totalChars} chars)`);
+        console.error(`[Orchestrator] 📂 Fix Agent context: ${fileSnippets.length} source file(s) injected (${totalChars} chars)`);
       }
     } catch (err) {
       console.warn(`[Orchestrator] ⚠️  Could not collect source files for Fix Agent: ${err.message}`);
@@ -598,7 +786,7 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
               .trim()
               .slice(0, 150);
             const searchQuery = `${primaryError} fix solution`;
-            console.log(`[Orchestrator] 🌐 Auto-fix web search: "${searchQuery.slice(0, 80)}..."`);
+            console.error(`[Orchestrator] 🌐 Auto-fix web search: "${searchQuery.slice(0, 80)}..."`);
             const searchResult = await wsAdapter.search(searchQuery, { maxResults: 3 });
             if (searchResult && searchResult.results && searchResult.results.length > 0) {
               const formatted = searchResult.results.map((r, i) =>
@@ -616,9 +804,9 @@ async function _runRealTestLoop({ testCommand, autoFixEnabled, maxFixRounds, fai
                 `**Relevant solutions**:`,
                 formatted,
               ].join('\n');
-              console.log(`[Orchestrator] 🌐 Auto-fix web search: ${searchResult.results.length} result(s) injected (provider: ${searchResult.provider}).`);
+              console.error(`[Orchestrator] 🌐 Auto-fix web search: ${searchResult.results.length} result(s) injected (provider: ${searchResult.provider}).`);
             } else {
-              console.log(`[Orchestrator] 🌐 Auto-fix web search: no results found.`);
+              console.error(`[Orchestrator] 🌐 Auto-fix web search: no results found.`);
             }
           }
         }
@@ -636,7 +824,7 @@ const fixPrompt = buildFixAgentPrompt({
       projectRoot: this.projectRoot,
     });
 
-    console.log(`[Orchestrator] 🤖 Invoking Code Fix Agent for fix round ${fixRound}...`);
+    console.error(`[Orchestrator] 🤖 Invoking Code Fix Agent for fix round ${fixRound}...`);
     let fixResponse;
     try {
       fixHistory.push({ role: 'user', content: fixPrompt });
@@ -662,10 +850,10 @@ const fixPrompt = buildFixAgentPrompt({
 
     const fixedDiffPath = path.join(PATHS.OUTPUT_DIR, `code-fix-round${fixRound}.txt`);
     fs.writeFileSync(fixedDiffPath, fixResponse, 'utf-8');
-    console.log(`[Orchestrator] 📝 Fix response saved to: ${fixedDiffPath}`);
+    console.error(`[Orchestrator] 📝 Fix response saved to: ${fixedDiffPath}`);
 
     const applyResult = this._applyFileReplacements(fixResponse);
-    console.log(`[Orchestrator] 🔧 Applied ${applyResult.applied} replacement(s), ${applyResult.failed} failed.`);
+    console.error(`[Orchestrator] 🔧 Applied ${applyResult.applied} replacement(s), ${applyResult.failed} failed.`);
     if (applyResult.failed > 0) {
       console.warn(`[Orchestrator] ⚠️  Some replacements failed:\n${applyResult.errors.join('\n')}`);
     }
@@ -677,11 +865,11 @@ const fixPrompt = buildFixAgentPrompt({
 
     // ── Post-fix validation ─────────────────────────────────────────────────
     if (lintCommand) {
-      console.log(`[Orchestrator] 🔍 Post-fix lint check: ${lintCommand}`);
+      console.error(`[Orchestrator] 🔍 Post-fix lint check: ${lintCommand}`);
       try {
         const { execSync } = require('child_process');
         execSync(lintCommand, { cwd: this.projectRoot, stdio: 'pipe', timeout: 60_000 });
-        console.log(`[Orchestrator] ✅ Post-fix lint: no errors.`);
+        console.error(`[Orchestrator] ✅ Post-fix lint: no errors.`);
       } catch (lintErr) {
         const lintOutput = (lintErr.stdout?.toString() || '') + (lintErr.stderr?.toString() || '');
         console.warn(`[Orchestrator] ⚠️  Post-fix lint FAILED in fix round ${fixRound}:\n${lintOutput.slice(0, 800)}`);
@@ -699,9 +887,18 @@ const fixPrompt = buildFixAgentPrompt({
       }
     }
 
-    console.log(`[Orchestrator] 🔬 Re-running tests after fix round ${fixRound}...`);
+    const fixRoundRetestCommand = _buildFixRoundRetestCommand.call(this, testCommand, result, fixRound);
+    const usesOptimizedRetest = fixRoundRetestCommand !== testCommand;
+
+    console.error(`[Orchestrator] 🔬 Re-running tests after fix round ${fixRound}${usesOptimizedRetest ? ` (optimized: ${fixRoundRetestCommand})` : ''}...`);
     try {
-      result = runner.run();
+      const roundRunner = new TestRunner({
+        projectRoot: this.projectRoot,
+        testCommand: fixRoundRetestCommand,
+        timeoutMs: 180_000,
+        verbose: true,
+      });
+      result = roundRunner.run();
     } catch (rerunErr) {
       console.error(`[Orchestrator] ❌ Test runner threw an error in fix round ${fixRound}: ${rerunErr.message}`);
       this.stateMachine.recordRisk('high', `[RealTest] Test runner crashed in fix round ${fixRound}: ${rerunErr.message}`);
@@ -715,69 +912,109 @@ const fixPrompt = buildFixAgentPrompt({
       fs.appendFileSync(testReportPath, roundMd, 'utf-8');
     }
 
+    // P1.5 safety net: if optimized subset check passed, run baseline regression before accepting.
+    if (result.passed && usesOptimizedRetest) {
+      console.error(`[Orchestrator] 🛡️  Optimized re-test passed. Running baseline regression before accepting fix...`);
+      try {
+        const baselineRunner = new TestRunner({
+          projectRoot: this.projectRoot,
+          testCommand: baselineTestCommand,
+          timeoutMs: 180_000,
+          verbose: true,
+        });
+        result = baselineRunner.run();
+        const guardMd = `\n\n---\n\n## Auto-Fix Round ${fixRound} Safety Regression\n\n` + TestRunner.formatResultAsMarkdown(result);
+        if (fs.existsSync(testReportPath)) {
+          fs.appendFileSync(testReportPath, guardMd, 'utf-8');
+        }
+      } catch (guardErr) {
+        console.error(`[Orchestrator] ❌ Safety regression crashed in fix round ${fixRound}: ${guardErr.message}`);
+        this.stateMachine.recordRisk('high', `[RealTest] Safety regression crashed in fix round ${fixRound}: ${guardErr.message}`);
+        if (failOnUnfixed) throw guardErr;
+      }
+    }
+
     if (result.passed) {
-      console.log(`[Orchestrator] ✅ Tests PASSED after fix round ${fixRound}.`);
-      this.obs.recordTestResult({ passed: 1, failed: 0, skipped: 0, rounds: fixRound });
-      await runEvoMapFeedback(this, {
-        injectedExpIds,
-        errorContext: (result.failureSummary || []).join(' ') || (result.output || ''),
+      console.error(`[Orchestrator] ✅ Tests PASSED after fix round ${fixRound}.`);
+
+      const securityAudit = await _runSecurityAuditForTestStage.call(this, {
+        testReportPath,
         stageLabel: `TEST (auto-fix round ${fixRound})`,
       });
-      // P1: Use recordWithContentCheck to avoid duplicate experience entries
-      this.experienceStore.recordWithContentCheck({
-        type: ExperienceType.POSITIVE,
-        category: ExperienceCategory.STABLE_PATTERN,
-        title: `Real tests passed after ${fixRound} auto-fix round(s)`,
-        content: `Tests passed after ${fixRound} fix round(s). Command: ${testCommand}. Failure summary: ${(result.failureSummary || []).slice(0, 3).join('; ')}.`,
-        skill: 'test-report',
-        tags: ['real-test', 'auto-fix', 'passed'],
-      });
 
-      // Re-annotate test-cases.md with post-fix PASS statuses
-      try {
-        const tcExecutorForUpdate = new TestCaseExecutor({
-          projectRoot: this.projectRoot,
-          testCommand,
-          outputDir: PATHS.OUTPUT_DIR,
-          verbose: false,
+      if (!securityAudit.passed) {
+        const securityMsg = `[SecurityTest] Blocking findings detected after auto-fix round ${fixRound}: ${securityAudit.blockingReasons.join('; ')}`;
+        this.stateMachine.recordRisk('high', securityMsg);
+        console.warn(`[Orchestrator] ⚠️  ${securityMsg}`);
+        result = {
+          ...result,
+          passed: false,
+          exitCode: result.exitCode || 1,
+          failureSummary: [...(result.failureSummary || []), ...securityAudit.blockingReasons],
+        };
+      } else {
+        this.obs.recordTestResult({ passed: 1, failed: 0, skipped: 0, rounds: fixRound });
+        await runEvoMapFeedback(this, {
+          injectedExpIds,
+          errorContext: (result.failureSummary || []).join(' ') || (result.output || ''),
+          stageLabel: `TEST (auto-fix round ${fixRound})`,
         });
-        const cases = tcExecutorForUpdate._parseCasesFromMd();
-        if (cases.length > 0) {
-          const updatedResults = cases.map(tc => ({
-            ...tc,
-            _executionStatus: 'PASS',
-            _executionOutput: `Passed after auto-fix round ${fixRound}`,
-          }));
-          const statusIcon = { PASS: '✅', FAIL: '❌', BLOCKED: '⚠️', SKIPPED: '⏭️' };
-          const rows = updatedResults.map(tc => {
-            const icon = statusIcon[tc._executionStatus] || '❓';
-            const title = (tc.title || tc.case_id || '').replace(/\|/g, '\\|');
-            return `| ${tc.case_id} | ${title} | ${icon} ${tc._executionStatus} |`;
-          });
-          const annotation = [
-            ``,
-            `---`,
-            ``,
-            `## 🔧 Post-Fix Execution Results (Fix Round ${fixRound})`,
-            ``,
-            `> Auto-updated by TestCaseExecutor at ${new Date().toISOString()}`,
-            `> **${updatedResults.length} passed** | **0 failed** | **0 blocked**`,
-            ``,
-            `| Case ID | Title | Status |`,
-            `|---------|-------|--------|`,
-            ...rows,
-          ].join('\n');
-          const testCasesPath = path.join(PATHS.OUTPUT_DIR, 'test-cases.md');
-          if (fs.existsSync(testCasesPath)) {
-            fs.appendFileSync(testCasesPath, annotation, 'utf-8');
-            console.log(`[Orchestrator] 📝 test-cases.md updated with post-fix PASS statuses (${updatedResults.length} case(s)).`);
-          }
-        }
-      } catch (annotateErr) {
-        console.warn(`[Orchestrator] ⚠️  Could not update test-cases.md after fix (non-fatal): ${annotateErr.message}`);
-      }
+        // P1: Use recordWithContentCheck to avoid duplicate experience entries
+        this.experienceStore.recordWithContentCheck({
+          type: ExperienceType.POSITIVE,
+          category: ExperienceCategory.STABLE_PATTERN,
+          title: `Real tests passed after ${fixRound} auto-fix round(s)`,
+          content: `Tests and security checks passed after ${fixRound} fix round(s). Command: ${testCommand}. Failure summary: ${(result.failureSummary || []).slice(0, 3).join('; ')}.`,
+          skill: 'test-report',
+          tags: ['real-test', 'security-audit', 'auto-fix', 'passed'],
+        });
 
-      return;
+        // Re-annotate test-cases.md with post-fix PASS statuses
+        try {
+          const tcExecutorForUpdate = new TestCaseExecutor({
+            projectRoot: this.projectRoot,
+            testCommand,
+            outputDir: PATHS.OUTPUT_DIR,
+            verbose: false,
+          });
+          const cases = tcExecutorForUpdate._parseCasesFromMd();
+          if (cases.length > 0) {
+            const updatedResults = cases.map(tc => ({
+              ...tc,
+              _executionStatus: 'PASS',
+              _executionOutput: `Passed after auto-fix round ${fixRound}`,
+            }));
+            const statusIcon = { PASS: '✅', FAIL: '❌', BLOCKED: '⚠️', SKIPPED: '⏭️' };
+            const rows = updatedResults.map(tc => {
+              const icon = statusIcon[tc._executionStatus] || '❓';
+              const title = (tc.title || tc.case_id || '').replace(/\|/g, '\\|');
+              return `| ${tc.case_id} | ${title} | ${icon} ${tc._executionStatus} |`;
+            });
+            const annotation = [
+              ``,
+              `---`,
+              ``,
+              `## 🔧 Post-Fix Execution Results (Fix Round ${fixRound})`,
+              ``,
+              `> Auto-updated by TestCaseExecutor at ${new Date().toISOString()}`,
+              `> **${updatedResults.length} passed** | **0 failed** | **0 blocked**`,
+              ``,
+              `| Case ID | Title | Status |`,
+              `|---------|-------|--------|`,
+              ...rows,
+            ].join('\n');
+            const testCasesPath = path.join(PATHS.OUTPUT_DIR, 'test-cases.md');
+            if (fs.existsSync(testCasesPath)) {
+              fs.appendFileSync(testCasesPath, annotation, 'utf-8');
+              console.error(`[Orchestrator] 📝 test-cases.md updated with post-fix PASS statuses (${updatedResults.length} case(s)).`);
+            }
+          }
+        } catch (annotateErr) {
+          console.warn(`[Orchestrator] ⚠️  Could not update test-cases.md after fix (non-fatal): ${annotateErr.message}`);
+        }
+
+        return;
+      }
     }
 
     console.warn(`[Orchestrator] ❌ Tests still failing after fix round ${fixRound}.`);
@@ -816,6 +1053,344 @@ const fixPrompt = buildFixAgentPrompt({
   if (failOnUnfixed) {
     throw new Error(failMsg);
   }
+}
+
+function _normalizeTestProfile(profile) {
+  const p = String(profile || '').toLowerCase().trim();
+  return p === 'full' ? 'full' : 'fast';
+}
+
+/**
+ * P0 policy: changes on core orchestration or bridge/quality gate paths are high-risk.
+ * High-risk changes force TEST profile to full.
+ *
+ * @this {import('./orchestrator').Orchestrator}
+ * @returns {boolean}
+ */
+function _hasHighRiskTestScope() {
+  try {
+    const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
+    if (!fs.existsSync(codeDiffPath)) return false;
+
+    const diff = fs.readFileSync(codeDiffPath, 'utf-8');
+    return /\+\+\+\s+b\/workflow\/core\//.test(diff)
+      || /\+\+\+\s+b\/workflow\/tools\/ide-workflow-bridge\.js/.test(diff)
+      || /\+\+\+\s+b\/workflow\/core\/quality-gate\.js/.test(diff)
+      || /\+\+\+\s+b\/workflow\/core\/mcp-server\.js/.test(diff);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Build effective test command from base command + profile + impacted suites.
+ *
+ * @this {import('./orchestrator').Orchestrator}
+ * @param {string|null} baseTestCommand
+ * @param {'fast'|'full'} testProfile
+ * @param {string[]|null} impactedSuites
+ * @returns {string|null}
+ */
+function _buildProfiledTestCommand(baseTestCommand, testProfile, impactedSuites = null) {
+  if (!baseTestCommand) return null;
+
+  const profile = _normalizeTestProfile(testProfile);
+  if (profile === 'full') return baseTestCommand;
+
+  if (/--profile=/.test(baseTestCommand)) return baseTestCommand;
+  if (/--filter=/.test(baseTestCommand) || /--file=/.test(baseTestCommand)) return baseTestCommand;
+
+  const unifiedRunnerPath = path.join(this.projectRoot, 'workflow', 'tests', 'run-all-tests.js');
+  const impactedArg = Array.isArray(impactedSuites) && impactedSuites.length > 0
+    ? ` --suites=${impactedSuites.join(',')}`
+    : '';
+
+  if (/run-all-tests\.js/.test(baseTestCommand)) {
+    return `${baseTestCommand} --profile=fast${impactedArg}`;
+  }
+
+  if (/^npm\s+test\b/.test(baseTestCommand) && fs.existsSync(unifiedRunnerPath)) {
+    return `node workflow/tests/run-all-tests.js --profile=fast${impactedArg}`;
+  }
+
+  return baseTestCommand;
+}
+
+/**
+ * P1: Parse changed files from output/code.diff.
+ *
+ * @returns {string[]}
+ */
+function _collectChangedFilesFromCodeDiff() {
+  try {
+    const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
+    if (!fs.existsSync(codeDiffPath)) return [];
+
+    const diff = fs.readFileSync(codeDiffPath, 'utf-8');
+    const files = new Set();
+    const patterns = [
+      /^\+\+\+\s+b\/(.+)$/gm,
+      /^---\s+a\/(.+)$/gm,
+    ];
+
+    for (const pattern of patterns) {
+      let m;
+      while ((m = pattern.exec(diff)) !== null) {
+        const rel = (m[1] || '').trim().replace(/\\/g, '/');
+        if (rel && rel !== '/dev/null' && !rel.startsWith('null')) {
+          files.add(rel);
+        }
+      }
+    }
+
+    return Array.from(files);
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * P1: infer impacted test suites from changed files.
+ * Always includes smoke suite as safety baseline.
+ *
+ * @param {string[]} changedFiles
+ * @returns {string[]}
+ */
+function _inferImpactedSuites(changedFiles) {
+  if (!Array.isArray(changedFiles) || changedFiles.length === 0) {
+    return ['smoke', 'unit', 'integration'];
+  }
+
+  const normalized = changedFiles.map(f => String(f || '').replace(/\\/g, '/'));
+  const impacted = new Set(['smoke']);
+
+  for (const file of normalized) {
+    if (/workflow\/core\/integration-|workflow\/tests\/dual-mode-e2e/.test(file)) {
+      impacted.add('integration');
+      continue;
+    }
+
+    if (/workflow\/core\//.test(file) || /workflow\/tests\//.test(file)) {
+      impacted.add('unit');
+    }
+
+    if (/\.test\.[jt]s$|\.spec\.[jt]s$/.test(file)) {
+      impacted.add('unit');
+    }
+  }
+
+  const order = ['smoke', 'unit', 'integration'];
+  return order.filter(s => impacted.has(s));
+}
+
+/**
+ * P1.5: Build optimized re-test command for auto-fix rounds.
+ * Strategy:
+ *  - round 1: rerun failed subset when possible
+ *  - round >=2: fallback to fast profile for broad signal
+ *  - always run full baseline regression before accepting pass
+ *
+ * @this {import('./orchestrator').Orchestrator}
+ * @param {string} baseTestCommand
+ * @param {import('./test-runner').TestRunResult} previousResult
+ * @param {number} fixRound
+ * @returns {string}
+ */
+function _buildFixRoundRetestCommand(baseTestCommand, previousResult, fixRound) {
+  const fallback = baseTestCommand;
+  if (!baseTestCommand) return fallback;
+
+  const normalizedCmd = String(baseTestCommand);
+  const canUseUnifiedRunner = /run-all-tests\.js/.test(normalizedCmd)
+    || /^npm\s+test\b/.test(normalizedCmd)
+    || /^pnpm\s+test\b/.test(normalizedCmd)
+    || /^yarn\s+test\b/.test(normalizedCmd);
+
+  if (!canUseUnifiedRunner) return fallback;
+
+  const runnerCmd = 'node workflow/tests/run-all-tests.js';
+
+  if (fixRound === 1 && previousResult && Array.isArray(previousResult.failureSummary)) {
+    const failedTokens = previousResult.failureSummary
+      .map(line => {
+        const m = String(line || '').match(/(?:●|\d+\)\s*)([A-Za-z0-9_.-]{3,})/);
+        return m ? m[1] : null;
+      })
+      .filter(Boolean)
+      .slice(0, 3);
+
+    if (failedTokens.length > 0) {
+      return `${runnerCmd} --files=${failedTokens.join(',')}`;
+    }
+  }
+
+  return `${runnerCmd} --profile=fast`;
+}
+
+function _getSecurityAuditPolicy(config = {}) {
+  const policy = config.securityAudit || {};
+  const blockingSeverity = String(policy.blockingSeverity || 'high').toLowerCase();
+  return {
+    blockingSeverity: ['critical', 'high'].includes(blockingSeverity) ? blockingSeverity : 'high',
+    failOnSecrets: policy.failOnSecrets !== false,
+    cveTop: Number.isFinite(policy.cveTop) ? policy.cveTop : 30,
+    secretMaxFiles: Number.isFinite(policy.secretMaxFiles) ? policy.secretMaxFiles : 200,
+  };
+}
+
+function _severityRank(sev) {
+  const s = String(sev || '').toLowerCase();
+  if (s === 'critical') return 4;
+  if (s === 'high') return 3;
+  if (s === 'medium') return 2;
+  if (s === 'low') return 1;
+  return 0;
+}
+
+function _secretScanProject(projectRoot, maxFiles = 200) {
+  const findings = [];
+  const sourceExts = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.py', '.go', '.java', '.cs', '.rb', '.php', '.env', '.yaml', '.yml', '.json']);
+  const ignoreDirs = new Set(['node_modules', '.git', 'dist', 'build', 'output', '.idea', '.vscode', 'coverage']);
+
+  const patterns = [
+    { name: 'aws-access-key-id', severity: 'critical', regex: /\bAKIA[0-9A-Z]{16}\b/g },
+    { name: 'aws-secret-access-key', severity: 'critical', regex: /(?:AWS|aws)?[_-]?SECRET[_-]?ACCESS[_-]?KEY\s*[:=]\s*['"][A-Za-z0-9\/+=]{30,}['"]/g },
+    { name: 'github-token', severity: 'critical', regex: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g },
+    { name: 'private-key-block', severity: 'critical', regex: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g },
+    { name: 'hardcoded-password', severity: 'high', regex: /\b(password|passwd|pwd)\b\s*[:=]\s*['"][^'"\n]{6,}['"]/gi },
+    { name: 'hardcoded-api-key', severity: 'high', regex: /\b(api[_-]?key|access[_-]?token|secret[_-]?key)\b\s*[:=]\s*['"][A-Za-z0-9_\-\/.+=]{12,}['"]/gi },
+    { name: 'slack-token', severity: 'high', regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
+  ];
+
+  function walk(dir, acc) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (_) {
+      return acc;
+    }
+    for (const e of entries) {
+      if (acc.length >= maxFiles) break;
+      if (e.name.startsWith('.')) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!ignoreDirs.has(e.name)) walk(full, acc);
+      } else if (sourceExts.has(path.extname(e.name).toLowerCase())) {
+        acc.push(full);
+      }
+    }
+    return acc;
+  }
+
+  const files = walk(projectRoot, []);
+  for (const absPath of files) {
+    let content = '';
+    try {
+      content = fs.readFileSync(absPath, 'utf-8');
+    } catch (_) {
+      continue;
+    }
+
+    for (const p of patterns) {
+      p.regex.lastIndex = 0;
+      let m;
+      while ((m = p.regex.exec(content)) !== null) {
+        const snippet = String(m[0] || '').slice(0, 120);
+        findings.push({
+          type: p.name,
+          severity: p.severity,
+          file: path.relative(projectRoot, absPath).replace(/\\/g, '/'),
+          snippet,
+        });
+        if (findings.length >= 100) break;
+      }
+      if (findings.length >= 100) break;
+    }
+    if (findings.length >= 100) break;
+  }
+
+  return {
+    filesScanned: files.length,
+    findings,
+  };
+}
+
+async function _runSecurityAuditForTestStage({ testReportPath, stageLabel }) {
+  const policy = _getSecurityAuditPolicy(this._config || {});
+  const blockingRank = _severityRank(policy.blockingSeverity);
+
+  const report = {
+    passed: true,
+    blockingReasons: [],
+    cve: null,
+    secrets: null,
+  };
+
+  try {
+    const scannerPath = path.join(this.projectRoot, 'workflow', 'tools', 'ide-cve-scanner.js');
+    if (fs.existsSync(scannerPath)) {
+      const raw = execFileSync('node', [scannerPath, '--project-root', this.projectRoot, '--top', String(policy.cveTop)], {
+        cwd: this.projectRoot,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const parsed = JSON.parse(raw || '{}');
+      report.cve = parsed;
+      const vulns = Array.isArray(parsed.vulnerabilities) ? parsed.vulnerabilities : [];
+      const blockingCve = vulns.filter(v => _severityRank(v.severity) >= blockingRank);
+      if (blockingCve.length > 0) {
+        report.passed = false;
+        report.blockingReasons.push(`CVE findings >= ${policy.blockingSeverity}: ${blockingCve.length}`);
+      }
+    } else {
+      console.warn(`[Orchestrator] ⚠️  Security CVE scanner not found: ${scannerPath}`);
+    }
+  } catch (err) {
+    report.passed = false;
+    report.blockingReasons.push(`CVE scan failed: ${err.message}`);
+  }
+
+  try {
+    const secretReport = _secretScanProject(this.projectRoot, policy.secretMaxFiles);
+    report.secrets = secretReport;
+    if (policy.failOnSecrets && secretReport.findings.length > 0) {
+      report.passed = false;
+      const highOrAbove = secretReport.findings.filter(f => _severityRank(f.severity) >= blockingRank).length;
+      if (highOrAbove > 0) {
+        report.blockingReasons.push(`Secret findings >= ${policy.blockingSeverity}: ${highOrAbove}`);
+      } else {
+        report.blockingReasons.push(`Secret findings detected: ${secretReport.findings.length}`);
+      }
+    }
+  } catch (err) {
+    report.passed = false;
+    report.blockingReasons.push(`Secret scan failed: ${err.message}`);
+  }
+
+  const summaryLine = `[Orchestrator][SECURITY_AUDIT] stage=${stageLabel} passed=${report.passed} cveTotal=${report.cve?.summary?.total ?? 0} secrets=${report.secrets?.findings?.length ?? 0} threshold=${policy.blockingSeverity}`;
+  console.error(summaryLine);
+
+  if (fs.existsSync(testReportPath)) {
+    const cveSummary = report.cve?.summary || { total: 0, critical: 0, high: 0, medium: 0, low: 0, unknown: 0 };
+    const secretTop = (report.secrets?.findings || []).slice(0, 10);
+    const appendix = [
+      '',
+      '---',
+      '',
+      '## 🔐 Security Audit (Dependency + Secret Scan)',
+      '',
+      `- Stage: ${stageLabel}`,
+      `- Blocking Threshold: ${policy.blockingSeverity.toUpperCase()}`,
+      `- Overall: ${report.passed ? 'PASS' : 'FAIL'}`,
+      `- CVE: total=${cveSummary.total}, critical=${cveSummary.critical}, high=${cveSummary.high}, medium=${cveSummary.medium}, low=${cveSummary.low}`,
+      `- Secrets: ${(report.secrets?.findings || []).length} finding(s) across ${(report.secrets?.filesScanned || 0)} scanned file(s)`,
+      ...(report.blockingReasons.length > 0 ? ['', `- Blocking Reasons: ${report.blockingReasons.join(' | ')}`] : []),
+      ...(secretTop.length > 0 ? ['', '### Top Secret Findings', ...secretTop.map((f, i) => `${i + 1}. [${String(f.severity || '').toUpperCase()}] ${f.type} in ${f.file}: \`${String(f.snippet || '').replace(/`/g, '')}\``)] : []),
+    ].join('\n');
+    fs.appendFileSync(testReportPath, appendix, 'utf-8');
+  }
+
+  return report;
 }
 
 module.exports = { _runTester, _runRealTestLoop };

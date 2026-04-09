@@ -13,6 +13,122 @@ const path = require('path');
 const { estimateTokens } = require('../tools/thin-tools');
 const { MAX_DEP_DEPTH, MAX_DEP_SKILL_TOKENS } = require('./context-loader-config');
 
+// ─── Progressive Loading Configuration ───────────────────────────────────────
+
+/**
+ * Progressive Disclosure Configuration (Claude Code Skill pattern)
+ *
+ * Skills can define a "description" section that is ALWAYS loaded (for matching),
+ * while the detailed "content" is only loaded when the task keywords indicate
+ * specific need.
+ *
+ * This reduces token usage for matched skills that aren't immediately relevant
+to the current task.
+ *
+ * Skill format:
+ *   ---
+ *   name: skill-name
+ *   triggers:
+ *     keywords: [foo, bar]
+ *   ---
+ *
+ *   ## Description（常驻）
+ *   Short summary visible for all tasks.
+ *
+ *   <!-- PROGRESSIVE_LOAD_TRIGGER: foo|bar -->
+ *
+ *   ## Content（按需）
+ *   Detailed content loaded only when foo|bar keywords present in task.
+ */
+const PROGRESSIVE_CONFIG = {
+  // Marker that separates description from content
+  PROGRESSIVE_TRIGGER_MARKER: /<!--\s*PROGRESSIVE_LOAD_TRIGGER:\s*([^>]+)\s*-->/i,
+  // Default behavior: load full content or just description
+  DEFAULT_LOAD_FULL: true,
+  // Max tokens for description-only mode (much smaller than full skill)
+  MAX_DESCRIPTION_TOKENS: 150,
+  // Token budget threshold: below this, only load descriptions
+  PROGRESSIVE_MODE_THRESHOLD: 2000,
+};
+
+// Track task keywords for progressive loading
+let _currentTaskKeywords = [];
+
+/**
+ * Sets current task keywords for progressive skill loading.
+ * Called by ContextLoader before loading skills.
+ *
+ * @param {string[]} keywords - Array of keywords/phrases from task text
+ */
+function setProgressiveLoadContext(keywords) {
+  _currentTaskKeywords = keywords || [];
+}
+
+/**
+ * Checks if progressive mode should be used based on available tokens
+ * @param {number} availableTokens
+ * @returns {boolean}
+ */
+function shouldUseProgressiveMode(availableTokens) {
+  return availableTokens < PROGRESSIVE_CONFIG.PROGRESSIVE_MODE_THRESHOLD;
+}
+
+/**
+ * Parses a skill file to extract description-only or full content
+ * based on progressive loading rules.
+ *
+ * @param {string} content - Full skill file content
+ * @param {string[]} taskKeywords - Keywords from current task (if empty, load full)
+ * @param {object} meta - Parsed frontmatter metadata
+ * @returns {{ content: string, isProgressive: boolean, matchedTriggers: string[] }}
+ */
+function parseProgressiveSkill(content, taskKeywords, meta) {
+  // Check if skill has progressive trigger marker
+  const markerMatch = content.match(PROGRESSIVE_CONFIG.PROGRESSIVE_TRIGGER_MARKER);
+
+  if (!markerMatch) {
+    // No progressive marker - return full content
+    return { content, isProgressive: false, matchedTriggers: [] };
+  }
+
+  // Extract triggers from marker
+  const triggerStr = markerMatch[1];
+  const triggers = triggerStr.split('|').map(t => t.trim().toLowerCase());
+
+  // Check if any task keyword matches any trigger
+  const matchedTriggers = [];
+  if (taskKeywords.length > 0) {
+    for (const keyword of taskKeywords) {
+      const keywordLower = keyword.toLowerCase();
+      for (const trigger of triggers) {
+        if (keywordLower.includes(trigger) || trigger.includes(keywordLower)) {
+          matchedTriggers.push(trigger);
+        }
+      }
+    }
+  }
+
+  // Always load full content if:
+  // 1. No progressive threshold (not in tight token budget)
+  // 2. Keyword match found
+  // 3. Triggers include '@always' wildcard
+  if (!shouldUseProgressiveMode(PROGRESSIVE_CONFIG.PROGRESSIVE_MODE_THRESHOLD) ||
+      matchedTriggers.length > 0 ||
+      triggers.includes('@always')) {
+    return { content, isProgressive: false, matchedTriggers: [...new Set(matchedTriggers)] };
+  }
+
+  // Progressive mode: extract only the description section
+  const markerIndex = content.indexOf(markerMatch[0]);
+  const descriptionContent = content.slice(0, markerIndex).trim();
+
+  return {
+    content: descriptionContent,
+    isProgressive: true,
+    matchedTriggers: [],
+  };
+}
+
 // ─── Skill Loading ───────────────────────────────────────────────────────────
 
 /**
@@ -149,23 +265,47 @@ function loadSkill({
     return null;
   }
 
-  // Use frontmatter max_tokens if available, capped by tokenBudget
-  const effectiveBudget = meta.max_tokens
-    ? Math.min(meta.max_tokens, tokenBudget)
-    : tokenBudget;
+  // ─── Progressive Loading (P2: Skill Progressive Disclosure) ─────────────
+  // Apply progressive loading logic for non-dependency skills
+  let skillContent = content;
+  let isProgressive = false;
+  let matchedTriggers = [];
 
-  // For dependency skills, use only the body (compact)
-  const toTruncate = isDep ? body : content;
+  if (!isDep) {
+    const progressiveResult = parseProgressiveSkill(content, _currentTaskKeywords, meta);
+    skillContent = progressiveResult.content;
+    isProgressive = progressiveResult.isProgressive;
+    matchedTriggers = progressiveResult.matchedTriggers;
+  }
+
+  // Use frontmatter max_tokens if available, capped by tokenBudget
+  // For progressive mode, use smaller description-only budget
+  const effectiveBudget = isProgressive
+    ? Math.min(PROGRESSIVE_CONFIG.MAX_DESCRIPTION_TOKENS, tokenBudget)
+    : (meta.max_tokens
+        ? Math.min(meta.max_tokens, tokenBudget)
+        : tokenBudget);
+
+  // For dependency skills or progressive mode, use only the body/fragment
+  const toTruncate = isDep ? body : skillContent;
   const truncated = truncate(toTruncate, effectiveBudget);
   if (!truncated) return null;
 
   const tokens = estimateTokens(truncated);
-  const label = isDep ? '🔗 Dep-Skill' : '🧠 Skill';
+  const label = isDep ? '🔗 Dep-Skill' : (isProgressive ? '📋 Skill-Summary' : '🧠 Skill');
+
+  // Add progressive loading indicator if applicable
+  const progressiveIndicator = isProgressive
+    ? `\n\n> 💡 *Progressive mode: Full skill content available. Use ${matchedTriggers.length > 0 ? matchedTriggers.slice(0, 3).join(', ') : 'task keywords'} to load complete version.*`
+    : '';
+
   return {
-    section: `## ${label}: ${skillName}\n\n${truncated}`,
-    source: `${skillName}.md`,
+    section: `## ${label}: ${skillName}\n\n${truncated}${progressiveIndicator}`,
+    source: `${skillName}.md${isProgressive ? ' (description-only)' : ''}`,
     tokens,
     dependencies,
+    isProgressive,
+    matchedTriggers,
   };
 }
 
@@ -336,4 +476,8 @@ module.exports = {
   validateSkillContent,
   truncateContent,
   createLazyEnrichmentTrigger,
+  // Progressive loading (P2)
+  setProgressiveLoadContext,
+  shouldUseProgressiveMode,
+  parseProgressiveSkill,
 };

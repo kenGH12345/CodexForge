@@ -38,8 +38,12 @@ function buildMetrics(state) {
     _reflectionGating,
     _skillInjectedCounts,
     _skillEffectiveSet,
+    _skillGatePassCounts,
+    _skillGateFailCounts,
+    _skillFalsePositiveSignals,
     _promptTraces,
     _expHitDetails,
+    _routeDecisions,
     getPromptTraceSummary,
   } = state;
 
@@ -90,8 +94,20 @@ function buildMetrics(state) {
     skillUsage: _skillInjectedCounts.size > 0 ? {
       injected: Object.fromEntries(_skillInjectedCounts),
       effective: [..._skillEffectiveSet],
+      gatePass: Object.fromEntries(_skillGatePassCounts || new Map()),
+      gateFail: Object.fromEntries(_skillGateFailCounts || new Map()),
+      falsePositiveSignals: Object.fromEntries(_skillFalsePositiveSignals || new Map()),
       totalInjected: [..._skillInjectedCounts.values()].reduce((s, c) => s + c, 0),
       totalEffective: _skillEffectiveSet.size,
+    } : null,
+    routeDecisions: (_routeDecisions && _routeDecisions.length > 0) ? {
+      total: _routeDecisions.length,
+      fallbackTriggered: _routeDecisions.filter(r => !!r.routeMeta?.fallback?.triggered).length,
+      byRole: _routeDecisions.reduce((acc, item) => {
+        acc[item.role] = (acc[item.role] || 0) + 1;
+        return acc;
+      }, {}),
+      recent: _routeDecisions.slice(-20),
     } : null,
     // P2: Detailed experience attribution records
     expHitDetails: (_expHitDetails && _expHitDetails.length > 0) ? _expHitDetails : null,
@@ -119,8 +135,12 @@ function buildHistoryLine(metrics, state) {
     _reflectionGating,
     _skillInjectedCounts,
     _skillEffectiveSet,
+    _skillGatePassCounts,
+    _skillGateFailCounts,
+    _skillFalsePositiveSignals,
     _promptTraces,
     _stageRetries,
+    _routeDecisions,
   } = state;
 
   return {
@@ -162,10 +182,17 @@ function buildHistoryLine(metrics, state) {
     promptTraceAvgLength: _promptTraces.length > 0
       ? Math.round(_promptTraces.reduce((s, t) => s + t.promptLength, 0) / _promptTraces.length)
       : null,
+    routeDecisionCount: (_routeDecisions && _routeDecisions.length > 0) ? _routeDecisions.length : 0,
+    routeFallbackCount: (_routeDecisions && _routeDecisions.length > 0)
+      ? _routeDecisions.filter(r => !!r.routeMeta?.fallback?.triggered).length
+      : 0,
     skillInjectedNames: _skillInjectedCounts.size > 0 ? [..._skillInjectedCounts.keys()] : null,
     skillInjectedTotal: _skillInjectedCounts.size > 0 ? [..._skillInjectedCounts.values()].reduce((s, c) => s + c, 0) : null,
     skillEffectiveNames: _skillEffectiveSet.size > 0 ? [..._skillEffectiveSet] : null,
     skillEffectiveCount: _skillEffectiveSet.size > 0 ? _skillEffectiveSet.size : null,
+    skillGatePassByName: (_skillGatePassCounts && _skillGatePassCounts.size > 0) ? Object.fromEntries(_skillGatePassCounts) : null,
+    skillGateFailByName: (_skillGateFailCounts && _skillGateFailCounts.size > 0) ? Object.fromEntries(_skillGateFailCounts) : null,
+    skillFalsePositiveSignalsByName: (_skillFalsePositiveSignals && _skillFalsePositiveSignals.size > 0) ? Object.fromEntries(_skillFalsePositiveSignals) : null,
     stageRetryCount: (_stageRetries && _stageRetries.length) || 0,
     stageRetries: (_stageRetries && _stageRetries.length > 0) ? _stageRetries : null,
   };

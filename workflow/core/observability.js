@@ -46,6 +46,13 @@ class Observability {
     /** @type {{role:string, estimatedTokens:number, ts:number}[]} */
     this._llmCalls = [];
 
+    /**
+     * P1: Route decision + fallback telemetry per LLM call.
+     * Captures router decision rationale, tier selection, fallback chain, and trace context.
+     * @type {Array<object>}
+     */
+    this._routeDecisions = [];
+
     /** @type {{stage:string, message:string, ts:number}[]} */
     this._errors = [];
 
@@ -101,6 +108,12 @@ class Observability {
     this._skillInjectedCounts = new Map();
     /** @type {Set<string>} */
     this._skillEffectiveSet = new Set();
+    /** @type {Map<string, number>} */
+    this._skillGatePassCounts = new Map();
+    /** @type {Map<string, number>} */
+    this._skillGateFailCounts = new Map();
+    /** @type {Map<string, number>} */
+    this._skillFalsePositiveSignals = new Map();
 
     /**
      * Defect G fix: Clarification quality metrics tracking.
@@ -215,11 +228,15 @@ class Observability {
   // ─── LLM Call Tracking ────────────────────────────────────────────────────
 
   /**
-   * Record a single LLM call with estimated token count and optional prompt digest.
+   * Record a single LLM call with estimated token count, optional prompt digest,
+   * and optional routing metadata.
    *
    * P0 Enhancement: accepts an optional `promptText` parameter. When provided,
    * a compact digest is stored in `_promptTraces[]` for later analysis by
    * SelfReflectionEngine and cross-session prompt A/B comparison.
+   *
+   * P1 Enhancement: accepts optional `routeMeta` to track route/fallback decisions
+   * in the same timeline as LLM calls.
    *
    * The full prompt is NEVER stored — only a hash + head + tail + length.
    * This keeps storage bounded while enabling meaningful debugging.
@@ -227,10 +244,23 @@ class Observability {
    * @param {string} role            - Agent role (analyst / architect / developer / tester)
    * @param {number} estimatedTokens - Token estimate from buildAgentPrompt
    * @param {string} [promptText]    - Optional: full prompt text for digest extraction
+   * @param {object} [routeMeta]     - Optional: route/fallback/trace context metadata
    */
-  recordLlmCall(role, estimatedTokens = 0, promptText) {
+  recordLlmCall(role, estimatedTokens = 0, promptText, routeMeta = null) {
     const ts = Date.now();
     this._llmCalls.push({ role, estimatedTokens, actualTokens: null, ts });
+
+    if (routeMeta && typeof routeMeta === 'object') {
+      this._routeDecisions.push({
+        ts,
+        role,
+        routeMeta,
+      });
+      // Bound memory for long sessions
+      if (this._routeDecisions.length > 500) {
+        this._routeDecisions = this._routeDecisions.slice(-500);
+      }
+    }
 
     // P0 Prompt Tracing: store compact digest if prompt text is provided
     if (promptText && typeof promptText === 'string' && promptText.length > 0) {
@@ -400,6 +430,57 @@ class Observability {
       const normalised = name.replace(/\.md$/, '').replace(/\s*\(.*\)$/, '');
       if (normalised) this._skillEffectiveSet.add(normalised);
     }
+  }
+
+  /**
+   * P2: Records per-skill quality gate outcomes for effectiveness policy.
+   *
+   * @param {string[]} skillNames
+   * @param {object} [opts]
+   * @param {boolean} [opts.passed=true]
+   * @param {number} [opts.falsePositiveSignals=0]
+   */
+  recordSkillGateOutcome(skillNames, opts = {}) {
+    if (!skillNames || skillNames.length === 0) return;
+    const passed = opts.passed !== false;
+    const falsePositiveSignals = Number(opts.falsePositiveSignals || 0);
+
+    for (const name of skillNames) {
+      const normalised = (name || '').replace(/\.md$/, '').replace(/\s*\(.*\)$/, '');
+      if (!normalised) continue;
+
+      if (passed) {
+        this._skillGatePassCounts.set(
+          normalised,
+          (this._skillGatePassCounts.get(normalised) || 0) + 1
+        );
+      } else {
+        this._skillGateFailCounts.set(
+          normalised,
+          (this._skillGateFailCounts.get(normalised) || 0) + 1
+        );
+      }
+
+      if (falsePositiveSignals > 0) {
+        this._skillFalsePositiveSignals.set(
+          normalised,
+          (this._skillFalsePositiveSignals.get(normalised) || 0) + falsePositiveSignals
+        );
+      }
+    }
+  }
+
+  /**
+   * P2: Returns current per-skill effectiveness snapshot for policy evaluation.
+   */
+  getSkillEffectivenessSnapshot() {
+    return {
+      injected: Object.fromEntries(this._skillInjectedCounts),
+      effective: [...this._skillEffectiveSet],
+      gatePass: Object.fromEntries(this._skillGatePassCounts),
+      gateFail: Object.fromEntries(this._skillGateFailCounts),
+      falsePositiveSignals: Object.fromEntries(this._skillFalsePositiveSignals),
+    };
   }
 
   /**
@@ -689,8 +770,17 @@ class Observability {
       testResult:      this._testResult,
       blockTelemetry:  this._blockTelemetry,
       reflectionGating: this._reflectionGating,
+      skillEffectiveness: this.getSkillEffectivenessSnapshot(),
       // P0 Prompt Tracing: compact summary of prompt traces for this session
       promptTraceSummary: this.getPromptTraceSummary(),
+      routeDecisionSummary: {
+        total: this._routeDecisions.length,
+        fallbackTriggered: this._routeDecisions.filter(r => !!r.routeMeta?.fallback?.triggered).length,
+        byRole: this._routeDecisions.reduce((acc, item) => {
+          acc[item.role] = (acc[item.role] || 0) + 1;
+          return acc;
+        }, {}),
+      },
     };
   }
 
