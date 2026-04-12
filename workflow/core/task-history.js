@@ -39,8 +39,8 @@ class TaskHistory {
    * @param {string} [storePath] - Path to task-history.json
    */
   constructor(storePath = null) {
-    const { PATHS } = require('./constants');
-    this.storePath = storePath || path.join(PATHS.OUTPUT_DIR, 'task-history.json');
+const { PATHS, getDefaultOutputDir } = require('./constants');
+    this.storePath = storePath || path.join(getDefaultOutputDir(), 'task-history.json');
     /** @type {TaskHistoryEntry[]} */
     this.entries = [];
     this._load();

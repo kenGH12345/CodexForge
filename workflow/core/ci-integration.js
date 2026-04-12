@@ -147,8 +147,8 @@ class CIIntegration {
     if (!skipEntropy) {
       try {
         const { EntropyGC } = require('./entropy-gc');
-        const { PATHS } = require('./constants');
-        const gc = new EntropyGC({ projectRoot: this._root, outputDir: PATHS.OUTPUT_DIR });
+        const { getDefaultOutputDir } = require('./constants');
+        const gc = new EntropyGC({ projectRoot: this._root, outputDir: getDefaultOutputDir() });
         const gcResult = await gc.run();
         steps.push({
           name:    'entropy',

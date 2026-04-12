@@ -78,7 +78,7 @@ const prTitle = `[CODEX FORGE] ${extra.requirement || extra.goal || `${mode} wor
       labels: opts.labels,
       reviewers: opts.reviewers,
       draft: opts.draft,
-      outputDir: PATHS.OUTPUT_DIR,
+      outputDir: this._outputDir,
     });
 
     await this.hooks.emit(HOOK_EVENTS.GIT_PR_CREATED, {
@@ -123,7 +123,7 @@ function _buildPRBody(mode, extra = {}) {
 
   // ── Diff Statistics ──────────────────────────────────────────────────────
   // Extract file change counts from code.diff if available
-  const diffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
+  const diffPath = path.join(this._outputDir, 'code.diff');
   if (fs.existsSync(diffPath)) {
     try {
       const diffContent = fs.readFileSync(diffPath, 'utf-8');
@@ -161,7 +161,7 @@ function _buildPRBody(mode, extra = {}) {
 
   // ── Task Completion Status ───────────────────────────────────────────────
   // Extract task status from execution-plan.md if available
-  const planPath = path.join(PATHS.OUTPUT_DIR, 'execution-plan.md');
+  const planPath = path.join(this._outputDir, 'execution-plan.md');
   if (fs.existsSync(planPath)) {
     try {
       const planContent = fs.readFileSync(planPath, 'utf-8');
@@ -185,7 +185,7 @@ function _buildPRBody(mode, extra = {}) {
 
   // ── Test Results ─────────────────────────────────────────────────────────
   // Extract test summary from test-report.md if available
-  const testPath = path.join(PATHS.OUTPUT_DIR, 'test-report.md');
+  const testPath = path.join(this._outputDir, 'test-report.md');
   if (fs.existsSync(testPath)) {
     try {
       const testContent = fs.readFileSync(testPath, 'utf-8');
@@ -210,7 +210,7 @@ function _buildPRBody(mode, extra = {}) {
 
   // ── Requirement Overview ─────────────────────────────────────────────────
   // Include requirement overview (condensed — first heading + first paragraph)
-  const reqPath = path.join(PATHS.OUTPUT_DIR, 'requirement.md');
+  const reqPath = path.join(this._outputDir, 'requirement.md');
   if (fs.existsSync(reqPath)) {
     try {
       const reqContent = fs.readFileSync(reqPath, 'utf-8');
@@ -229,7 +229,7 @@ function _buildPRBody(mode, extra = {}) {
 
   // ── Architecture Summary ─────────────────────────────────────────────────
   // Include architecture key decisions (condensed)
-  const archPath = path.join(PATHS.OUTPUT_DIR, 'architecture.md');
+  const archPath = path.join(this._outputDir, 'architecture.md');
   if (fs.existsSync(archPath)) {
     try {
       const archContent = fs.readFileSync(archPath, 'utf-8');

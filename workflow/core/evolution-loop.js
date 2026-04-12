@@ -30,7 +30,7 @@ const fs = require('fs');
 const path = require('path');
 
 // 导入 PATHS 常量作为默认 outputDir
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 
 // ─── Signal Types (Extended from SessionSignalDetector) ───────────────────────
 
@@ -94,8 +94,8 @@ class EvolutionLoop {
     this.experienceStore = options.experienceStore || null;
     this.skillEvolution = options.skillEvolution || null;
     this.sessionSignalDetector = options.sessionSignalDetector || null;
-    // 默认使用 PATHS.OUTPUT_DIR 而不是 process.cwd()
-    this.outputDir = options.outputDir || PATHS.OUTPUT_DIR;
+    // Use injected outputDir or runtime default (not static constant)
+    this.outputDir = options.outputDir || getDefaultOutputDir();
     this.confidenceThreshold = options.confidenceThreshold ?? 0.5;
     this.verbose = options.verbose !== false;
     this.llmCall = options.llmCall || null;

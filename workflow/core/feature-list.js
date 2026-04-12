@@ -22,7 +22,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 
 // ─── Feature Status ───────────────────────────────────────────────────────────
 
@@ -53,7 +53,7 @@ class FeatureList {
    * @param {string} [storePath] - Path to persist feature list JSON
    */
   constructor(storePath = null) {
-    this.storePath = storePath || path.join(PATHS.OUTPUT_DIR, 'feature-list.json');
+    this.storePath = storePath || path.join(getDefaultOutputDir(), 'feature-list.json');
     /** @type {Map<string, Feature>} */
     this.features = new Map();
     this._load();

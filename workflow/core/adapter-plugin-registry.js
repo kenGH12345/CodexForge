@@ -426,8 +426,7 @@ function createBuiltinPlugins() {
       helperFn: async (orch, opts) => {
         const fs = require('fs');
         const path = require('path');
-        const { PATHS } = require('./constants');
-        const outputDir = orch._outputDir || PATHS.OUTPUT_DIR;
+        const outputDir = orch._outputDir;
         const archPath = path.join(outputDir, 'architecture.md');
         if (!fs.existsSync(archPath)) return '';
         const archContent = fs.readFileSync(archPath, 'utf-8');
@@ -515,8 +514,7 @@ function createBuiltinPlugins() {
       helperFn: async (orch, opts) => {
         const fs = require('fs');
         const path = require('path');
-        const { PATHS } = require('./constants');
-        const outputDir = orch._outputDir || PATHS.OUTPUT_DIR;
+        const outputDir = orch._outputDir;
         const archPath = path.join(outputDir, 'architecture.md');
         if (!fs.existsSync(archPath)) return '';
         const archContent = fs.readFileSync(archPath, 'utf-8');

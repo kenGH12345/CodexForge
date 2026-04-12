@@ -16,7 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('../core/constants');
+const { PATHS, getDefaultOutputDir } = require('../core/constants');
 const { extractJsonBlock, validateJsonBlock } = require('../core/agent-output-schema');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -473,8 +473,8 @@ class FileRefBus {
    * Saves the communication log to the output directory.
    */
   saveLog() {
-    const logPath = path.join(PATHS.OUTPUT_DIR, 'communication-log.json');
-    if (!fs.existsSync(PATHS.OUTPUT_DIR)) fs.mkdirSync(PATHS.OUTPUT_DIR, { recursive: true });
+    const logPath = path.join(getDefaultOutputDir(), 'communication-log.json');
+    if (!fs.existsSync(getDefaultOutputDir())) fs.mkdirSync(getDefaultOutputDir(), { recursive: true });
     // N67 fix: atomic write – write to a .tmp file first, then rename over the target.
     // Prevents a process crash mid-write from corrupting communication-log.json.
     const tmpPath = logPath + '.tmp';

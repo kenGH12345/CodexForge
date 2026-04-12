@@ -41,7 +41,7 @@ const crypto = require('crypto');
 const { once } = require('events');
 
 // 导入 PATHS 常量作为默认 outputDir
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 
 // ─── Event Types ─────────────────────────────────────────────────────────────
 // NOTE: UnifiedTraceCollector 只用于系统健康度观测
@@ -83,9 +83,8 @@ class UnifiedTraceCollector {
    * @param {boolean} [opts.verbose=true] - Log to console
    */
   constructor(opts = {}) {
-    // 默认使用 PATHS.OUTPUT_DIR 而不是 process.cwd()
-    // 这确保 trace 文件始终写入 workflow/output 目录
-    this._outputDir = opts.outputDir || PATHS.OUTPUT_DIR;
+    // Use injected outputDir or runtime default (not static constant)
+    this._outputDir = opts.outputDir || getDefaultOutputDir();
     this._runCategory = this._normalizeRunCategory(opts.runCategory);
     this._healthOutputDir = path.join(this._outputDir, 'health', this._runCategory);
     this._sessionId = opts.sessionId || this._generateSessionId();

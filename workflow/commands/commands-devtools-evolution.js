@@ -10,7 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('../core/constants');
+const { PATHS, getDefaultOutputDir } = require('../core/constants');
 
 /**
  * Registers evolution devtools commands.
@@ -146,7 +146,7 @@ registerCommand(
     let regressionGuard = null;
     try {
       const { RegressionGuard } = require('../core/regression-guard');
-      regressionGuard = new RegressionGuard({ outputDir: PATHS.OUTPUT_DIR, verbose });
+      regressionGuard = new RegressionGuard({ outputDir: orch?._outputDir || getDefaultOutputDir(), verbose });
       baseline = regressionGuard.captureBaseline();
       log(`📸 Baseline captured: ${Object.keys(baseline.metrics).length} metrics, ${Object.keys(baseline.skillVersions).length} skills`);
     } catch (err) {
@@ -156,7 +156,7 @@ registerCommand(
     log(`🧬 Self-evolution started ${quick ? '(quick mode)' : '(full mode)'}${dryRun ? ' [DRY RUN]' : ''}`);
 
     // ── P3d: Incremental Mode — only full-audit changed files ─────────────
-    const lastRunPath = path.join(PATHS.OUTPUT_DIR, 'evolve-last-run.json');
+    const lastRunPath = path.join(orch?._outputDir || getDefaultOutputDir(), 'evolve-last-run.json');
     let lastEvolveTime = 0;
     let incrementalMode = false;
     try {
@@ -452,7 +452,7 @@ registerCommand(
         // Get adaptive strategy for YELLOW tier
         const Obs = require('../core/observability');
         const cfgAutoFix = (orch._config && orch._config.autoFixLoop) || {};
-        const strategy = Obs.deriveStrategy(PATHS.OUTPUT_DIR, {
+        const strategy = Obs.deriveStrategy(orch._outputDir || getDefaultOutputDir(), {
           maxFixRounds:    cfgAutoFix.maxFixRounds    ?? 2,
           maxReviewRounds: cfgAutoFix.maxReviewRounds ?? 2,
           maxExpInjected:  cfgAutoFix.maxExpInjected  ?? 5,
@@ -503,9 +503,10 @@ registerCommand(
 
     // Save JSON report
     try {
-      const reportPath = path.join(PATHS.OUTPUT_DIR, 'evolve-report.json');
-      if (!fs.existsSync(PATHS.OUTPUT_DIR)) {
-        fs.mkdirSync(PATHS.OUTPUT_DIR, { recursive: true });
+      const _outDir = orch?._outputDir || getDefaultOutputDir();
+      const reportPath = path.join(_outDir, 'evolve-report.json');
+      if (!fs.existsSync(_outDir)) {
+        fs.mkdirSync(_outDir, { recursive: true });
       }
       fs.writeFileSync(reportPath, JSON.stringify({ ...report, elapsed, timestamp: new Date().toISOString() }, null, 2));
     } catch (_) { /* non-fatal */ }

@@ -31,7 +31,7 @@ function _buildInvestigationTools(stageLabel) {
     const filesToRead = new Set([PATHS.AGENTS_MD]);
 
     // Always include requirements.md if it exists
-    filesToRead.add(path.join(PATHS.OUTPUT_DIR, 'requirements.md'));
+    filesToRead.add(path.join(self._outputDir, 'requirements.md'));
 
     // Dynamically add artifacts from all upstream stages (via StageContextStore)
     if (self.stageCtx) {
@@ -53,11 +53,11 @@ function _buildInvestigationTools(stageLabel) {
 
     // Fallback: always include well-known output files for each stage
     if (stageLabel === 'Code' || stageLabel === 'TestReport') {
-      filesToRead.add(path.join(PATHS.OUTPUT_DIR, 'architecture.md'));
+      filesToRead.add(path.join(self._outputDir, 'architecture.md'));
     }
     if (stageLabel === 'TestReport') {
-      filesToRead.add(path.join(PATHS.OUTPUT_DIR, 'code.diff'));
-      filesToRead.add(path.join(PATHS.OUTPUT_DIR, 'test-execution-report.md'));
+      filesToRead.add(path.join(self._outputDir, 'code.diff'));
+      filesToRead.add(path.join(self._outputDir, 'test-execution-report.md'));
     }
 
     const parts = [];

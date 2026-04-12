@@ -22,7 +22,7 @@ registerCommand(
   'Build or query the structured code graph. Usage: /graph [build] [search <keyword>] [file <path>] [calls <symbol>] [hotspot [N]] [reusable]',
   async (args, context) => {
     const { CodeGraph } = require('../core/code-graph');
-    const { PATHS }     = require('../core/constants');
+    const { getDefaultOutputDir } = require('../core/constants');
     const projectRoot   = context.orchestrator?.projectRoot || path.resolve(__dirname, '..', '..');
     const cfg           = context.orchestrator?._config || {};
 
@@ -30,7 +30,7 @@ registerCommand(
     // Only create a new instance for build commands (which need fresh config).
     const graph = context.orchestrator?.codeGraph || new CodeGraph({
       projectRoot,
-      outputDir:      PATHS.OUTPUT_DIR,
+      outputDir:      context.orchestrator?._outputDir || getDefaultOutputDir(),
       extensions:     cfg.sourceExtensions,
       ignoreDirs:     cfg.ignoreDirs,
       scopeDirs:      cfg.codeGraph?.scopeDirs,
@@ -151,9 +151,9 @@ registerCommand(
   'Show cross-session metrics trends from metrics-history.jsonl',
   async (_args, _context) => {
     const { Observability } = require('../core/observability');
-    const { PATHS }         = require('../core/constants');
+    const { getDefaultOutputDir } = require('../core/constants');
 
-    const history = Observability.loadHistory(PATHS.OUTPUT_DIR);
+    const history = Observability.loadHistory(context.orchestrator?._outputDir || getDefaultOutputDir());
     if (history.length === 0) {
       return `No history found. Run at least one workflow session to generate \`output/metrics-history.jsonl\`.`;
     }

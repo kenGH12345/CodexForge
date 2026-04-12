@@ -14,7 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('../core/constants');
+const { PATHS, getDefaultOutputDir } = require('../core/constants');
 const { displayModeBanner, getIDEDetectionResult, isFullIDEAgentMode } = require('../core/ide-detection');
 const { isIDEAgentMode } = require('../core/agent-handoff-log');
 const { enforceRuntimePolicy } = require('../core/runtime-policy-enforcer');
@@ -684,16 +684,17 @@ function registerWorkflowCommands(registerCommand) {
     'workflow-artifacts',
     'List all artifact files produced by the current workflow',
     async (_args, _context) => {
-      if (!fs.existsSync(PATHS.OUTPUT_DIR)) {
+      const _outDir = _context.orchestrator?._outputDir || getDefaultOutputDir();
+      if (!fs.existsSync(_outDir)) {
         return `No output directory found. No artifacts produced yet.`;
       }
-      const files = fs.readdirSync(PATHS.OUTPUT_DIR);
+      const files = fs.readdirSync(_outDir);
       if (files.length === 0) {
         return `Output directory is empty. No artifacts produced yet.`;
       }
       const lines = [`## Workflow Artifacts (${files.length} files)\n`];
       for (const file of files) {
-        const fullPath = path.join(PATHS.OUTPUT_DIR, file);
+        const fullPath = path.join(_outDir, file);
         const stat = fs.statSync(fullPath);
         lines.push(`- **${file}** (${stat.size} bytes, modified: ${stat.mtime.toISOString()})`);
       }

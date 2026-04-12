@@ -10,7 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('../core/constants');
+const { PATHS, getDefaultOutputDir } = require('../core/constants');
 
 /**
  * Registers skills devtools commands.
@@ -25,7 +25,7 @@ registerCommand(
       // List skills that are candidates for enrichment (placeholder/empty)
       const { SkillEvolutionEngine } = require('../core/skill-evolution');
       const skillsDir = PATHS.SKILLS_DIR;
-      const registryPath = path.join(PATHS.OUTPUT_DIR, 'skill-registry.json');
+      const registryPath = path.join(context.orchestrator?._outputDir || getDefaultOutputDir(), 'skill-registry.json');
 
       let engine;
       if (context.orchestrator && context.orchestrator.services && context.orchestrator.services.has('skillEvolution')) {
@@ -160,7 +160,7 @@ registerCommand(
     // Get skill list via SkillEvolutionEngine
     const { SkillEvolutionEngine } = require('../core/skill-evolution');
     const skillsDir = PATHS.SKILLS_DIR;
-    const registryPath = path.join(PATHS.OUTPUT_DIR, 'skill-registry.json');
+    const registryPath = path.join(context.orchestrator?._outputDir || getDefaultOutputDir(), 'skill-registry.json');
 
     let engine;
     if (context.orchestrator.services && context.orchestrator.services.has('skillEvolution')) {

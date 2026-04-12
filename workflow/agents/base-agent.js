@@ -15,7 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const { AGENT_CONTRACTS, AgentRole } = require('../core/types');
-const { PATHS, HOOK_EVENTS } = require('../core/constants');
+const { PATHS, HOOK_EVENTS, getDefaultOutputDir } = require('../core/constants');
 const { translateMdFile } = require('../core/i18n-translator');
 
 class BaseAgent {
@@ -38,7 +38,7 @@ class BaseAgent {
     this.llmCall = llmCall;
     this.hookEmitter = hookEmitter;
     // P2-b: instance-level output directory
-    this._outputDir = opts.outputDir || PATHS.OUTPUT_DIR;
+    this._outputDir = opts.outputDir || getDefaultOutputDir();
   }
 
   // ─── Public API ───────────────────────────────────────────────────────────────

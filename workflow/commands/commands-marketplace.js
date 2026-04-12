@@ -11,7 +11,7 @@
 'use strict';
 
 const path = require('path');
-const { PATHS } = require('../core/constants');
+const { PATHS, getDefaultOutputDir } = require('../core/constants');
 
 /**
  * Registers marketplace commands into the shared command registry.
@@ -40,7 +40,7 @@ registerCommand(
     const orch = context.orchestrator;
     const marketplace = new SkillMarketplace({
       skillsDir: path.join(orch?.projectRoot || process.cwd(), 'workflow', 'skills'),
-      outputDir: orch?._outputDir || PATHS.OUTPUT_DIR,
+      outputDir: orch?._outputDir || getDefaultOutputDir(),
       skillEvolution: orch?.skillEvolution,
       verbose: true,
     });
@@ -86,7 +86,7 @@ registerCommand(
     const orch = context.orchestrator;
     const marketplace = new SkillMarketplace({
       skillsDir: path.join(orch?.projectRoot || process.cwd(), 'workflow', 'skills'),
-      outputDir: orch?._outputDir || PATHS.OUTPUT_DIR,
+      outputDir: orch?._outputDir || getDefaultOutputDir(),
       skillEvolution: orch?.skillEvolution,
       verbose: true,
     });
@@ -128,7 +128,7 @@ registerCommand(
     const orch = context.orchestrator;
     const marketplace = new SkillMarketplace({
       skillsDir: path.join(orch?.projectRoot || process.cwd(), 'workflow', 'skills'),
-      outputDir: orch?._outputDir || PATHS.OUTPUT_DIR,
+      outputDir: orch?._outputDir || getDefaultOutputDir(),
       verbose: false,
     });
 

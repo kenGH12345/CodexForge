@@ -20,7 +20,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 
 // ─── Review Status ──────────────────────────────────────────────────────────
 
@@ -51,7 +51,7 @@ class ModuleReviewTracker {
    * @param {boolean} [options.verbose] - Enable verbose logging
    */
   constructor(options = {}) {
-    this.storePath = options.storePath || path.join(PATHS.OUTPUT_DIR, 'module-reviews.json');
+    this.storePath = options.storePath || path.join(getDefaultOutputDir(), 'module-reviews.json');
     this.verbose = options.verbose || false;
     
     /** @type {Map<string, ModuleReview>} */

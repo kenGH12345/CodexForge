@@ -60,8 +60,8 @@ function _resolveCachePath(projectRoot) {
   }
   // Fallback: workflow output directory
   try {
-    const { PATHS } = require('./constants');
-    return path.join(PATHS.OUTPUT_DIR, 'arch-knowledge-cache.json');
+    const { getDefaultOutputDir } = require('./constants');
+    return path.join(getDefaultOutputDir(), 'arch-knowledge-cache.json');
   } catch {
     return path.join(projectRoot, 'output', 'arch-knowledge-cache.json');
   }

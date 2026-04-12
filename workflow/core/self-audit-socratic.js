@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const { ReflectionType, ReflectionSeverity } = require('./self-reflection-types');
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 const { SELF_AUDIT_QUESTIONS, USER_REVIEW_CATEGORIES, STAGE_QUESTIONS } = require('./self-audit-questions');
 const { IssuePriority } = require('./self-audit-types');
 const { runAllChecks } = require('./module-audit-checks');
@@ -46,7 +46,7 @@ class SelfAuditSocratic {
   constructor(options = {}) {
     this._selfReflection = options.selfReflection || null;
     this._llmCall = options.llmCall || null;
-    this._outputDir = options.outputDir || PATHS.OUTPUT_DIR;
+    this._outputDir = options.outputDir || getDefaultOutputDir();
     this._verbose = options.verbose ?? false;
     this._userReviewsPath = options.userReviewsPath || path.join(this._outputDir, 'reflections.json');
 

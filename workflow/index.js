@@ -36,7 +36,7 @@ const { PlannerAgent } = require('./agents/planner-agent');
 const { buildAgentPrompt, setPromptSlotManager, getPromptSlotManager, setSelfReflectionEngine, setSkillEvolutionEngine, setOrchestrator, setEmbeddingService, setContextLoaderCheapLlm, setContextLoaderExperienceStore, preloadAdrDigest } = require('./core/prompt-builder');
 const { PromptSlotManager } = require('./core/prompt-slot-manager');
 const { WorkflowState, AgentRole, STATE_ORDER } = require('./core/types');
-const { PATHS, HOOK_EVENTS } = require('./core/constants');
+const { PATHS, HOOK_EVENTS, outputPath, getDefaultOutputDir } = require('./core/constants');
 // AgentFlow modules
 const { TaskManager, TaskStatus } = require('./core/task-manager');
 const { ExperienceStore, ExperienceType, ExperienceCategory } = require('./core/experience-store');
@@ -172,10 +172,10 @@ this.projectId = projectId;
     // files would overwrite each other.
     //
     // Fix: accept an optional outputDir constructor argument. If not provided, fall back
-    // to the global PATHS.OUTPUT_DIR (backward-compatible). Store as this._outputDir so
+    // to getDefaultOutputDir() (runtime-evaluated, backward-compatible). Store as this._outputDir so
     // all instance methods (StageContextStore, buildDeveloperContextBlock, etc.) can use
     // it instead of the global constant.
-    this._outputDir = outputDir || PATHS.OUTPUT_DIR;
+    this._outputDir = outputDir || getDefaultOutputDir();
     this._runCategory = ['prod', 'test', 'diag'].includes(String(runCategory || '').toLowerCase())
       ? String(runCategory).toLowerCase()
       : 'prod';
@@ -199,7 +199,7 @@ this.projectId = projectId;
     this.dryRun = dryRun === true;
     this.sandbox = new DryRunSandbox({
       projectRoot: this.projectRoot,
-      outputDir:   PATHS.OUTPUT_DIR,
+      outputDir:   this._outputDir,
       verbose:     true,
     });
     if (this.dryRun) {
@@ -586,7 +586,7 @@ this.projectId = projectId;
     this._rollbackCounters = new Map();
 
     // ── Observability: session-level metrics collector ──────────────────────
-    this.obs = new Observability(PATHS.OUTPUT_DIR, projectId);
+    this.obs = new Observability(this._outputDir, projectId);
 
     // ── P0 Runtime Loop: event stream + task recovery + metrics cache ───────
     this.p0RuntimeLoop = new P0RuntimeLoop({
@@ -601,7 +601,7 @@ this.projectId = projectId;
     // Reads metrics-history.jsonl (if it exists) and adjusts retry/review counts
     // based on recent failure patterns. Falls back to config defaults if no history.
     const cfgAutoFix = (this._config && this._config.autoFixLoop) || {};
-    this._adaptiveStrategy = Observability.deriveStrategy(PATHS.OUTPUT_DIR, {
+    this._adaptiveStrategy = Observability.deriveStrategy(this._outputDir, {
       maxFixRounds:    cfgAutoFix.maxFixRounds    ?? 2,
       maxReviewRounds: cfgAutoFix.maxReviewRounds ?? 2,
       maxExpInjected:  cfgAutoFix.maxExpInjected  ?? 5,
@@ -621,7 +621,7 @@ this.projectId = projectId;
     // If prompt-variants.json exists, buildAgentPrompt() will resolve prefixes from
     // the variant registry instead of using hardcoded AGENT_FIXED_PREFIXES.
     this.promptSlotManager = new PromptSlotManager(
-      PATHS.PROMPT_VARIANTS_JSON,
+      outputPath('prompt-variants.json', this._outputDir),
       this.hooks.getEmitter()
     );
     // Inject into prompt-builder module so buildAgentPrompt() can access it
@@ -646,7 +646,7 @@ this.projectId = projectId;
     this._selfReportCollector = selfReportCollector;
     selfReportCollector.reset({
       sessionId: projectId,
-      outputDir: this._outputDir || PATHS.OUTPUT_DIR,
+      outputDir: this._outputDir,
     });
     this.services.registerValue('selfReportCollector', selfReportCollector);
 
@@ -677,7 +677,7 @@ this.projectId = projectId;
     const embeddingCfg = (this._config && this._config.embedding) || {};
     if (embeddingCfg.enabled !== false) {
       this._embeddingService = new EmbeddingService({
-        cacheDir: path.join(this.projectRoot || PATHS.OUTPUT_DIR, '.workflow', 'models'),
+        cacheDir: path.join(this.projectRoot || getDefaultOutputDir(), '.workflow', 'models'),
         maxCacheSize: embeddingCfg.maxCacheSize || 500,
         quantized: embeddingCfg.quantized !== false,
       });
@@ -716,7 +716,7 @@ this.projectId = projectId;
     try {
       this.entropyGC = new EntropyGC({
         projectRoot:  this.projectRoot,
-        outputDir:    PATHS.OUTPUT_DIR,
+        outputDir:    this._outputDir,
         extensions:   entropyCfg.sourceExtensions,
         ignoreDirs:   entropyCfg.ignoreDirs,
         maxLines:     entropyCfg.maxLines,
@@ -752,7 +752,7 @@ this.projectId = projectId;
     try {
       this.codeGraph = new CodeGraph({
         projectRoot:    this.projectRoot,
-        outputDir:      PATHS.OUTPUT_DIR,
+        outputDir:      this._outputDir,
         extensions:     codeGraphCfg.sourceExtensions,
         ignoreDirs:     codeGraphCfg.ignoreDirs,
         scopeDirs:      codeGraphCfg.scopeDirs,

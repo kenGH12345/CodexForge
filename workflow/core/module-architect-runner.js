@@ -26,7 +26,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 const { AgentRole } = require('./types');
 const { buildJsonBlockInstruction } = require('./agent-output-schema');
 
@@ -383,7 +383,7 @@ async function runModuleAwareArchitect(orch, requirementContent, expContext, opt
   // ── 4. Merge into unified architecture.md ─────────────────────────────────
   const mergedDoc = mergeModuleArchitectures(moduleResults, crossCutting, requirementContent);
 
-  const outputPath = opts.outputPath || path.join(PATHS.OUTPUT_DIR, 'architecture.md');
+  const outputPath = opts.outputPath || path.join(getDefaultOutputDir(), 'architecture.md');
   fs.writeFileSync(outputPath, mergedDoc, 'utf-8');
 
   const totalElapsed = Date.now() - startTime;

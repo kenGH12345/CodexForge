@@ -13,7 +13,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 const { introspectionCollector } = require('./workflow-introspection-collector');
 
 // ─── Skill Evolution Engine ───────────────────────────────────────────────────
@@ -25,7 +25,7 @@ class SkillEvolutionEngine {
    */
   constructor(skillsDir = null, registryPath = null) {
     this.skillsDir = skillsDir || PATHS.SKILLS_DIR;
-    this.registryPath = registryPath || path.join(PATHS.OUTPUT_DIR, 'skill-registry.json');
+    this.registryPath = registryPath || path.join(getDefaultOutputDir(), 'skill-registry.json');
     /** @type {Map<string, SkillMeta>} */
     this.registry = new Map();
     /** @type {Map<string, string>} P1-5 fix: in-memory skill content cache for batch operations */

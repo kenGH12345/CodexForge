@@ -12,7 +12,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 
 // Lazy-loaded to avoid circular dependency (ExperienceStore → ComplaintWall → ExperienceStore).
 // Resolved on first use inside methods that need ExperienceType/ExperienceCategory.
@@ -76,7 +76,7 @@ class ComplaintWall {
    *   Both bridges are idempotent and safe to call multiple times.
    */
   constructor(storePath = null, { experienceStore = null } = {}) {
-    this.storePath = storePath || path.join(PATHS.OUTPUT_DIR, 'complaints.json');
+    this.storePath = storePath || path.join(getDefaultOutputDir(), 'complaints.json');
     /** @type {Complaint[]} */
     this.complaints = [];
     // N44 fix: monotonic counter to guarantee unique IDs even within the same millisecond.

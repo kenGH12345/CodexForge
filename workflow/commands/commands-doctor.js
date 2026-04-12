@@ -22,7 +22,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const { PATHS } = require('../core/constants');
+const { PATHS, getDefaultOutputDir } = require('../core/constants');
 const { getIDEDetectionResult } = require('../core/ide-detection');
 
 /**
@@ -105,7 +105,7 @@ function registerDoctorCommands(registerCommand) {
 
       // ── 5. Output directory ───────────────────────────────────────────
       check('Output directory', () => {
-        const dir = PATHS.OUTPUT_DIR;
+        const dir = getDefaultOutputDir();
         if (fs.existsSync(dir)) {
           // Test write access
           const testFile = path.join(dir, '.doctor-test');

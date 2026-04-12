@@ -15,7 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS, EXPERIENCE } = require('./constants');
+const { PATHS, EXPERIENCE, getDefaultOutputDir } = require('./constants');
 const { ExperienceType, ExperienceCategory, UNIVERSAL_CATEGORIES, KnowledgeLayer, getLayerForCategory } = require('./experience-types');
 const { extractKeywords, ExperienceQueryMixin, STOPWORDS, SHORT_WORD_WHITELIST, ExperienceDeduplicator, computeExperienceSimilarity } = require('./experience-query');
 const { ExperienceEvolutionMixin } = require('./experience-evolution');
@@ -56,7 +56,7 @@ class ExperienceStore {
       }
       this.storePath = path.join(projectStoreDir, 'experiences.json');
     } else {
-      this.storePath = storePath || path.join(PATHS.OUTPUT_DIR, 'experiences.json');
+      this.storePath = storePath || path.join(getDefaultOutputDir(), 'experiences.json');
     }
     /** @type {Experience[]} */
     this.experiences = [];

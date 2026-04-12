@@ -63,13 +63,13 @@ const OrchestratorInitMixin = {
     if (!this._initCompleted.has('ttlCleanup')) {
       try {
         // ── Dual-path TTL cleanup (ADR-DUAL-PATH) ──
-        // Orchestrator reads/writes workflow-status.json in PATHS.OUTPUT_DIR (workflow/output/),
+        // Orchestrator reads/writes workflow-status.json in this._outputDir,
         // but IDE Bridge and hooks (pre-tool-use-guard, stop-guard) read/write in
         // <projectRoot>/output/. Both paths must be cleaned to prevent stale state
         // from blocking new workflow startup.
         const projectRoot = this.projectRoot || process.cwd();
         const statusPaths = [
-          path.join(this._outputDir || PATHS.OUTPUT_DIR, 'workflow-status.json'),
+          path.join(this._outputDir, 'workflow-status.json'),
           path.join(projectRoot, 'output', 'workflow-status.json'),
         ];
         // Deduplicate (same path if projectRoot == workflow/..)
@@ -139,7 +139,7 @@ const OrchestratorInitMixin = {
           }
         } // end for (statusPath of uniquePaths)
         // Also clean up stale trace files older than 48 hours
-        const traceDir = this._outputDir || PATHS.OUTPUT_DIR;
+        const traceDir = this._outputDir;
         if (fs.existsSync(traceDir)) {
           const TRACE_TTL_MS = 48 * 60 * 60 * 1000;
           try {
@@ -428,7 +428,7 @@ const OrchestratorInitMixin = {
       try {
         const { EventJournal } = require('./event-journal');
         this.eventJournal = new EventJournal({
-          outputDir: this._outputDir || PATHS.OUTPUT_DIR,
+          outputDir: this._outputDir,
           sessionId: `${this.projectId || 'session'}-${Date.now()}`,
           enabled: true,
         });
@@ -461,7 +461,7 @@ const OrchestratorInitMixin = {
         const { introspectionManager } = require('./introspection-manager');
         introspectionManager.initialize({
           sessionId: `${this.projectId || 'session'}-${Date.now()}`,
-          outputDir: this._outputDir || PATHS.OUTPUT_DIR,
+          outputDir: this._outputDir,
           enabled: true,
           autoGenerateReports: true,
         });
@@ -486,7 +486,7 @@ const OrchestratorInitMixin = {
       try {
         const { AgentHandoffLog } = require('./agent-handoff-log');
         this.handoffLog = new AgentHandoffLog({
-          outputDir: this._outputDir || PATHS.OUTPUT_DIR,
+          outputDir: this._outputDir,
           sessionId: `${this.projectId || 'session'}-${Date.now()}`,
           verbose: !this._quietMode,
         });
@@ -516,7 +516,7 @@ const OrchestratorInitMixin = {
       try {
         const { AgentFeedbackSystem } = require('./agent-feedback-system');
         this.feedbackSystem = new AgentFeedbackSystem({
-          outputDir: this._outputDir || PATHS.OUTPUT_DIR,
+          outputDir: this._outputDir,
           sessionId: `${this.projectId || 'session'}-${Date.now()}`,
           eventBus: this.experienceEventBus || null,
           verbose: !this._quietMode,
@@ -745,7 +745,7 @@ const OrchestratorInitMixin = {
     let historyLength = 0;
     try {
       const ObsStrategy = require('./observability-strategy');
-      const history = ObsStrategy.loadHistory(this._outputDir || PATHS.OUTPUT_DIR);
+      const history = ObsStrategy.loadHistory(this._outputDir);
       historyLength = history.length;
       hasMetricsHistory = historyLength >= 3;
     } catch (_) { /* non-fatal */ }

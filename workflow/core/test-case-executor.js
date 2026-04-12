@@ -3,7 +3,7 @@
 const fs   = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 
 /**
  * TestCaseExecutor – Bridges the gap between test-case planning and real execution.
@@ -36,7 +36,7 @@ class TestCaseExecutor {
     this.projectRoot = opts.projectRoot || process.cwd();
     this.testCommand = opts.testCommand || null;
     this.framework   = opts.framework   || 'auto';
-    this.outputDir   = opts.outputDir   || PATHS.OUTPUT_DIR;
+    this.outputDir   = opts.outputDir   || getDefaultOutputDir();
     this.timeoutMs   = opts.timeoutMs   || 60_000;
     this.verbose     = opts.verbose     ?? true;
 

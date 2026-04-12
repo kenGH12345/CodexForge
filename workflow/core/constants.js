@@ -9,11 +9,47 @@ const path = require('path');
 /** Root directory of the workflow system (resolved at runtime) */
 const WORKFLOW_ROOT = path.resolve(__dirname, '..');
 
+// ─── Runtime Output Directory (IoC) ────────────────────────────────────────────
+//
+// ADR-RUNTIME-OUTPUT: The output directory is a RUNTIME concern, not a static
+// constant. It depends on which entry point launched the process:
+//   - CLI mode:        process.cwd() + '/output'
+//   - IDE Bridge mode: projectRoot + '/output'  (passed via args)
+//   - MCP Server mode: projectRoot + '/output'  (passed via config)
+//
+// getDefaultOutputDir() returns a sensible default (process.cwd()/output).
+// All modules should prefer the injected `outputDir` from Orchestrator/ServiceContainer
+// and only fall back to getDefaultOutputDir() when no injection is available.
+//
+// outputPath(filename, outputDir?) is a convenience helper that resolves a
+// filename relative to a given outputDir (or the default).
+
+/**
+ * Returns the default output directory based on the current working directory.
+ * This is a RUNTIME function, not a static constant — it evaluates process.cwd()
+ * at call time, so it always reflects the actual working directory.
+ *
+ * @returns {string} Absolute path to the default output directory
+ */
+function getDefaultOutputDir() {
+  return path.join(process.cwd(), 'output');
+}
+
+/**
+ * Resolves an artifact filename to an absolute path within the given output directory.
+ * If no outputDir is provided, falls back to getDefaultOutputDir().
+ *
+ * @param {string} filename - The artifact filename (e.g. 'architecture.md', 'workflow-status.json')
+ * @param {string} [outputDir] - Optional explicit output directory (from Orchestrator._outputDir)
+ * @returns {string} Absolute path to the artifact file
+ */
+function outputPath(filename, outputDir) {
+  return path.join(outputDir || getDefaultOutputDir(), filename);
+}
+
 const PATHS = {
   /** Persistent checkpoint file – written on every state transition */
   MANIFEST: path.join(WORKFLOW_ROOT, 'manifest.json'),
-  /** All agent-produced artifact files land here */
-  OUTPUT_DIR: path.join(WORKFLOW_ROOT, 'output'),
   /** Agent implementation modules */
   AGENTS_DIR: path.join(WORKFLOW_ROOT, 'agents'),
   /** Skills SOP markdown files */
@@ -26,36 +62,20 @@ const PATHS = {
   TOOLS_DIR: path.join(WORKFLOW_ROOT, 'tools'),
   /** Global memory context file */
   AGENTS_MD: path.join(WORKFLOW_ROOT, '..', 'AGENTS.md'),
-  /** AgentFlow: persistent task list */
-  TASKS_JSON: path.join(WORKFLOW_ROOT, 'output', 'tasks.json'),
-  /** AgentFlow: persistent experience store (WORKFLOW scope - global) */
-  EXPERIENCES_JSON: path.join(WORKFLOW_ROOT, 'output', 'experiences.json'),
   /** AgentFlow: project experience store (PROJECT scope - per-project) */
   PROJECT_EXPERIENCES_JSON: '.workflow/experiences.json',
-  /** AgentFlow: complaint wall */
-  COMPLAINTS_JSON: path.join(WORKFLOW_ROOT, 'output', 'complaints.json'),
-  /** AgentFlow: skill registry */
-  SKILL_REGISTRY_JSON: path.join(WORKFLOW_ROOT, 'output', 'skill-registry.json'),
-  /** Cross-session metrics history (JSONL) */
-  METRICS_HISTORY_JSONL: path.join(WORKFLOW_ROOT, 'output', 'metrics-history.jsonl'),
-  /** Structured code graph index */
-  CODE_GRAPH_JSON: path.join(WORKFLOW_ROOT, 'output', 'code-graph.json'),
-  /** Code graph markdown summary */
-  CODE_GRAPH_MD: path.join(WORKFLOW_ROOT, 'output', 'code-graph.md'),
-  /** Git PR description file (written by GitIntegration.createPR) */
-  PR_DESCRIPTION_MD: path.join(WORKFLOW_ROOT, 'output', 'pr-description.md'),
-  /** Dry-run sandbox report (written when dryRun: true) */
-  DRYRUN_REPORT_MD: path.join(WORKFLOW_ROOT, 'output', 'dry-run-report.md'),
-  /** HTML session report (interactive visualisation) */
-  HTML_REPORT: path.join(WORKFLOW_ROOT, 'output', 'session-report.html'),
-  /** LLM query expansion synonym/alias table (auto-accumulated, persistent) */
-  SYNONYM_TABLE_JSON: path.join(WORKFLOW_ROOT, 'output', 'synonym-table.json'),
-  /** Prompt A/B variant registry (auto-managed by PromptSlotManager) */
-  PROMPT_VARIANTS_JSON: path.join(WORKFLOW_ROOT, 'output', 'prompt-variants.json'),
-  /** Cross-session task history (Recall Memory) */
-  TASK_HISTORY_JSON: path.join(WORKFLOW_ROOT, 'output', 'task-history.json'),
-  /** P0 runtime recovery checkpoint (event-driven task restore) */
-  TASK_RECOVERY_CHECKPOINT_JSON: path.join(WORKFLOW_ROOT, 'output', 'task-recovery-checkpoint.json'),
+
+  /**
+   * @deprecated Use getDefaultOutputDir() or Orchestrator._outputDir instead.
+   * This getter exists ONLY for backward compatibility during the migration period.
+   * It will be removed once all 22 consuming files are migrated to DI.
+   *
+   * IMPORTANT: This is now a GETTER that evaluates at access time (not module-load time),
+   * so it correctly reflects the current working directory even if process.cwd() changes.
+   */
+  get OUTPUT_DIR() {
+    return getDefaultOutputDir();
+  },
 };
 
 // ─── Output Artifact File Names ────────────────────────────────────────────────
@@ -224,4 +244,7 @@ module.exports = {
   EXPERIENCE,
   PROJECT_SCALE,
   HOOK_EVENTS,
+  // ADR-RUNTIME-OUTPUT: Runtime output directory helpers (IoC)
+  getDefaultOutputDir,
+  outputPath,
 };

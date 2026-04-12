@@ -12,7 +12,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 
 // ─── Task Status ──────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ class TaskManager {
    * @param {string} [storePath] - Path to persist task list JSON
    */
   constructor(storePath = null) {
-    this.storePath = storePath || path.join(PATHS.OUTPUT_DIR, 'tasks.json');
+    this.storePath = storePath || path.join(getDefaultOutputDir(), 'tasks.json');
     /** @type {Map<string, Task>} */
     this.tasks = new Map();
     this._load();

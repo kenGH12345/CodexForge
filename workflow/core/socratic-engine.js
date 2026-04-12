@@ -18,7 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
-const { PATHS } = require('../core/constants');
+const { PATHS, getDefaultOutputDir } = require('../core/constants');
 
 // ─── Question Builder ─────────────────────────────────────────────────────────
 
@@ -89,7 +89,7 @@ class SocraticEngine {
    * @param {string} contextFilePath - Path to the context file where answers are persisted
    */
   constructor(contextFilePath = null) {
-    this.contextFilePath = contextFilePath || path.join(PATHS.OUTPUT_DIR, 'decisions.json');
+    this.contextFilePath = contextFilePath || path.join(getDefaultOutputDir(), 'decisions.json');
     this._decisions = this._loadDecisions();
   }
 

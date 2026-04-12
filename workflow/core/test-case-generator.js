@@ -2,7 +2,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { PATHS } = require('./constants');
+const { PATHS, getDefaultOutputDir } = require('./constants');
 const { translateMdFile } = require('./i18n-translator');
 
 /**
@@ -30,7 +30,7 @@ class TestCaseGenerator {
   constructor(llmCall, opts = {}) {
     this._llmCall   = llmCall;
     this._verbose   = opts.verbose ?? false;
-    this._outputDir = opts.outputDir || PATHS.OUTPUT_DIR;
+    this._outputDir = opts.outputDir || getDefaultOutputDir();
   }
 
   /**

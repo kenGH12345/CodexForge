@@ -10,7 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('../core/constants');
+const { PATHS, getDefaultOutputDir } = require('../core/constants');
 
 /**
  * Registers infra devtools commands.
@@ -22,7 +22,6 @@ registerCommand(
   'Run entropy GC scan: detect architectural drift, oversized files, stale docs. [--path <dir>]',
   async (args, context) => {
     const { EntropyGC } = require('../core/entropy-gc');
-    const { PATHS }     = require('../core/constants');
 
     // Allow --path override for scanning a different project root
     const pathMatch  = args.match(/--path\s+(\S+)/);
@@ -35,7 +34,7 @@ registerCommand(
 
     const gc = new EntropyGC({
       projectRoot,
-      outputDir:  PATHS.OUTPUT_DIR,
+      outputDir:  context.orchestrator?._outputDir || getDefaultOutputDir(),
       extensions: cfg.sourceExtensions,
       ignoreDirs: cfg.ignoreDirs,
       maxLines:   cfg.maxLines,
@@ -71,8 +70,8 @@ registerCommand(
   'metrics',
   'Show the last workflow session metrics from output/run-metrics.json',
   async (_args, context) => {
-    const { PATHS } = require('../core/constants');
-    const metricsPath = path.join(PATHS.OUTPUT_DIR, 'run-metrics.json');
+    const _outDir = context.orchestrator?._outputDir || getDefaultOutputDir();
+    const metricsPath = path.join(_outDir, 'run-metrics.json');
 
     if (!fs.existsSync(metricsPath)) {
       return `No metrics found. Run a workflow first to generate \`output/run-metrics.json\`.`;
@@ -192,8 +191,8 @@ registerCommand(
   'Generate an interactive HTML session report from the last workflow run',
   async (_args, _context) => {
     const { Observability } = require('../core/observability');
-    const { PATHS }         = require('../core/constants');
-    const metricsPath = path.join(PATHS.OUTPUT_DIR, 'run-metrics.json');
+    const _outDir2 = _context.orchestrator?._outputDir || getDefaultOutputDir();
+    const metricsPath = path.join(_outDir2, 'run-metrics.json');
 
     if (!fs.existsSync(metricsPath)) {
       return `No metrics found. Run a workflow first to generate \`output/run-metrics.json\`.`;
@@ -207,7 +206,7 @@ registerCommand(
     }
 
     // Create a temporary Observability instance to generate the report
-    const obs = new Observability(PATHS.OUTPUT_DIR, m.projectId || 'unknown');
+    const obs = new Observability(_outDir2, m.projectId || 'unknown');
 
     // Hydrate from saved metrics for HTML generation
     obs._sessionId  = m.sessionId;
