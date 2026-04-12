@@ -326,6 +326,9 @@ const results = await batcher.batchLlmCalls(tasks, this.llm.invoke.bind(this.llm
 
 ### TaskBatcher
 
+> **⚠️ Status: INACTIVE — Library ready, integration pending. Zero callers in codebase.**
+> Code is complete (630 lines, DependencyGraph + PriorityQueue + concurrency control) but not yet integrated into any orchestrator stage.
+
 1. **依赖必须是 DAG** — 循环依赖会抛出 `TaskDependencyCycleError`
 2. **执行顺序不完全保证** — 同一拓扑层的任务可能以任意顺序执行
 3. **Token 预算需要手动指定** — 使用 `estimatedTokens` 进行预算控制

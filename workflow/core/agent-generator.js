@@ -23,7 +23,7 @@ const { WF_PIPELINE_LABEL, WF_ROUTING_HINT } = require('./workflow-routing-polic
 
 // ─── Prompt Version (bump this when _buildCorePrompt changes) ────────────────
 // Used to detect stale agent files in already-initialised projects.
-const PROMPT_VERSION = '2.14.0'; // 2.14.0: +scheduler-check (session-start overdue task detection, replaces background scheduler)
+const PROMPT_VERSION = '2.15.0'; // 2.15.0: +comment-conciseness (CODE stage token efficiency, Coding Principle #10, STYLE-002 check)
 
 // ─── Agent Definition Targets ─────────────────────────────────────────────────
 
@@ -34,6 +34,13 @@ const AGENT_TARGETS = [
     dir: '.codebuddy/agents',
     filename: 'workflow-agent.md',
     format: 'codebuddy',
+  },
+  {
+    id: 'codebuddy-rule',
+    name: 'CodeBuddy Rule (auto-loaded by Craft mode)',
+    dir: '.codebuddy/rules',
+    filename: 'workflow-trigger.mdc',
+    format: 'codebuddy-rule',
   },
   {
     id: 'cursor',
@@ -434,7 +441,7 @@ node ${workflowRoot}/tools/ide-workflow-bridge.js experience-evolve --project-ro
 Parse the JSON output. If \`distillation.merged > 0\`, similar experiences were consolidated.
 If \`layerHealth.healthy\` is false, too many PLATFORM/DOMAIN experiences — capture more PRACTICE ones.
 If \`duplicateAnalysis.potentialSavings > 0\`, consider reviewing merge suggestions.
-**This replaces the Orchestrator's \`_finalizeWorkflow()\` evolution trigger.**
+**This replaces the Orchestrator's declarative teardown pipeline evolution trigger.**
 
 **Deep Audit** — Run 7-dimension system health scan:
 \`\`\`
@@ -533,7 +540,7 @@ This is the IDE-native equivalent of the Orchestrator's TechRadar module.
 
 ### Lifecycle Bridge Commands (Full Orchestrator Parity)
 
-These commands give IDE Agent mode **complete parity** with the Orchestrator's init and teardown lifecycle.
+These commands give IDE Agent mode **complete parity** with the Orchestrator's init and declarative teardown pipeline lifecycle.
 
 **Contract Validation** — Verify core module interface contracts (Orchestrator Step 5b):
 \`\`\`
@@ -793,6 +800,7 @@ For each item, evaluate PASS/FAIL/N-A. If any HIGH/CRITICAL item is FAIL, fix be
 | INTF-001 | Interface | HIGH | Return objects contain all fields expected by callers |
 | EXPORT-001 | Exports | MED | module.exports includes all symbols require()d by others |
 | STYLE-001 | Style | LOW | No dead code (commented-out blocks, unreachable branches) |
+| STYLE-002 | Style | MED | No redundant comments (comments that restate code, section-divider banners, JSDoc on private functions) — max 1 comment per 10 LOC |
 
 > Output a "🔍 Code Self-Review" section with your evaluation.
 > For any FAIL item, explain what you found and how you fixed it.
@@ -959,7 +967,7 @@ node ${workflowRoot}/tools/ide-workflow-bridge.js execution-validate --project-r
 node ${workflowRoot}/tools/ide-workflow-bridge.js experience-transfer --action publish --project-root .
 \`\`\`
 
-> These commands replicate the Orchestrator's 15-step teardown sequence.
+> These commands replicate the Orchestrator's declarative teardown pipeline (28 steps).
 > Task history recording is **MANDATORY** — it enables cross-session continuity.
 > Session scoring determines whether to capture experiences from this session.
 
@@ -1004,6 +1012,7 @@ Each line is a valid JSON object with:
 | 7 | **Clear intent over clever code** — Choose the simplest solution |
 | 8 | **Guard Clause & Early Return** — Use guard clauses for error cases, keep main logic un-nested |
 | 9 | **Resource Safety** — Ensure all resources (locks, handles, callbacks) are properly released |
+| 10 | **Concise Comments** — Write minimal, essential comments ONLY. Comments are EXPENSIVE in token cost (loaded into every LLM context). Prefer self-documenting names. Comment ONLY "why", never "what". Max density: 1 comment per 10 LOC. NO JSDoc on private functions. NO section-divider banners. |
 
 ## DO ✅
 
@@ -1031,6 +1040,9 @@ Each line is a valid JSON object with:
 - Don't use \`Grep\`/\`Glob\` tools — use \`codebase_search\`/\`grep_search\`/\`list_dir\` (IDE-native)
 - Don't use Bash to write/edit files — use \`edit_file\`/\`replace_in_file\`/\`Write\`/\`MultiEdit\` (prevents hanging)
 - Don't produce shallow output — every analysis deserves depth and thoroughness
+- Don't write redundant comments that restate the code — \`const maxRetry = 3; // max retry count\` wastes tokens in every LLM context window
+- Don't add section-divider comment banners (\`// ─── Helpers ───\`) — use file structure and naming instead
+- Don't add JSDoc on private/internal functions — only document exported public API
 
 ## 📋 Session Start Checklist (MANDATORY)
 
@@ -1193,6 +1205,29 @@ ${corePrompt}
 }
 
 /**
+ * Generate CodeBuddy Rule (.mdc format) — auto-loaded by Craft mode.
+ *
+ * Unlike .codebuddy/agents/ (which requires manual selection from the dropdown),
+ * .codebuddy/rules/*.mdc files are AUTOMATICALLY injected into every Craft
+ * conversation. This is the CodeBuddy equivalent of Cursor's .cursor/rules/.
+ *
+ * We generate a compact rule that:
+ *  1. Recognises /wf commands and triggers the workflow
+ *  2. Contains the full workflow execution protocol
+ *  3. Does NOT duplicate the entire agent prompt (too large for a rule)
+ */
+function _buildCodeBuddyRule(corePrompt) {
+  return `---
+description: "WorkFlowAgent workflow trigger — recognises /wf commands and executes the 7-stage development pipeline"
+globs:
+alwaysApply: true
+---
+
+${corePrompt}
+`;
+}
+
+/**
  * Generate Cursor agent rule (.mdc format with frontmatter).
  */
 function _buildCursorAgent(corePrompt) {
@@ -1270,10 +1305,11 @@ function generateIDEAgents(projectRoot, config, options = {}) {
     // Build content based on format
     let content;
     switch (target.format) {
-      case 'codebuddy': content = _buildCodeBuddyAgent(corePrompt); break;
-      case 'cursor':    content = _buildCursorAgent(corePrompt);     break;
-      case 'claude':    content = _buildClaudeCodeAgent(corePrompt); break;
-      default:          content = _buildCodeBuddyAgent(corePrompt);  break;
+      case 'codebuddy':      content = _buildCodeBuddyAgent(corePrompt); break;
+      case 'codebuddy-rule': content = _buildCodeBuddyRule(corePrompt); break;
+      case 'cursor':         content = _buildCursorAgent(corePrompt);     break;
+      case 'claude':         content = _buildClaudeCodeAgent(corePrompt); break;
+      default:               content = _buildCodeBuddyAgent(corePrompt);  break;
     }
 
     if (dryRun) {
@@ -1369,6 +1405,7 @@ module.exports = {
   // Exported for testing
   _buildCorePrompt,
   _buildCodeBuddyAgent,
+  _buildCodeBuddyRule,
   _buildCursorAgent,
   _buildClaudeCodeAgent,
   _resolveWorkflowRoot,

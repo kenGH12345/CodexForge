@@ -116,7 +116,11 @@ const CodeGraphBuilderMixin = {
         cacheDir: this._outputDir,
         useTreeSitter: true,
       });
-      console.log('[CodeGraph] 🔍 Structural fingerprinting enabled');
+      const parserType = this._fingerprintEngine.treeSitterAvailable ? 'tree-sitter (AST)' : 'regex (fallback)';
+      console.log(`[CodeGraph] 🔍 Structural fingerprinting enabled — parser: ${parserType}`);
+      if (!this._fingerprintEngine.treeSitterAvailable) {
+        console.log(`[CodeGraph] 💡 Install tree-sitter for better precision: npm install tree-sitter tree-sitter-javascript`);
+      }
     }
 
     // Try incremental build

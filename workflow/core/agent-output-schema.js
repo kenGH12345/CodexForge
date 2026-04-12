@@ -31,7 +31,7 @@
  */
 const ANALYST_SCHEMA = {
   role: 'analyst',
-  version: '1.1',
+  version: '1.2',
   fields: {
     requirements:    { type: 'array',  description: 'Structured requirement items', required: true },
     risks:           { type: 'array',  description: 'Identified risk items',        required: false },
@@ -39,6 +39,7 @@ const ANALYST_SCHEMA = {
     scope:           { type: 'string', description: 'Scope decision (minimal/full)', required: false },
     keyDecisions:    { type: 'array',  description: 'Top-level decisions made',      required: false },
     moduleMap:       { type: 'object', description: 'Functional Module Map: { modules: [{ id, name, description, boundaries, dependencies, complexity, isolatable }], crossCuttingConcerns: [] }', required: false },
+    taskClassification: { type: 'object', description: 'LLM-assessed task classification: { requiresCodeChange: boolean, codeChangeReason: string, complexity: "simple"|"moderate"|"complex"|"very_complex", complexityScore: 0-100, complexityReason: string, taskIntent: "full"|"design_only"|"analysis_only"|"review_only"|"research_only", taskIntentReason: string }', required: true },
   },
 };
 

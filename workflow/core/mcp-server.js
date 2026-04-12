@@ -56,10 +56,11 @@ const SERVER_VERSION = '1.0.0';
  * ADR-XX Dual Mode Synchronization: All capabilities must exist in both
  * Node Orchestrator (CLI) and IDE Agent (MCP) modes.
  */
-const TOOLS = [
+const TOOL_REGISTRY = [
   // ─── Core Workflow Tools ─────────────────────────────────────────────────
   {
     name: 'workflow_triage',
+    handler: '_handleWorkflowTriage',
     description: 'Evaluate a requirement\'s complexity and get routing recommendation. Returns whether to use IDE directly, lightweight workflow, or full pipeline. Zero LLM cost — pure rule engine.',
     inputSchema: {
       type: 'object',
@@ -74,6 +75,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_run',
+    handler: '_handleWorkflowRun',
     description: 'Execute the full WorkFlowAgent pipeline for a requirement. Automatically triages complexity first — if the task is too simple, returns a suggestion to handle it directly in IDE. Use --force to bypass triage.',
     inputSchema: {
       type: 'object',
@@ -97,6 +99,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_init',
+    handler: '_handleWorkflowInit',
     description: 'Initialize WorkFlowAgent for a project. Detects tech stack, generates config, builds CodeGraph, creates project profile. Must run before workflow_run on new projects.',
     inputSchema: {
       type: 'object',
@@ -115,6 +118,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_status',
+    handler: '_handleWorkflowStatus',
     description: 'Get the current workflow status, including init state, staleness warnings, and active workflow progress.',
     inputSchema: {
       type: 'object',
@@ -126,6 +130,7 @@ const TOOLS = [
   // ─── Skill Management Tools ──────────────────────────────────────────────
   {
     name: 'workflow_skill_discover',
+    handler: '_handleSkillDiscover',
     description: 'Auto-discover project conventions from package.json, CI configs, linters, etc. Creates skill entries for tech stack specific patterns. Zero LLM cost.',
     inputSchema: {
       type: 'object',
@@ -140,6 +145,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_skill_evolve',
+    handler: '_handleSkillEvolve',
     description: 'Trigger skill evolution for existing skills. Consolidates experience entries into skill rules. Zero LLM cost for basic evolution; LLM-Lite for refinement.',
     inputSchema: {
       type: 'object',
@@ -158,6 +164,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_skill_update',
+    handler: '_handleSkillUpdate',
     description: 'Directly update skill content with new rules or checklists. For manual skill curation.',
     inputSchema: {
       type: 'object',
@@ -185,6 +192,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_skill_refine_check',
+    handler: '_handleSkillRefineCheck',
     description: 'Identify skills that need refinement based on evolution count or staleness. Returns candidates for LLM refinement.',
     inputSchema: {
       type: 'object',
@@ -205,6 +213,7 @@ const TOOLS = [
   // ─── Experience Store Tools ─────────────────────────────────────────────
   {
     name: 'workflow_experience_search',
+    handler: '_handleExperienceSearch',
     description: 'Search ExperienceStore by keyword, skill, or tags. Returns relevant experiences for context injection.',
     inputSchema: {
       type: 'object',
@@ -236,6 +245,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_experience_context',
+    handler: '_handleExperienceContext',
     description: 'Get formatted context block for a specific skill from ExperienceStore. Ready for prompt injection.',
     inputSchema: {
       type: 'object',
@@ -258,6 +268,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_experience_record',
+    handler: '_handleExperienceRecord',
     description: 'Record a new experience to ExperienceStore. Captures patterns, solutions, and outcomes for future reuse.',
     inputSchema: {
       type: 'object',
@@ -294,6 +305,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_experience_evolve',
+    handler: '_handleExperienceEvolve',
     description: 'Trigger experience evolution: consolidation, distillation, and archival. Zero LLM cost.',
     inputSchema: {
       type: 'object',
@@ -314,6 +326,7 @@ const TOOLS = [
   // ─── Context and Prompt Tools ────────────────────────────────────────────
   {
     name: 'workflow_context',
+    handler: '_handleContext',
     description: 'Load context (skills, ADRs, docs) for a specific workflow stage. Returns formatted context block.',
     inputSchema: {
       type: 'object',
@@ -337,6 +350,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_build_agent_prompt',
+    handler: '_handleBuildAgentPrompt',
     description: 'Build role-specific agent prompt with constraints and context for a workflow stage.',
     inputSchema: {
       type: 'object',
@@ -362,6 +376,7 @@ const TOOLS = [
   // ─── Quality and Review Tools ────────────────────────────────────────────
   {
     name: 'workflow_quality_check',
+    handler: '_handleQualityCheck',
     description: 'Run local QualityGate rule checks on modified or staged files. Returns violations and suggestions.',
     inputSchema: {
       type: 'object',
@@ -381,6 +396,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_quality_gate',
+    handler: '_handleQualityGate',
     description: 'Run full QualityGate threshold validation across all dimensions for current state.',
     inputSchema: {
       type: 'object',
@@ -399,6 +415,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_quality_gate_validate_stage',
+    handler: '_handleQualityGateValidateStage',
     description: 'Validate a specific workflow stage against stage-specific quality gates. P0-Enhancement for early error detection.',
     inputSchema: {
       type: 'object',
@@ -430,6 +447,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_quality_gate_diagnostics',
+    handler: '_handleQualityGateDiagnostics',
     description: 'Export diagnostic history and statistics from QualityGate for analysis before switching from diagnostic to default mode.',
     inputSchema: {
       type: 'object',
@@ -448,6 +466,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_deep_audit',
+    handler: '_handleDeepAudit',
     description: 'Run DeepAuditOrchestrator across all 7 dimensions (token, complexity, dependency, etc). Zero LLM cost.',
     inputSchema: {
       type: 'object',
@@ -467,6 +486,7 @@ const TOOLS = [
   },
   {
     name: 'workflow_rollback_check',
+    handler: '_handleRollbackCheck',
     description: 'Validate stage output against downstream Agent input contracts. Detects breaking changes.',
     inputSchema: {
       type: 'object',
@@ -487,6 +507,7 @@ const TOOLS = [
   // ─── Testing Tools ───────────────────────────────────────────────────────
   {
     name: 'workflow_test_execute',
+    handler: '_handleTestExecute',
     description: 'Execute project tests with auto-detection of test framework. Captures results for experience recording.',
     inputSchema: {
       type: 'object',
@@ -524,6 +545,7 @@ const TOOLS = [
   // ─── Staleness and Health Tools ──────────────────────────────────────────
   {
     name: 'workflow_staleness_check',
+    handler: '_handleStalenessCheck',
     description: 'Check for stale artifacts (CodeGraph, project profile) that need refresh.',
     inputSchema: {
       type: 'object',
@@ -537,6 +559,11 @@ const TOOLS = [
     },
   },
 ];
+
+// ─── API Compatibility Layer ───────────────────────────────────────────────────────────────
+// TOOLS exports pure schema array (backward compatible) — handler references stripped.
+const TOOLS = TOOL_REGISTRY.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
+
 
 // ─── MCPServer Class ────────────────────────────────────────────────────────
 
@@ -591,6 +618,18 @@ class MCPServer {
     }
 
     // Register MCP method handlers
+    // Build tool handler routing map from registry (eliminates switch/case)
+    this._toolHandlerMap = new Map(TOOL_REGISTRY.map(t => [t.name, t.handler]));
+
+    // Dev-time consistency check: ensure every registered tool has a handler method
+    if (process.env.NODE_ENV !== 'production') {
+      for (const tool of TOOL_REGISTRY) {
+        if (typeof this[tool.handler] !== 'function') {
+          throw new Error(`[TOOL_REGISTRY] Handler "${tool.handler}" for tool "${tool.name}" not found on MCPServer`);
+        }
+      }
+    }
+
     this._registerHandlers();
   }
 
@@ -744,69 +783,9 @@ class MCPServer {
     // ── Tool Execution ────────────────────────────────────────────────────
     this._requestHandlers.set('tools/call', async (params) => {
       const { name, arguments: args } = params;
-
-      switch (name) {
-        // Core workflow tools
-        case 'workflow_triage':
-          return this._handleWorkflowTriage(args);
-        case 'workflow_run':
-          return this._handleWorkflowRun(args);
-        case 'workflow_init':
-          return this._handleWorkflowInit(args);
-        case 'workflow_status':
-          return this._handleWorkflowStatus(args);
-
-        // Skill management tools
-        case 'workflow_skill_discover':
-          return this._handleSkillDiscover(args);
-        case 'workflow_skill_evolve':
-          return this._handleSkillEvolve(args);
-        case 'workflow_skill_update':
-          return this._handleSkillUpdate(args);
-        case 'workflow_skill_refine_check':
-          return this._handleSkillRefineCheck(args);
-
-        // Experience store tools
-        case 'workflow_experience_search':
-          return this._handleExperienceSearch(args);
-        case 'workflow_experience_context':
-          return this._handleExperienceContext(args);
-        case 'workflow_experience_record':
-          return this._handleExperienceRecord(args);
-        case 'workflow_experience_evolve':
-          return this._handleExperienceEvolve(args);
-
-        // Context and prompt tools
-        case 'workflow_context':
-          return this._handleContext(args);
-        case 'workflow_build_agent_prompt':
-          return this._handleBuildAgentPrompt(args);
-
-        // Quality and review tools
-        case 'workflow_quality_check':
-          return this._handleQualityCheck(args);
-        case 'workflow_quality_gate':
-          return this._handleQualityGate(args);
-        case 'workflow_quality_gate_validate_stage':
-          return this._handleQualityGateValidateStage(args);
-        case 'workflow_quality_gate_diagnostics':
-          return this._handleQualityGateDiagnostics(args);
-        case 'workflow_deep_audit':
-          return this._handleDeepAudit(args);
-        case 'workflow_rollback_check':
-          return this._handleRollbackCheck(args);
-
-        // Testing tools
-        case 'workflow_test_execute':
-          return this._handleTestExecute(args);
-
-        // Staleness and health tools
-        case 'workflow_staleness_check':
-          return this._handleStalenessCheck(args);
-
-        default:
-          throw new Error(`Unknown tool: ${name}`);
-      }
+      const handlerName = this._toolHandlerMap.get(name);
+      if (!handlerName) throw new Error(`Unknown tool: ${name}`);
+      return this[handlerName](args);
     });
 
     // ── Ping ──────────────────────────────────────────────────────────────
@@ -2030,4 +2009,4 @@ if (require.main === module) {
 
 // ─── Exports ────────────────────────────────────────────────────────────────
 
-module.exports = { MCPServer, TOOLS, MCP_PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION };
+module.exports = { MCPServer, TOOLS, TOOL_REGISTRY, MCP_PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION };

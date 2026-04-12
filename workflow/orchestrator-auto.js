@@ -33,6 +33,18 @@ async function runAuto(rawRequirement, concurrency = 3) {
     this.stateMachine.recordRequirementData(reqData);
   }
 
+  // Requirement-change detection: set fingerprint on StageContextStore
+  // so persisted stage-context.json carries the requirement signature.
+  // On next _load(), if the fingerprint differs, stale context is discarded.
+  if (this.stageCtx && typeof this.stageCtx.setRequirementFingerprint === 'function') {
+    const { requirementFingerprint } = require('./core/stage-context-store');
+    this.stageCtx.setRequirementFingerprint(requirementFingerprint(rawRequirement));
+    // Also set on SocraticEngine for decisions.json requirement-change detection
+    if (this.socratic && typeof this.socratic.setRequirementFingerprint === 'function') {
+      this.socratic.setRequirementFingerprint(requirementFingerprint(rawRequirement));
+    }
+  }
+
   // Pre-load AGENTS.md for decomposition context
   let agentsMdForDecomposition = this._agentsMdContent;
   if (!agentsMdForDecomposition) {

@@ -209,11 +209,44 @@ Produce a Markdown document with the following sections:
    - Include a **Non-Functional Requirements** subsection with measurable targets (e.g. latency, throughput, error rate, security, reliability)
    - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance warning.`;
 
+    // ── Task Classification instruction (LLM-assessed complexity & code-change detection) ──
+    // This replaces the regex-based complexity estimation with a direct LLM judgment.
+    // The LLM has already read the code, searched files, and analyzed the root cause —
+    // its assessment of "does this need code changes" and "how complex is it" is far
+    // more accurate than any keyword-matching heuristic.
+    const taskClassificationInstruction = `
+**CRITICAL: Task Classification (REQUIRED in JSON block)**
+You MUST include a "taskClassification" field in your JSON block. This is used to determine which pipeline stages to run.
+Assess based on your ACTUAL analysis of the requirement and codebase — do NOT guess.
+\`\`\`
+"taskClassification": {
+  "requiresCodeChange": true|false,   // Does this task require modifying/creating source code files?
+  "codeChangeReason": "Brief explanation of why code changes are/aren't needed",
+  "complexity": "simple|moderate|complex|very_complex",  // Overall task complexity
+  "complexityScore": 0-100,           // Numeric score: 0-25=simple, 26-50=moderate, 51-75=complex, 76-100=very_complex
+  "complexityReason": "Brief explanation of complexity assessment",
+  "taskIntent": "full|design_only|analysis_only|review_only|research_only",  // What type of deliverable does the user want?
+  "taskIntentReason": "Brief explanation of why this intent was chosen"
+}
+\`\`\`
+Complexity guidelines:
+- **simple** (0-25): Single file change, straightforward fix, no new dependencies
+- **moderate** (26-50): 2-5 files, some logic changes, limited cross-module impact
+- **complex** (51-75): Multiple modules, new APIs/interfaces, significant refactoring
+- **very_complex** (76-100): System-wide changes, new subsystems, migration, multi-service coordination
+Task intent guidelines:
+- **full**: User wants working code — implement, fix, build, create, develop (DEFAULT if unclear)
+- **design_only**: User wants a design/architecture plan — no code implementation needed
+- **analysis_only**: User wants analysis, evaluation, comparison — no code changes, no architecture
+- **review_only**: User wants a review/audit of existing code or architecture
+- **research_only**: User wants research, investigation, or information gathering`;
+
     // JSON block instruction: compact for simple tasks
     const jsonSection = isSimple
       ? `${jsonInstruction}
 
-**IMPORTANT**: JSON block MUST include "moduleMap" with modules array (id, name, description, boundaries, dependencies, complexity, isolatable) and crossCuttingConcerns array.`
+**IMPORTANT**: JSON block MUST include "moduleMap" with modules array (id, name, description, boundaries, dependencies, complexity, isolatable) and crossCuttingConcerns array.
+${taskClassificationInstruction}`
       : `${jsonInstruction}
 
 **IMPORTANT for JSON block**: The JSON metadata block MUST include a "moduleMap" field with this structure:
@@ -232,7 +265,8 @@ Produce a Markdown document with the following sections:
   ],
   "crossCuttingConcerns": ["logging", "error-handling"]
 }
-\`\`\``;
+\`\`\`
+${taskClassificationInstruction}`;
 
     return `${coreSections}
 ${extendedSections}

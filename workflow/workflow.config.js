@@ -20,6 +20,19 @@ module.exports = {
   // sourceExtensions: ['.js', '.mjs'],
   // ignoreDirs: ['node_modules', '.git', 'dist', 'build', 'output'],
 
+  // ─── Stage Context Staleness ──────────────────────────────────────────────
+  //
+  // Controls how long stage-context.json entries are considered fresh.
+  // When the IDE Bridge reads stage-context.json (produced by Node mode's
+  // StageContextStore), entries older than this threshold are skipped.
+  //
+  // Default: 24 hours. Adjust based on your iteration speed:
+  //   - Fast iteration (CI/CD, rapid prototyping): 4-8 hours
+  //   - Normal development: 24 hours (default)
+  //   - Long-cycle projects (weekly sprints): 48-72 hours
+  //
+  stageContextMaxAgeHours: 24,
+
   // ─── Code Graph ──────────────────────────────────────────────────────────────
   //
   // Controls how CodeGraph builds the symbol index for the project.

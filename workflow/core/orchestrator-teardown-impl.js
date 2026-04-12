@@ -39,7 +39,8 @@ const { SessionQualityScorer } = require('./session-quality-scorer');
 
 // ─── P2 Feature Imports ─────────────────────────────────────────────────────
 const { DashboardIntegration, generateDashboard } = require('./dashboard-integration');
-const { SmartRouterEnhancement } = require('./smart-router-enhancement');
+// SmartRouterEnhancement: removed zombie require — already integrated inside
+// llm-router.js via withSmartEnhancement(). No longer needed in teardown.
 const { PromptAutoOptimizer } = require('./prompt-auto-optimizer');
 
 // ─── Teardown Mixin ───────────────────────────────────────────────────────────
@@ -61,8 +62,67 @@ const OrchestratorTeardownMixin = {
    * @param {object} extra - Additional context (goal, etc.)
    */
   async _finalizeWorkflow(mode, extra = {}) {
+    // ── Declarative Teardown Pipeline (P0 teardown-impl) ──────────────────
+    // If the pipeline is initialized, use the declarative approach.
+    // Each step is an independent TeardownStep with before/after ordering.
+    // Adding a new teardown step: 1 file + 1 registration line (was: 5+ files).
+    if (this._teardownPipeline) {
+      const shouldEvolve = this._shouldTriggerEvolution();
+      const { TeardownContext } = require('./teardown-pipeline');
+      const ctx = new TeardownContext({
+        orch: this,
+        mode,
+        extra,
+        shouldEvolve,
+      });
+      const summary = await this._teardownPipeline.execute(ctx);
+
+      // Store summary for health reporting and bridge access
+      this._teardownSummary = summary;
+
+      // Log pipeline summary to observability
+      if (this.obs && this.obs.recordTeardownPipeline) {
+        this.obs.recordTeardownPipeline(summary);
+      }
+      return;
+    }
+
+    // ── Legacy fallback: hardcoded teardown sequence ─────────────────────
+    // This path is kept for backward compatibility when _teardownPipeline
+    // is not initialized. Will be removed in a future version.
     // Smart Trigger: determine which evolution modules should run
     const shouldEvolve = this._shouldTriggerEvolution();
+
+    // ── Lifecycle Plugin Registry: Declarative module integration ──────────
+    // Auto-discover and activate plugins from core/plugins/ directory.
+    // This replaces hand-coded integration for FPA, IPC, RG, DAO, and RC.
+    // Plugin instances are stored in this._pluginInstances for later access.
+    try {
+      const { LifecyclePluginRegistry } = require('./lifecycle-plugin-registry');
+      const pluginDir = path.join(__dirname, 'plugins');
+
+      if (!this._pluginRegistry) {
+        this._pluginRegistry = new LifecyclePluginRegistry();
+        this._pluginRegistry.autoDiscover(pluginDir);
+        this._pluginInstances = this._pluginInstances || {};
+      }
+
+      // Activate all init-phase plugins (captures baselines, etc.)
+      const { activated, failed } = await this._pluginRegistry.activateAll('teardown', this);
+
+      // Store activated instances for plugin-internal access
+      for (const plugin of this._pluginRegistry.getActivated()) {
+        if (plugin._instance) {
+          this._pluginInstances[plugin.name] = plugin._instance;
+        }
+      }
+
+      if (activated.length > 0) {
+        console.log(`[Orchestrator] 🔌 Plugin Registry: ${activated.length} plugin(s) activated${failed.length > 0 ? `, ${failed.length} failed` : ''}`);
+      }
+    } catch (prErr) {
+      console.warn(`[Orchestrator] ⚠️  Plugin Registry activation failed (non-fatal): ${prErr.message}`);
+    }
 
     // ── AEF Self-Refinement: auto-evolve skills from resolved complaints ────
     if (this.complaintWall && this.skillEvolution && shouldEvolve.aefRefinement) {
@@ -192,6 +252,92 @@ const OrchestratorTeardownMixin = {
         this._sessionSignalDetector.reset();
       } catch (ssErr) {
         console.warn(`[Orchestrator] ⚠️  Session Signal Detection failed (non-fatal): ${ssErr.message}`);
+      }
+    }
+
+    // ── P1: Failure Pattern Analyzer → Skill Evolution Insight ──────────────
+    // Cluster similar failures from introspection data and generate Skill suggestions.
+    // This closes the loop: failure → pattern → skill suggestion → evolution.
+    if (shouldEvolve.selfReflection && this.experienceStore) {
+      try {
+        const { FailurePatternAnalyzer } = require('./failure-pattern-analyzer');
+        const analyzer = new FailurePatternAnalyzer({
+          cheapLlmCall: this._rawLlmCall || null,
+          minOccurrenceThreshold: 2,
+        });
+
+        const result = await analyzer.analyzeRecentFailures();
+        const patterns = result.patterns || [];
+        if (patterns.length > 0) {
+          console.log(`[Orchestrator] 🔍 FailurePatternAnalyzer: ${patterns.length} pattern(s) identified`);
+          for (const p of patterns.slice(0, 5)) {
+            const sig = p.signature || {};
+            console.log(`  → ${sig.compoundKey || sig.failureType || 'unknown'} (occurrences: ${p.occurrences || p.count || '?'}, skill suggestion: ${p.suggestedSkillName || p.skillProposal?.name || 'none'})`);
+          }
+
+          // Auto-record patterns as negative experiences for future routing
+          for (const p of patterns) {
+            const sig = p.signature || {};
+            const occ = p.occurrences || p.count || 1;
+            if (occ >= 2) {
+              this.experienceStore.recordIfAbsent(`failure-pattern:${sig.hash || Date.now()}`, {
+                type: 'negative',
+                category: 'failure_pattern',
+                title: `Failure pattern: ${sig.failureType || 'unknown'} in ${sig.stage || 'unknown'}`,
+                content: `Root cause: ${sig.rootCause || 'unknown'}. Error signatures: ${(sig.errorSignatures || []).join(', ')}. ` +
+                         `Occurred ${occ} time(s). Suggested skill: ${p.suggestedSkillName || p.skillProposal?.name || 'none'}`,
+                tags: ['failure-pattern', `stage:${sig.stage || 'unknown'}`, `root-cause:${sig.rootCause || 'unknown'}`],
+                ttlDays: 90,
+              });
+            }
+          }
+        }
+      } catch (fpaErr) {
+        console.warn(`[Orchestrator] ⚠️  Failure Pattern Analyzer failed (non-fatal): ${fpaErr.message}`);
+      }
+    }
+
+    // ── P1: Issue Pattern Collector → ExperienceStore ────────────────────────
+    // Automatically record orphaned modules, broken routes, and missing artifacts
+    // into the experience store for self-evolution awareness.
+    // NOTE: IssuePatternCollector.recordIssue() writes to ExperienceStore immediately;
+    // there is no flush() step. Use getIssues() / generateSummary() to count.
+    if (this.experienceStore) {
+      try {
+        const { IssuePatternCollector, IssueType, IssueSeverity } = require('./issue-pattern-collector');
+        const collector = new IssuePatternCollector(this.experienceStore, {
+          projectContext: this.projectId || 'workflow',
+          verbose: this._verbose,
+        });
+
+        // Scan for known issue types from introspection data
+        if (this.introspectionManager) {
+          const healthCheck = this.introspectionManager.healthCheck?.() || {};
+          if (healthCheck.issues) {
+            const uncovered = healthCheck.issues.uncoveredModules || [];
+            for (const mod of uncovered) {
+              const modName = typeof mod === 'string' ? mod : (mod.name || 'unknown');
+              collector.recordFeatureOrphaned({
+                feature: modName,
+                location: `core/${modName}`,
+                mainFlow: 'orchestrator pipeline',
+                integrationPoint: '_finalizeWorkflow()',
+                evidence: healthCheck.issues,
+              });
+            }
+          }
+        }
+
+        // Summarize collected issues (recordIssue already wrote to ExperienceStore)
+        const summary = collector.generateSummary();
+        if (summary.total > 0) {
+          console.log(`[Orchestrator] 🐛 IssuePatternCollector: ${summary.total} issue(s) recorded to ExperienceStore`);
+          if (summary.critical.length > 0) {
+            console.warn(`[Orchestrator] 🚨 ${summary.critical.length} critical issue(s) detected!`);
+          }
+        }
+      } catch (ipcErr) {
+        console.warn(`[Orchestrator] ⚠️  Issue Pattern Collector failed (non-fatal): ${ipcErr.message}`);
       }
     }
 
@@ -662,6 +808,23 @@ const OrchestratorTeardownMixin = {
       await this._runGitPRWorkflow(mode, extra);
     }
 
+    // ── P1: Regression Guard – Capture pre-evolve quality baseline ──────────
+    // Before any evolution (MAPE/sleeptime) runs, capture the current quality
+    // metrics as a baseline. After evolution, compare to detect regressions.
+    let regressionGuard = null;
+    try {
+      const { RegressionGuard } = require('./regression-guard');
+      regressionGuard = new RegressionGuard({
+        outputDir: this._outputDir || PATHS.OUTPUT,
+        verbose: this._verbose,
+      });
+      const metrics = this.obs.getMetricsSnapshot ? this.obs.getMetricsSnapshot() : {};
+      regressionGuard.captureBaseline();
+      console.log(`[Orchestrator] 🛡️  RegressionGuard: quality baseline captured for post-evolve comparison.`);
+    } catch (rgErr) {
+      console.warn(`[Orchestrator] ⚠️  RegressionGuard baseline capture failed (non-fatal): ${rgErr.message}`);
+    }
+
     // ── P0 MAPE Engine: Self-Adaptive Closed-Loop ──
     if (shouldEvolve.mape) {
       try {
@@ -690,6 +853,39 @@ const OrchestratorTeardownMixin = {
       }
     } else {
       console.log(`[Orchestrator] ⏭️  MAPE Engine skipped (no anomaly signals or insufficient history)`);
+    }
+
+    // ── P1: Regression Guard – Post-evolve quality delta check ──────────────
+    // Compare post-evolve metrics against the baseline captured before MAPE.
+    // If quality degraded after skill/config changes, flag for auto-rollback.
+    if (regressionGuard) {
+      try {
+        const postMetrics = this.obs.getMetricsSnapshot ? this.obs.getMetricsSnapshot() : {};
+        const regressionResult = regressionGuard.compareWithBaseline(postMetrics);
+
+        if (regressionResult.regressions.length > 0) {
+          console.warn(`[Orchestrator] 🛡️  RegressionGuard: ${regressionResult.regressions.length} regression(s) detected after evolve!`);
+          for (const reg of regressionResult.regressions.slice(0, 5)) {
+            console.warn(`  → ${reg.metric}: ${reg.direction === 'minimize' ? '↑' : '↓'} ${reg.delta} (threshold: ${reg.threshold})`);
+          }
+
+          // Record regression as negative experience
+          if (this.experienceStore) {
+            this.experienceStore.recordIfAbsent('evolve-regression', {
+              type: 'negative',
+              category: 'quality_gate',
+              title: 'Quality regression detected after evolve cycle',
+              content: `Regressions: ${regressionResult.regressions.map(r => `${r.metric} ${r.delta}`).join(', ')}`,
+              tags: ['regression', 'evolve', 'quality-guard'],
+              ttlDays: 90,
+            });
+          }
+        } else {
+          console.log(`[Orchestrator] 🛡️  RegressionGuard: no regressions detected — evolve cycle was safe.`);
+        }
+      } catch (rgErr) {
+        console.warn(`[Orchestrator] ⚠️  RegressionGuard post-evolve check failed (non-fatal): ${rgErr.message}`);
+      }
     }
 
     // ── Sleeptime Maintenance Pipeline ──
@@ -1050,6 +1246,54 @@ const OrchestratorTeardownMixin = {
       }
     } catch (optErr) {
       console.warn(`[Orchestrator] ⚠️  Prompt Auto-Optimizer failed (non-fatal): ${optErr.message}`);
+    }
+
+    // ── P1: Deep Audit Orchestrator – Unified cross-module health assessment ──
+    // Fire-and-forget: runs as the last step of teardown to perform a comprehensive
+    // cross-module consistency check across SelfReflection, EntropyGC, CodeGraph,
+    // QualityGate, and ArchitectureReviewAgent. Findings auto-injected into
+    // ExperienceStore for future evolution awareness.
+    try {
+      const { DeepAuditOrchestrator } = require('./deep-audit-orchestrator');
+      const auditor = new DeepAuditOrchestrator({
+        outputDir: this._outputDir || PATHS.OUTPUT,
+        experienceStore: this.experienceStore || null,
+        verbose: this._verbose,
+      });
+
+      // Run audit in non-blocking mode: errors are caught and logged, never crash teardown
+      const auditReport = await auditor.run();
+      if (auditReport && auditReport.stats) {
+        const { critical = 0, high = 0, medium = 0, low = 0, info = 0 } = auditReport.stats;
+        const totalFindings = critical + high + medium + low + info;
+        if (totalFindings > 0) {
+          console.log(`[Orchestrator] 🔎 DeepAudit: ${totalFindings} finding(s) (${critical} critical, ${high} high, ${medium} medium)`);
+        } else {
+          console.log(`[Orchestrator] ✅ DeepAudit: no cross-module issues found`);
+        }
+      }
+    } catch (daErr) {
+      console.warn(`[Orchestrator] ⚠️  Deep Audit Orchestrator failed (non-fatal): ${daErr.message}`);
+    }
+
+    // ── Lifecycle Plugin Registry: Teardown phase ─────────────────────────
+    // Deactivate all plugins in reverse priority order.
+    // This runs deactivate() handlers (e.g. RegressionGuard post-evolve check).
+    if (this._pluginRegistry) {
+      try {
+        const { deactivated, failed } = await this._pluginRegistry.deactivateAll('teardown', this);
+        if (deactivated.length > 0) {
+          console.log(`[Orchestrator] 🔌 Plugin Registry: ${deactivated.length} plugin(s) deactivated${failed.length > 0 ? `, ${failed.length} failed` : ''}`);
+        }
+
+        // Print registry summary
+        const summary = this._pluginRegistry.getSummary();
+        if (summary.total > 0) {
+          console.log(`[Orchestrator] 🔌 Plugin Registry Summary: ${summary.activated}/${summary.total} activated, ${summary.bridgeSubcommands.length} bridge command(s)`);
+        }
+      } catch (prErr) {
+        console.warn(`[Orchestrator] ⚠️  Plugin Registry deactivation failed (non-fatal): ${prErr.message}`);
+      }
     }
   },
 

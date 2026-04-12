@@ -434,7 +434,7 @@ async function runContextLoaderTests() {
     });
 
     const loader = new ContextLoader({ workflowRoot: dir });
-    const { sources } = loader.resolve('implement flutter widget with riverpod', 'developer');
+    const { sources } = await loader.resolve('implement flutter widget with riverpod', 'developer');
 
     assert.ok(sources.some(s => s.includes('flutter-dev')), `Expected flutter-dev.md to be injected, got: ${sources.join(', ')}`);
 
@@ -449,7 +449,7 @@ async function runContextLoaderTests() {
     });
 
     const loader = new ContextLoader({ workflowRoot: dir });
-    const { sources } = loader.resolve('implement flutter widget', 'developer');
+    const { sources } = await loader.resolve('implement flutter widget', 'developer');
 
     assert.ok(!sources.some(s => s.includes('flutter-dev')), 'Placeholder skill should be skipped');
 
@@ -464,7 +464,7 @@ async function runContextLoaderTests() {
     });
 
     const loader = new ContextLoader({ workflowRoot: dir });
-    const { sources } = loader.resolve('write some code', 'developer');
+    const { sources } = await loader.resolve('write some code', 'developer');
 
     assert.ok(sources.some(s => s.includes('architecture-constraints')), `Expected architecture-constraints.md, got: ${sources.join(', ')}`);
 
@@ -496,7 +496,7 @@ Use SQLite via drift package.
     });
 
     const loader = new ContextLoader({ workflowRoot: dir });
-    const { sources, sections } = loader.resolve('design flutter state management architecture', 'architect');
+    const { sources, sections } = await loader.resolve('design flutter state management architecture', 'architect');
 
     assert.ok(sources.some(s => s.includes('decision-log')), `Expected decision-log.md digest, got: ${sources.join(', ')}`);
     // The ADR about Riverpod should be in the digest (keyword: riverpod/state)
@@ -522,7 +522,7 @@ Use SQLite via drift package.
 
     const loader = new ContextLoader({ workflowRoot: dir });
     // Task that matches multiple skills
-    const { sections, tokenCount } = loader.resolve('flutter javascript go api design', 'developer');
+    const { sections, tokenCount } = await loader.resolve('flutter javascript go api design', 'developer');
 
     assert.ok(tokenCount <= 2000, `Token count ${tokenCount} should not exceed 2000`);
 
@@ -541,7 +541,7 @@ Use SQLite via drift package.
       alwaysLoadSkills: ['flutter-dev'],
     });
     // Task has no flutter keywords
-    const { sources } = loader.resolve('write a database migration script', 'developer');
+    const { sources } = await loader.resolve('write a database migration script', 'developer');
 
     assert.ok(sources.some(s => s.includes('flutter-dev')), 'alwaysLoadSkills should inject regardless of keywords');
 
@@ -559,7 +559,7 @@ Use SQLite via drift package.
       workflowRoot: dir,
       skillKeywords: { 'my-custom-skill': ['foobar', 'baz'] },
     });
-    const { sources } = loader.resolve('implement foobar feature', 'developer');
+    const { sources } = await loader.resolve('implement foobar feature', 'developer');
 
     assert.ok(sources.some(s => s.includes('my-custom-skill')), 'Custom keyword should trigger custom skill');
 
@@ -574,7 +574,7 @@ Use SQLite via drift package.
     fs.mkdirSync(path.join(dir, 'docs'),   { recursive: true });
 
     const loader = new ContextLoader({ workflowRoot: dir });
-    const { sections, sources, tokenCount } = loader.resolve('do something', 'developer');
+    const { sections, sources, tokenCount } = await loader.resolve('do something', 'developer');
 
     assertEqual(sections.length, 0);
     assertEqual(sources.length, 0);
@@ -616,7 +616,7 @@ Use Redis.
 
     const loader = new ContextLoader({ workflowRoot: dir });
     // Task with no ADR-related keywords
-    const { sections } = loader.resolve('design the system', 'architect');
+    const { sections } = await loader.resolve('design the system', 'architect');
 
     const adrSection = sections.find(s => s.includes('decision-log'));
     assert.ok(adrSection, 'Should fall back to recent ADRs');
@@ -756,9 +756,22 @@ async function runStateMachineErrorTests() {
     const sm = new StateMachine('test-err-1');
     await sm.init();
 
-    // Advance to FINISHED
+    // Create mock artifact files for precondition validation
+    const tmpArtifactDir = path.join(os.tmpdir(), `_wf_test_artifacts_${Date.now()}`);
+    fs.mkdirSync(tmpArtifactDir, { recursive: true });
+    const mockArtifacts = {
+      1: path.join(tmpArtifactDir, 'requirement.md'),   // ANALYSE → ARCHITECT
+      3: path.join(tmpArtifactDir, 'architecture.md'),   // ARCHITECT → PLAN (no precondition, but record for CODE)
+      4: path.join(tmpArtifactDir, 'code.diff'),         // PLAN → CODE (precondition: architectureMd)
+      5: path.join(tmpArtifactDir, 'test-report.md'),    // CODE → TEST (precondition: codeDiff)
+    };
+    for (const f of Object.values(mockArtifacts)) {
+      fs.writeFileSync(f, 'mock', 'utf-8');
+    }
+
+    // Advance to FINISHED with proper artifacts
     for (let i = 0; i < STATE_ORDER.length - 1; i++) {
-      await sm.transition(null, `step ${i}`);
+      await sm.transition(mockArtifacts[i] || null, `step ${i}`);
     }
 
     assert.ok(sm.isFinished(), 'Should be finished');
@@ -767,6 +780,7 @@ async function runStateMachineErrorTests() {
     await assertThrowsAsync(() => sm.transition(null, 'extra'), 'terminal state');
 
     if (fs.existsSync(TEST_MANIFEST)) fs.unlinkSync(TEST_MANIFEST);
+    fs.rmSync(tmpArtifactDir, { recursive: true, force: true });
   });
 
   await test('StateMachine: recordRisk stores risk entries in manifest', async () => {
@@ -833,13 +847,27 @@ async function runStateMachineErrorTests() {
     const sm = new StateMachine('test-err-5');
     await sm.init();
 
+    // Create mock artifact files for precondition validation
+    const tmpArtifactDir = path.join(os.tmpdir(), `_wf_test_artifacts2_${Date.now()}`);
+    fs.mkdirSync(tmpArtifactDir, { recursive: true });
+    const mockArtifacts = {
+      1: path.join(tmpArtifactDir, 'requirement.md'),
+      3: path.join(tmpArtifactDir, 'architecture.md'),
+      4: path.join(tmpArtifactDir, 'code.diff'),
+      5: path.join(tmpArtifactDir, 'test-report.md'),
+    };
+    for (const f of Object.values(mockArtifacts)) {
+      fs.writeFileSync(f, 'mock', 'utf-8');
+    }
+
     for (let i = 0; i < STATE_ORDER.length - 1; i++) {
-      await sm.transition(null, `step ${i}`);
+      await sm.transition(mockArtifacts[i] || null, `step ${i}`);
     }
 
     assertEqual(sm.getNextState(), null, 'getNextState() should return null at FINISHED');
 
     if (fs.existsSync(TEST_MANIFEST)) fs.unlinkSync(TEST_MANIFEST);
+    fs.rmSync(tmpArtifactDir, { recursive: true, force: true });
   });
 }
 
@@ -1849,7 +1877,7 @@ async function runEnrichmentCacheTests() {
     const tmpDir = createTestDir();
     try {
       const loader = new ContextLoader({ workflowRoot: tmpDir, projectRoot: tmpDir });
-      loader.resolve('implement user auth', 'developer');
+      await loader.resolve('implement user auth', 'developer');
       const stats = loader.getEnrichmentCacheStats();
       assertEqual(stats.misses, 1);
       assertEqual(stats.hits, 0);
@@ -1860,8 +1888,8 @@ async function runEnrichmentCacheTests() {
     const tmpDir = createTestDir();
     try {
       const loader = new ContextLoader({ workflowRoot: tmpDir, projectRoot: tmpDir });
-      loader.resolve('task 1', 'developer');
-      loader.resolve('task 2', 'developer');
+      await loader.resolve('task 1', 'developer');
+      await loader.resolve('task 2', 'developer');
       const stats = loader.getEnrichmentCacheStats();
       assertEqual(stats.misses, 1);
       assertEqual(stats.hits, 1);
@@ -1872,12 +1900,12 @@ async function runEnrichmentCacheTests() {
     const tmpDir = createTestDir();
     try {
       const loader = new ContextLoader({ workflowRoot: tmpDir, projectRoot: tmpDir });
-      loader.resolve('test something', 'tester');
+      await loader.resolve('test something', 'tester');
       // Modify file
       const constraintsPath = path.join(tmpDir, 'docs', 'architecture-constraints.md');
       const content = fs.readFileSync(constraintsPath, 'utf-8');
       fs.writeFileSync(constraintsPath, content + '\n- New constraint\n');
-      loader.resolve('test again', 'tester');
+      await loader.resolve('test again', 'tester');
       const stats = loader.getEnrichmentCacheStats();
       assertEqual(stats.misses, 2);
       assertEqual(stats.hits, 0);
@@ -1888,9 +1916,9 @@ async function runEnrichmentCacheTests() {
     const tmpDir = createTestDir();
     try {
       const loader = new ContextLoader({ workflowRoot: tmpDir, projectRoot: tmpDir });
-      loader.resolve('design', 'architect');
-      loader.resolve('code', 'developer');
-      loader.resolve('review design', 'architect');
+      await loader.resolve('design', 'architect');
+      await loader.resolve('code', 'developer');
+      await loader.resolve('review design', 'architect');
       const stats = loader.getEnrichmentCacheStats();
       assertEqual(stats.misses, 2);  // architect miss + developer miss
       assertEqual(stats.hits, 1);    // architect hit
@@ -1903,10 +1931,10 @@ async function runEnrichmentCacheTests() {
     const tmpDir = createTestDir();
     try {
       const loader = new ContextLoader({ workflowRoot: tmpDir, projectRoot: tmpDir });
-      loader.resolve('t1', 'analyst');
-      loader.resolve('t2', 'analyst');
-      loader.resolve('t3', 'analyst');
-      loader.resolve('t4', 'analyst');
+      await loader.resolve('t1', 'analyst');
+      await loader.resolve('t2', 'analyst');
+      await loader.resolve('t3', 'analyst');
+      await loader.resolve('t4', 'analyst');
       const stats = loader.getEnrichmentCacheStats();
       assertEqual(stats.misses, 1);
       assertEqual(stats.hits, 3);
@@ -1918,8 +1946,8 @@ async function runEnrichmentCacheTests() {
     const tmpDir = createTestDir();
     try {
       const loader = new ContextLoader({ workflowRoot: tmpDir, projectRoot: tmpDir });
-      const result1 = loader.resolve('analyse', 'analyst');
-      const result2 = loader.resolve('review', 'analyst');
+      const result1 = await loader.resolve('analyse', 'analyst');
+      const result2 = await loader.resolve('review', 'analyst');
       // Both should have sections (static from constraints doc)
       assert.ok(result1.sections.length >= 0);
       assert.ok(result2.sections.length >= 0);

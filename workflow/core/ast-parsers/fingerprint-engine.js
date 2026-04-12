@@ -45,6 +45,16 @@ const CHANGE_THRESHOLDS = {
 /**
  * Fingerprint Engine – manages structural fingerprints for a project
  */
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Escape special regex characters in a string.
+ * Used by isExportedSymbol() for safe dynamic regex construction.
+ */
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 class FingerprintEngine {
   /**
    * @param {object} options
@@ -230,13 +240,28 @@ class FingerprintEngine {
 
   /**
    * Check if a symbol is exported (public API)
+   *
+   * P2 Fix: Removed /^[A-Z]/.test(symbol.name) convention check — it caused
+   * false positives for internal PascalCase class names (e.g. MyHelper, SessionCache)
+   * that are NOT exported. Now uses export keyword detection only.
    */
   isExportedSymbol(symbol, content) {
     const lines = content.split('\n');
     const line = lines[symbol.line - 1] || '';
-    return line.includes('export') || 
-           line.includes('public') ||
-           /^[A-Z]/.test(symbol.name); // Convention: capitalized = exported
+
+    // Check for explicit export keyword on the declaration line
+    // Covers: export class, export function, export const, export default, etc.
+    if (/\bexport\b/.test(line)) return true;
+
+    // Check for C# / Java / TypeScript public modifier
+    if (/\bpublic\b/.test(line)) return true;
+
+    // Check for module.exports assignment referencing this symbol
+    // e.g. module.exports = { MyClass } or module.exports.MyClass =
+    const exportPattern = new RegExp(`module\\.exports(?:\\s*\\.\\s*${escapeRegex(symbol.name)}|\\s*=\\s*[^;]*\\b${escapeRegex(symbol.name)}\\b)`);
+    if (exportPattern.test(content)) return true;
+
+    return false;
   }
 
   /**
@@ -331,6 +356,12 @@ class FingerprintEngine {
       const changeType = this.classifyChange(oldFp, newFp);
       changes[changeType].push(relPath);
     }
+    
+    // ─── P1 Fix: Persist updated fingerprints after detection ──────────
+    // Even if the change is format-only (action=skip), the cache must
+    // be updated so that subsequent builds compare against the latest content.
+    // Without this, format-only changes cause infinite skip loops.
+    this.saveCache();
     
     return changes;
   }

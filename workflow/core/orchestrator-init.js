@@ -18,6 +18,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { PATHS } = require('./constants');
 
 // ─── Init Mixin ───────────────────────────────────────────────────────────────
@@ -40,12 +41,134 @@ const OrchestratorInitMixin = {
     // P1-4: Track which init steps have completed (idempotent re-entry guard)
     if (!this._initCompleted) this._initCompleted = new Set();
 
+    // P2-STARTUP-1/2: startup performance tracking
+    if (!this._initTimings) this._initTimings = {};
+    const _timing = (stepName) => {
+      this._initTimings[stepName] = { start: Date.now() };
+      return () => {
+        this._initTimings[stepName].end = Date.now();
+        this._initTimings[stepName].durationMs = this._initTimings[stepName].end - this._initTimings[stepName].start;
+        console.error(`[Orchestrator] ⏱️  init step "${stepName}" took ${this._initTimings[stepName].durationMs}ms`);
+      };
+    };
+
+    // ── Step 0: TTL cleanup for stale workflow state (P2-STARTUP-7) ──────────
+    // Mirrors the fine-grained cleanup in IDE Bridge's input-received handler.
+    // Three scenarios handled:
+    //   1. File-level timestamp > 24h → delete entire file (very stale)
+    //   2. activeWorkflow.ttlExpiry expired → clear activeWorkflow + pendingRetry
+    //   3. pendingRetry from previous session → clear (cross-session contamination)
+    // Without this, Node mode's second run reuses stale workflow-status.json
+    // from the previous run, causing "workflow already running" or state confusion.
+    if (!this._initCompleted.has('ttlCleanup')) {
+      try {
+        // ── Dual-path TTL cleanup (ADR-DUAL-PATH) ──
+        // Orchestrator reads/writes workflow-status.json in PATHS.OUTPUT_DIR (workflow/output/),
+        // but IDE Bridge and hooks (pre-tool-use-guard, stop-guard) read/write in
+        // <projectRoot>/output/. Both paths must be cleaned to prevent stale state
+        // from blocking new workflow startup.
+        const projectRoot = this.projectRoot || process.cwd();
+        const statusPaths = [
+          path.join(this._outputDir || PATHS.OUTPUT_DIR, 'workflow-status.json'),
+          path.join(projectRoot, 'output', 'workflow-status.json'),
+        ];
+        // Deduplicate (same path if projectRoot == workflow/..)
+        const uniquePaths = [...new Set(statusPaths)];
+
+        for (const statusPath of uniquePaths) {
+          if (fs.existsSync(statusPath)) {
+            try {
+              const statusData = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+              let wroteChanges = false;
+
+              // Scenario 1: File-level timestamp > 24h → delete entire file
+              if (statusData.timestamp) {
+                const statusAge = Date.now() - new Date(statusData.timestamp).getTime();
+                const FILE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+                if (statusAge > FILE_TTL_MS) {
+                  fs.unlinkSync(statusPath);
+                  console.error(`[Orchestrator] 🧹 TTL cleanup: removed stale ${statusPath} (${Math.round(statusAge / 3600000)}h old)`);
+                  continue; // Next path
+                }
+              }
+
+              // Scenario 2 & 3: Fine-grained session-level cleanup (mirrors IDE Bridge)
+              // Only run if the file was NOT deleted by Scenario 1
+              if (fs.existsSync(statusPath)) {
+                const currentSessionId = this._sessionId || `wf-${Date.now()}`;
+
+                // Scenario 2: activeWorkflow.ttlExpiry expired → clear activeWorkflow + pendingRetry
+                if (statusData.activeWorkflow && statusData.activeWorkflow.ttlExpiry) {
+                  const ttlExpired = new Date(statusData.activeWorkflow.ttlExpiry) < new Date();
+                  if (ttlExpired) {
+                    console.error(`[Orchestrator] 🧹 TTL expired for session=${statusData.activeWorkflow.session} (expired at ${statusData.activeWorkflow.ttlExpiry}). Clearing stale activeWorkflow.`);
+                    delete statusData.activeWorkflow;
+                    wroteChanges = true;
+                    // Also clear pendingRetry — it belongs to the expired session
+                    if (statusData.pendingRetry) {
+                      console.error(`[Orchestrator] 🧹 Clearing stale pendingRetry for stage=${statusData.pendingRetry.stage} (belonged to expired session)`);
+                      delete statusData.pendingRetry;
+                    }
+                  }
+                }
+
+                // Scenario 3: pendingRetry from a different session (always clear, regardless of TTL)
+                // This prevents cross-session contamination where a new Orchestrator instance
+                // inherits an unrelated pendingRetry from a previous failed workflow.
+                if (statusData.pendingRetry && statusData.activeWorkflow) {
+                  const retrySession = statusData.pendingRetry.session;
+                  const activeSession = statusData.activeWorkflow.session;
+                  if (retrySession && activeSession && retrySession !== activeSession) {
+                    console.error(`[Orchestrator] 🧹 Clearing stale pendingRetry for stage=${statusData.pendingRetry.stage} (retry session=${retrySession} != active session=${activeSession})`);
+                    delete statusData.pendingRetry;
+                    wroteChanges = true;
+                  }
+                } else if (statusData.pendingRetry && !statusData.activeWorkflow) {
+                  // Orphaned pendingRetry with no activeWorkflow — always clear
+                  console.error(`[Orchestrator] 🧹 Clearing orphaned pendingRetry for stage=${statusData.pendingRetry.stage} (no activeWorkflow)`);
+                  delete statusData.pendingRetry;
+                  wroteChanges = true;
+                }
+
+                if (wroteChanges) {
+                  fs.writeFileSync(statusPath, JSON.stringify(statusData, null, 2), 'utf-8');
+                  console.error(`[Orchestrator] 🧹 TTL cleanup: updated ${statusPath} (removed stale entries)`);
+                }
+              }
+            } catch (_) { /* malformed status file — ignore */ }
+          }
+        } // end for (statusPath of uniquePaths)
+        // Also clean up stale trace files older than 48 hours
+        const traceDir = this._outputDir || PATHS.OUTPUT_DIR;
+        if (fs.existsSync(traceDir)) {
+          const TRACE_TTL_MS = 48 * 60 * 60 * 1000;
+          try {
+            for (const entry of fs.readdirSync(traceDir)) {
+              if (entry.startsWith('trace-') && entry.endsWith('.jsonl')) {
+                const fullPath = path.join(traceDir, entry);
+                const stat = fs.statSync(fullPath);
+                if (Date.now() - stat.mtimeMs > TRACE_TTL_MS) {
+                  fs.unlinkSync(fullPath);
+                }
+              }
+            }
+          } catch (_) { /* non-fatal */ }
+        }
+        this._initCompleted.add('ttlCleanup');
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  Step 0 (TTL cleanup) failed (non-fatal): ${err.message}`);
+      }
+    }
+
     // ── Step 1: StateMachine init (MUST run first, not idempotent-guarded) ──
+    const _done1 = _timing('StateMachine.init');
     const resumeState = await this.stateMachine.init();
+    _done1();
     console.log(`[Orchestrator] StateMachine initialised. Resume state: ${resumeState}`);
 
     // ── Step 2: Memory context + AGENTS.md (idempotent: re-reading is safe) ──
     if (!this._initCompleted.has('memory')) {
+      const _done2 = _timing('Memory+AGENTS.md');
       try {
         await this.memory.buildGlobalContext().catch(err =>
           console.warn(`[Orchestrator] Memory build warning: ${err.message}`)
@@ -61,10 +184,12 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [P1-4] Step 2 (Memory/AGENTS.md) failed (non-fatal): ${err.message}`);
       }
+      _done2();
     }
 
     // ── Step 3: Complaint awareness check (idempotent: read-only) ──
     if (!this._initCompleted.has('complaints')) {
+      const _done3 = _timing('Complaints');
       try {
         const openComplaints = this.complaintWall.getOpenComplaints();
         if (openComplaints.length > 0) {
@@ -77,10 +202,12 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [P1-4] Step 3 (Complaints) failed (non-fatal): ${err.message}`);
       }
+      _done3();
     }
 
     // ── Step 4: SkillWatcher (idempotent: guarded by this._skillWatcher check) ──
     if (!this._initCompleted.has('skillWatcher')) {
+      const _done4 = _timing('SkillWatcher');
       try {
         const { getCachedLoader, onLoaderReady } = require('./prompt-builder');
         const cachedLoader = getCachedLoader();
@@ -115,10 +242,12 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [P1-4] Step 4 (SkillWatcher) failed (non-fatal): ${err.message}`);
       }
+      _done4();
     }
 
     // ── Step 5: MCP adapters (idempotent: connectAll is safe to re-call) ──
     if (!this._initCompleted.has('mcpAdapters')) {
+      const _done5 = _timing('MCP-Adapters');
       try {
         if (this.services.has('mcpRegistry')) {
           const registry = this.services.resolve('mcpRegistry');
@@ -130,13 +259,12 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [P1-4] Step 5 (MCP Adapters) failed (non-fatal): ${err.message}`);
       }
+      _done5();
     }
 
     // ── Step 5b: Core module contract validation ──────────────────────────
-    // Validates that key shared objects satisfy their interface contracts.
-    // This catches "dark disconnection" bugs where a module calls a method
-    // that doesn't exist on the target object (e.g. the .query() bug).
     if (!this._initCompleted.has('contractValidation')) {
+      const _done5b = _timing('Contract-Validation');
       try {
         const { validateContract } = require('./contracts');
         const contractChecks = [
@@ -163,10 +291,12 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [Step 5b] Contract validation failed (non-fatal): ${err.message}`);
       }
+      _done5b();
     }
 
     // ── Step 6: Experience preheat (idempotent: only fires when total < 3) ──
     if (!this._initCompleted.has('experiencePreheat')) {
+      const _done6 = _timing('Experience-Preheat');
       try {
         if (this.experienceStore) {
           const stats = this.experienceStore.getStats();
@@ -176,7 +306,7 @@ const OrchestratorInitMixin = {
             preheatExperienceStore(this, { techStack, projectType: this._detectProjectType() })
               .then(r => {
                 if (r.success && r.seeded > 0) {
-                  console.log(`[Orchestrator] 🌱 Experience cold-start preheated: ${r.seeded} seed experiences injected.`);
+                  console.log(`[Orchestrator 🌱 Experience cold-start preheated: ${r.seeded} seed experiences injected.`);
                 }
               })
               .catch(err => {
@@ -188,6 +318,7 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [P1-4] Step 6 (Experience Preheat) failed (non-fatal): ${err.message}`);
       }
+      _done6();
     }
 
     // ── Step 6b: P1 fix – Set ExperienceStore reference in PromptBuilder for synonym expansion ──
@@ -243,6 +374,7 @@ const OrchestratorInitMixin = {
     // Runs once when no project-specific standards skill exists yet.
     // Rule-based scanning (zero LLM calls) + optional LLM refinement (1 call).
     if (!this._initCompleted.has('skillDiscovery')) {
+      const _done6c = _timing('Skill-Discovery');
       try {
         if (this.skillEvolution) {
           const { discoverProjectSkills } = require('./skill-discovery');
@@ -275,20 +407,24 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [Step 6c] Skill Discovery failed (non-fatal): ${err.message}`);
       }
+      _done6c();
     }
 
     // ── Steps 7-9: Island modules (Logger, Negotiation, ExperienceRouter) ──
     if (!this._initCompleted.has('islandModules')) {
+      const _done7 = _timing('Island-Modules');
       try {
         await this._initIslandModules(resumeState);
         this._initCompleted.add('islandModules');
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [P1-4] Steps 7-9 (Island Modules) failed (non-fatal): ${err.message}`);
       }
+      _done7();
     }
 
     // ── Step 10: P2-1 EventJournal — Append-only event sourcing log ──────────
     if (!this._initCompleted.has('eventJournal')) {
+      const _done10 = _timing('EventJournal');
       try {
         const { EventJournal } = require('./event-journal');
         this.eventJournal = new EventJournal({
@@ -315,10 +451,12 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [P2-1] Step 10 (EventJournal) failed (non-fatal): ${err.message}`);
       }
+      _done10();
     }
 
     // ── Step 11: Workflow Introspection Manager ───────────────────────────────
     if (!this._initCompleted.has('introspectionManager')) {
+      const _done11 = _timing('Introspection-Manager');
       try {
         const { introspectionManager } = require('./introspection-manager');
         introspectionManager.initialize({
@@ -339,10 +477,12 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [Step 11] Introspection Manager failed (non-fatal): ${err.message}`);
       }
+      _done11();
     }
 
     // ── Step 12: Agent Handoff Log ─────────────────────────────────────────────
     if (!this._initCompleted.has('handoffLog')) {
+      const _done12 = _timing('Agent-Handoff-Log');
       try {
         const { AgentHandoffLog } = require('./agent-handoff-log');
         this.handoffLog = new AgentHandoffLog({
@@ -367,11 +507,12 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [Step 12] Agent Handoff Log failed (non-fatal): ${err.message}`);
       }
+      _done12();
     }
 
     // ── Step 12b: Agent Feedback System initialization ────────────────────────
-    // P1: Feedback loop for continuous improvement
     if (!this._initCompleted.has('feedbackSystem')) {
+      const _done12b = _timing('Agent-Feedback-System');
       try {
         const { AgentFeedbackSystem } = require('./agent-feedback-system');
         this.feedbackSystem = new AgentFeedbackSystem({
@@ -395,11 +536,12 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [Step 12b] Agent Feedback System failed (non-fatal): ${err.message}`);
       }
+      _done12b();
     }
 
     // ── Step 13: Register built-in Tool Hook handlers ─────────────────────────
-    // P1: Register default handlers for tool execution observability
     if (!this._initCompleted.has('toolHooks')) {
+      const _done13 = _timing('Tool-Hooks');
       try {
         const { _registerBuiltinToolHooks } = require('../tools/tool-hook-executor');
         if (this.hooks && _registerBuiltinToolHooks) {
@@ -410,10 +552,95 @@ const OrchestratorInitMixin = {
       } catch (err) {
         console.warn(`[Orchestrator] ⚠️  [Step 13] Tool Hook registration failed (non-fatal): ${err.message}`);
       }
+      _done13();
     }
 
-    return resumeState;
-  },
+    // ── Step 14: Lifecycle Plugin Registry (init-phase activation) ──────────
+    if (!this._initCompleted.has('lifecyclePluginRegistry')) {
+      const _done14 = _timing('Lifecycle-Plugin-Registry');
+      try {
+        const { LifecyclePluginRegistry } = require('./lifecycle-plugin-registry');
+        const pluginDir = path.join(__dirname, 'plugins');
+
+        if (!this._pluginRegistry) {
+          this._pluginRegistry = new LifecyclePluginRegistry();
+          this._pluginRegistry.autoDiscover(pluginDir);
+          this._pluginInstances = this._pluginInstances || {};
+        }
+
+        // Register into ServiceContainer so context-builders and other modules
+        // can resolve it via services.resolve('pluginRegistry')
+        if (this.services && typeof this.services.registerValue === 'function') {
+          this.services.registerValue('pluginRegistry', this._pluginRegistry);
+        }
+
+        // Activate init-phase and both-phase plugins
+        const { activated, failed } = await this._pluginRegistry.activateAll('init', this);
+
+        // Store activated instances for plugin-internal access
+        for (const plugin of this._pluginRegistry.getActivated()) {
+          if (plugin._instance) {
+            this._pluginInstances[plugin.name] = plugin._instance;
+          }
+        }
+
+        // Subscribe plugin hooks to the HookSystem
+        if (this.hooks) {
+          this._pluginRegistry.subscribeAll(this.hooks);
+        }
+
+        if (activated.length > 0) {
+          console.log(`[Orchestrator] 🔌 Lifecycle Plugin Registry (init): ${activated.length} plugin(s) activated${failed.length > 0 ? `, ${failed.length} failed` : ''}`);
+        }
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  [Step 14] Lifecycle Plugin Registry (init) failed (non-fatal): ${err.message}`);
+      }
+      _done14();
+    }
+
+    // ── Declarative Teardown Pipeline (P0 teardown-impl) ──────────────────
+    if (!this._initCompleted.has('teardownPipeline')) {
+      const _doneTeardown = _timing('Teardown-Pipeline');
+      try {
+        const { createTeardownPipeline } = require('./teardown-steps');
+        this._teardownPipeline = createTeardownPipeline();
+
+        // Register into ServiceContainer for bridge access
+        if (this.services && typeof this.services.registerValue === 'function') {
+          this.services.registerValue('teardownPipeline', this._teardownPipeline);
+        }
+
+        this._initCompleted.add('teardownPipeline');
+
+        if (this._verbose) {
+          const order = this._teardownPipeline.getOrder();
+          console.log(`[Orchestrator] 🔧 Teardown Pipeline: ${order.length} step(s) registered`);
+        }
+      } catch (tpErr) {
+        console.warn(`[Orchestrator] ⚠️  Teardown Pipeline init failed (will use legacy fallback): ${tpErr.message}`);
+      }
+      _doneTeardown();
+    }
+
+    // ── P2-STARTUP-1: Startup performance summary ──────────────────────────
+    // Print a summary of init timings so developers can identify slow steps.
+    if (this._initTimings) {
+      const steps = Object.entries(this._initTimings);
+      if (steps.length > 0) {
+        const totalMs = steps.reduce((sum, [, t]) => sum + (t.durationMs || 0), 0);
+        const slowSteps = steps
+          .filter(([, t]) => (t.durationMs || 0) > 100)
+          .sort((a, b) => (b[1].durationMs || 0) - (a[1].durationMs || 0));
+        console.error(`[Orchestrator] ⏱️  _initWorkflow completed in ${totalMs}ms across ${steps.length} steps`);
+        if (slowSteps.length > 0) {
+          console.error(`[Orchestrator] 🐢 Slow steps (>100ms): ${slowSteps.map(([n, t]) => `${n}=${t.durationMs}ms`).join(', ')}`);
+        }
+        // Store on instance for health report access
+        this._lastInitTotalMs = totalMs;
+      }
+    }
+
+    return resumeState;  },
 
   /**
    * Initialises the "island" modules that were previously created but not
@@ -431,13 +658,8 @@ const OrchestratorInitMixin = {
       });
     }
 
-    // Step 8: NegotiationEngine — reset round counters for fresh run
-    if (this.negotiation) {
-      this.negotiation.reset();
-      if (this.logger) {
-        this.logger.info('Negotiation', 'Round counters reset for new workflow run');
-      }
-    }
+    // Step 8: NegotiationEngine — REMOVED (migrated to negotiation-engine-plugin.js)
+    // The plugin's activate() now handles reset() during Lifecycle Plugin Registry init.
 
     // Step 9: ExperienceRouter — update tech stack and auto-import
     if (this.experienceRouter) {

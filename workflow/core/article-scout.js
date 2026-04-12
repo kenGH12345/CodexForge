@@ -382,7 +382,7 @@ class ArticleScout {
 
 /**
  * Checks if ArticleScout scan is stale (>14 days since last scan).
- * Used by Orchestrator._finalizeWorkflow() to trigger reminder.
+ * Used by Orchestrator teardown pipeline to trigger reminder.
  *
  * @param {object} manifestMeta - The manifest.meta object
  * @returns {{ isStale: boolean, daysSince: number, lastScan: string|null }}

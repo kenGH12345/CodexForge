@@ -614,7 +614,7 @@ class Observability {
 
   /**
    * Records the RunGuard summary for cross-session cost analysis.
-   * Called by orchestrator-lifecycle.js during _finalizeWorkflow().
+ * Called by orchestrator-lifecycle.js during the teardown pipeline.
    *
    * @param {object} summary - From RunGuard.getSummary()
    */
@@ -642,6 +642,20 @@ class Observability {
       passed: gatingResult.passed,
       failedGates: gatingResult.gates?.filter(g => !g.passed).map(g => g.name) || [],
       gateCount: gatingResult.gates?.length || 0,
+    };
+  }
+
+  /**
+   * Record teardown pipeline execution summary (P0 teardown-impl).
+   * @param {object} summary - TeardownPipeline execution summary
+   */
+  recordTeardownPipeline(summary) {
+    if (!summary) return;
+    this._teardownPipelineSummary = {
+      executed: summary.executed || 0,
+      skipped: summary.skipped || 0,
+      failed: summary.failed || 0,
+      steps: summary.steps || {},
     };
   }
 

@@ -103,7 +103,7 @@ Your analysis.md MUST contain ONLY these sections, in this order:
 ❌ DO NOT write generic requirement templates (User Stories, Functional Requirements, Acceptance Criteria)
    — analysis.md is for task-specific root cause analysis, NOT a requirements document
 ❌ DO NOT copy Socratic dimension definitions into analysis.md
-   — use the 11 Socratic dimensions as internal thinking framework only; output ONLY your conclusions
+— use the 12 Socratic dimensions as internal thinking framework only; output ONLY your conclusions
 ✅ Socratic thinking MUST still happen internally — just do NOT paste the dimension list into the file`,
 
   architect: `You are an Architecture Design Agent (Spec-First + Socratic Design).
@@ -227,6 +227,7 @@ Coding Principles (follow strictly):
 7. Clear intent over clever code: choose the simplest solution that communicates its purpose.
 8. Guard Clause & Early Return: use guard clauses for error cases, keep main logic un-nested.
 9. Resource Safety: ensure all resources (locks, handles, callbacks) are properly released on all paths.
+10. Concise Comments: write minimal, essential comments ONLY. Avoid comments that restate the code — prefer self-documenting names and structure. Comments are EXPENSIVE in token cost: every comment is loaded into every subsequent LLM context window. Comment ONLY the "why", never the "what". Maximum density: 1 comment per 10 lines of code.
 
 Negative Examples (what NOT to do):
 ❌ DO NOT write code without reading the existing implementation first — this causes duplicate functions
@@ -235,6 +236,9 @@ Negative Examples (what NOT to do):
 ❌ DO NOT leave TODO/FIXME comments as a substitute for implementation — implement it or document why not
 ❌ DO NOT use magic numbers — define named constants with clear documentation
 ❌ DO NOT catch errors silently (empty catch blocks) — at minimum log the error with context
+❌ DO NOT write redundant comments that restate the code — \`const maxRetry = 3; // maximum retry count\` is a token waste
+❌ DO NOT add section-divider comment banners — \`// ─── Helper Functions ───\` is visual noise, use file structure instead
+❌ DO NOT add JSDoc on private/internal functions — meaningful function names replace JSDoc for non-exported code
 
 Module-Scope Awareness (IMPORTANT):
 - If a Module Scope Guide is present in your context, your code changes MUST respect module boundaries.

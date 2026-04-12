@@ -299,13 +299,34 @@ function loadSkill({
     ? `\n\n> 💡 *Progressive mode: Full skill content available. Use ${matchedTriggers.length > 0 ? matchedTriggers.slice(0, 3).join(', ') : 'task keywords'} to load complete version.*`
     : '';
 
+  // ─── L3: References Directory Support (Agent Skills Spec) ──────────────
+  // If the skill has a references/ subdirectory (either next to the .md file or
+  // in a <skillName>/ directory), list available reference files as a navigation
+  // hint. The AI can then read_file on demand (true L3 lazy loading).
+  let referencesHint = '';
+  const resolvedSkillPath = skillRegistry
+    ? (skillRegistry.get?.(skillName)?.filePath || skillPath)
+    : skillPath;
+  const refsDir = _resolveReferencesDir(resolvedSkillPath, skillName, skillsDir);
+  if (refsDir) {
+    try {
+      const refFiles = require('fs').readdirSync(refsDir)
+        .filter(f => /\.(md|txt|json|yaml|yml)$/i.test(f))
+        .slice(0, 10);
+      if (refFiles.length > 0) {
+        referencesHint = `\n\n> 📚 **References** (${refsDir}): ${refFiles.join(', ')}\n> _Use read_file to load any reference on demand (L3 lazy loading)._`;
+      }
+    } catch (_) { /* references dir not readable — skip */ }
+  }
+
   return {
-    section: `## ${label}: ${skillName}\n\n${truncated}${progressiveIndicator}`,
+    section: `## ${label}: ${skillName}\n\n${truncated}${progressiveIndicator}${referencesHint}`,
     source: `${skillName}.md${isProgressive ? ' (description-only)' : ''}`,
     tokens,
     dependencies,
     isProgressive,
     matchedTriggers,
+    referencesDir: refsDir || null,
   };
 }
 
@@ -469,6 +490,39 @@ function createLazyEnrichmentTrigger({ orchestrator, enrichmentInProgress, skill
   };
 }
 
+// ─── L3: References Directory Resolution ─────────────────────────────────────
+
+/**
+ * Resolves the references/ directory for a skill.
+ * Checks two locations (Agent Skills Spec compatible):
+ *   1. <skillsDir>/<skillName>/references/   (directory-based skill)
+ *   2. <skillFile>/../references/             (co-located with .md file)
+ *
+ * @param {string} skillFilePath - Resolved path to the skill .md file
+ * @param {string} skillName - Skill name
+ * @param {string} skillsDir - Skills directory
+ * @returns {string|null} Path to references directory, or null if not found
+ */
+function _resolveReferencesDir(skillFilePath, skillName, skillsDir) {
+  const fs = require('fs');
+
+  // Path 1: <skillsDir>/<skillName>/references/
+  const dirBasedRefs = path.join(skillsDir, skillName, 'references');
+  if (fs.existsSync(dirBasedRefs) && fs.statSync(dirBasedRefs).isDirectory()) {
+    return dirBasedRefs;
+  }
+
+  // Path 2: co-located with the skill file
+  if (skillFilePath) {
+    const colocatedRefs = path.join(path.dirname(skillFilePath), 'references');
+    if (fs.existsSync(colocatedRefs) && fs.statSync(colocatedRefs).isDirectory()) {
+      return colocatedRefs;
+    }
+  }
+
+  return null;
+}
+
 module.exports = {
   loadSkillWithDeps,
   loadSkill,
@@ -480,4 +534,6 @@ module.exports = {
   setProgressiveLoadContext,
   shouldUseProgressiveMode,
   parseProgressiveSkill,
+  // L3 references (Agent Skills Spec)
+  _resolveReferencesDir,
 };

@@ -69,6 +69,43 @@ function getStandardsSections() {
 }
 
 /**
+ * Returns section templates for documentation skills.
+ */
+function getDocumentationSections() {
+  return [
+    `## Rules`,
+    `<!-- PURPOSE: Prescriptive constraints for documentation quality. Written as imperatives ("Always X", "Never Y"). -->`,
+    ``,
+    `_No rules defined yet._`,
+    ``,
+    `## SOP (Standard Operating Procedure)`,
+    `<!-- PURPOSE: Step-by-step workflow for generating documentation. Numbered phases with clear entry/exit criteria. -->`,
+    ``,
+    `_No SOP defined yet._`,
+    ``,
+    `## Checklist`,
+    `<!-- PURPOSE: Verification checklist for documentation completeness. Each item is a yes/no assertion. -->`,
+    ``,
+    `_No checklist defined yet._`,
+    ``,
+    `## Best Practices`,
+    `<!-- PURPOSE: Recommended documentation patterns. Audience-first writing, example-driven docs, docs-as-code. -->`,
+    ``,
+    `_No best practices defined yet._`,
+    ``,
+    `## Anti-Patterns`,
+    `<!-- PURPOSE: Common documentation mistakes to avoid. Format: ❌ Anti-Pattern | ✅ Correct Approach. -->`,
+    ``,
+    `_No anti-patterns defined yet._`,
+    ``,
+    `## Templates`,
+    `<!-- PURPOSE: Reusable documentation templates (README, CHANGELOG, API doc, JSDoc/Javadoc). -->`,
+    ``,
+    `_No templates defined yet._`,
+  ];
+}
+
+/**
  * Returns section templates for domain skills (default).
  */
 function getDomainSkillSections() {
@@ -126,6 +163,8 @@ function getSectionsForType(skillType) {
     return getTroubleshootingSections();
   } else if (skillType === 'standards') {
     return getStandardsSections();
+  } else if (skillType === 'documentation') {
+    return getDocumentationSections();
   }
   return getDomainSkillSections();
 }
@@ -224,6 +263,7 @@ function createSkillFile({ meta, skillsDir, onSkillFileCreated }) {
 module.exports = {
   getTroubleshootingSections,
   getStandardsSections,
+  getDocumentationSections,
   getDomainSkillSections,
   getSectionsForType,
   createSkillFile,

@@ -154,7 +154,7 @@ class Logger {
 
   /**
    * Flushes and closes the log file stream.
-   * Call this during _finalizeWorkflow().
+ * Call this during the teardown pipeline.
    */
   flush() {
     if (this._logStream) {

@@ -72,6 +72,7 @@ const BUILTIN_SKILL_KEYWORDS = {
   'architecture-design':  ['architecture', 'design pattern', 'module', 'dependency', 'coupling', 'solid'],
   'code-review':          ['review', 'refactor', 'clean code', 'lint', 'quality', 'smell'],
   'test-report':          ['test', 'unit test', 'integration test', 'coverage', 'jest', 'pytest', 'mocha', 'rspec', 'phpunit', 'kotest'],
+  'test-generation':      ['test case', 'test generation', 'boundary', 'edge case', 'equivalence', 'partition', 'state transition', 'mutation test', 'test design', 'test plan'],
   'project-onboarding':   ['onboard', 'setup', 'init', 'new project', 'getting started'],
   'workflow-orchestration':['workflow', 'orchestrat', 'agent', 'pipeline', 'stage'],
   'troubleshooting':      ['error', 'bug', 'fix', 'crash', 'fail', 'issue', 'debug', 'troubleshoot', 'exception'],
@@ -101,6 +102,29 @@ const BUILTIN_SKILL_KEYWORDS = {
   'review-security':           ['security', 'vulnerability', 'injection', 'xss', 'csrf', 'auth', 'authorization', 'secret', 'token', 'credential', 'sql injection', 'audit'],
   'review-performance':        ['performance', 'latency', 'throughput', 'n+1', 'blocking', 'memory leak', 'hot path', 'cache', 'optimize'],
   'review-interface-contract': ['interface', 'contract', 'schema', 'api contract', 'type mismatch', 'breaking change', 'compatibility', 'export', 'signature'],
+  // ── Methodology Skills ─────────────────────────────────────────────────────
+  'requirements-analysis':       ['requirement', 'analysis', 'user story', 'acceptance criteria', 'prioritize', 'scope', 'elicit', 'stakeholder', 'moscow', '5 whys', 'invest', 'given when then'],
+  'git-conventions':             ['commit', 'git', 'changelog', 'version', 'semver', 'branch', 'merge', 'pull request', 'pr', 'mr', 'conventional commit'],
+  // ── Output Quality Skills ──────────────────────────────────────────────────
+  'structured-output':           ['structured output', 'write clearly', 'structure this', 'organize this', 'reduce redundancy', 'be concise', 'information density', 'token compression', 'concise', 'non-redundant'],
+  // ── Documentation Skills (Agent Skills 9-category coverage) ────────────────
+  'documentation-generation':      ['document', 'documentation', 'doc', 'readme', 'changelog', 'api doc', 'jsdoc', 'javadoc', 'docstring', 'comment', 'wiki', 'guide', 'tutorial', 'migration guide'],
+};
+
+// ─── Skill → Allowed Roles filtering ──────────────────────────────────────────
+// Some skills should only be injected for specific roles to avoid wasting tokens.
+// If a skill is listed here, it will ONLY be injected when the current role is
+// in the allowed list. Skills NOT listed here have no role restriction (default).
+//
+// Rationale: structured-output is a writing-quality skill that benefits
+// long-text-generating roles (analyst, architect, reviewer) but wastes tokens
+// for code-generating roles (developer, tester) where output is mostly code.
+
+const SKILL_ROLE_FILTER = {
+  'structured-output': ['analyst', 'architect', 'reviewer', 'planner'],
+  'requirements-analysis': ['analyst'],
+  'git-conventions': ['developer', 'reviewer'],
+  'documentation-generation': ['analyst', 'architect', 'developer', 'reviewer'],
 };
 
 // ─── Role → architecture-constraints.md section filtering ─────────────────────
@@ -218,4 +242,6 @@ module.exports = {
   ROLE_MANDATORY_DOCS,
   // Role-specific constraint sections
   ROLE_CONSTRAINT_SECTIONS,
+  // Skill → role filter
+  SKILL_ROLE_FILTER,
 };

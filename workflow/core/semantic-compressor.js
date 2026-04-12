@@ -232,7 +232,13 @@ class SemanticCompressor {
     const targetChars = Math.max(Math.floor(originalLength * targetRatio), this.minTokens * 4);
 
     try {
-      const truncated = content.slice(0, 6000); // Bound input tokens
+      // P2 Fix: Dynamic truncation instead of hardcoded 6000 chars.
+      // Rationale: 6000 chars is ~1500 tokens (4:1 ratio). For cheap LLMs with
+      // 4k-8k context windows, we should adapt based on content length and target.
+      // Strategy: use 75% of content or a configurable max, whichever is smaller.
+      const maxLlmInputChars = options.maxLlmInputChars || this.maxLlmInputChars || 8000;
+      const dynamicLimit = Math.min(content.length, Math.max(Math.floor(content.length * 0.75), 4000), maxLlmInputChars);
+      const truncated = content.slice(0, dynamicLimit);
       const targetWords = Math.floor(targetChars / 5); // Rough chars-to-words
 
       const prompt = [

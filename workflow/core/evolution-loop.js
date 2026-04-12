@@ -517,6 +517,253 @@ class EvolutionLoop {
     return 'recorded';
   }
 
+  // ─── Skill Ablation Test ──────────────────────────────────────────────────────
+
+  /**
+   * Run a Skill Ablation Test to quantify the ROI of individual skills.
+   *
+   * Ablation testing is a technique from ML research: remove one component at a
+   * time and measure the impact on overall performance. Applied to skills:
+   *   1. Record baseline quality metrics (with all skills active)
+   *   2. For each candidate skill, simulate removal and estimate quality delta
+   *   3. Produce a ranked report showing each skill's contribution
+   *
+   * This is a non-destructive, read-only analysis. No skills are actually removed.
+   *
+   * Methodology:
+   *   - Uses existing lifecycle data (usageCount, effectiveCount, gatePassCount, gateFailCount)
+   *   - Computes per-skill effectiveness rate and adoption rate
+   *   - Estimates quality impact using the effectiveness-weighted contribution model
+   *   - Flags skills with negative ROI (high injection cost, low effectiveness)
+   *
+   * @param {object} [options]
+   * @param {number} [options.minUsageCount=3] - Minimum usage count to include in analysis
+   * @returns {{ success: boolean, report: object, recommendations: object[] }}
+   */
+  runAblationTest(options = {}) {
+    const minUsageCount = options.minUsageCount ?? 3;
+
+    this._log(`[EvolutionLoop] 🧪 Running Skill Ablation Test (minUsage=${minUsageCount})...`);
+
+    if (!this.skillEvolution) {
+      this._log(`[EvolutionLoop] ⚠️ Ablation test requires SkillEvolutionEngine`);
+      return { success: false, report: null, recommendations: [] };
+    }
+
+    const skills = this.skillEvolution.listSkills();
+    if (skills.length === 0) {
+      return { success: true, report: { totalSkills: 0, analyzed: 0, skipped: 0 }, recommendations: [] };
+    }
+
+    // ── Collect per-skill metrics ──────────────────────────────────────────
+    const analyzed = [];
+    const skipped = [];
+
+    for (const skill of skills) {
+      // Skip retired skills
+      if (skill.retiredAt) {
+        skipped.push({ name: skill.name, reason: 'retired' });
+        continue;
+      }
+
+      const usageCount = skill.usageCount || 0;
+      const effectiveCount = skill.effectiveCount || 0;
+      const gatePassCount = skill.gatePassCount || 0;
+      const gateFailCount = skill.gateFailCount || 0;
+      const maxTokens = skill.maxTokens || 800;
+
+      // Skip skills with insufficient data
+      if (usageCount < minUsageCount) {
+        skipped.push({ name: skill.name, reason: `insufficient data (${usageCount} < ${minUsageCount})` });
+        continue;
+      }
+
+      // ── Compute metrics ────────────────────────────────────────────────
+      const effectivenessRate = usageCount > 0 ? effectiveCount / usageCount : 0;
+      const gatePassRate = (gatePassCount + gateFailCount) > 0
+        ? gatePassCount / (gatePassCount + gateFailCount)
+        : null; // null = no gate data
+
+      // Token cost estimate (injections × max_tokens)
+      const estimatedTokenCost = usageCount * maxTokens;
+
+      // Effectiveness-weighted contribution score:
+      //   High effectiveness + high usage = high positive contribution
+      //   Low effectiveness + high usage = high negative contribution (wasted tokens)
+      const contributionScore = effectivenessRate * usageCount - (1 - effectivenessRate) * usageCount * 0.5;
+
+      // ROI: contribution per token spent
+      const roi = estimatedTokenCost > 0 ? contributionScore / (estimatedTokenCost / 1000) : 0;
+
+      analyzed.push({
+        name: skill.name,
+        usageCount,
+        effectiveCount,
+        effectivenessRate: Math.round(effectivenessRate * 1000) / 10, // percentage with 1 decimal
+        gatePassRate: gatePassRate !== null ? Math.round(gatePassRate * 1000) / 10 : null,
+        gatePassCount,
+        gateFailCount,
+        estimatedTokenCost,
+        contributionScore: Math.round(contributionScore * 100) / 100,
+        roi: Math.round(roi * 1000) / 1000,
+        policyWeight: skill.policyWeight || 1,
+        version: skill.version || '0.0.0',
+        domains: skill.domains || [],
+      });
+    }
+
+    // ── Sort by contribution (highest first) ───────────────────────────────
+    analyzed.sort((a, b) => b.contributionScore - a.contributionScore);
+
+    // ── Generate recommendations ───────────────────────────────────────────
+    const recommendations = [];
+
+    for (const skill of analyzed) {
+      if (skill.effectivenessRate < 20 && skill.usageCount >= 5) {
+        recommendations.push({
+          skill: skill.name,
+          action: 'INVESTIGATE',
+          severity: 'high',
+          reason: `Low effectiveness (${skill.effectivenessRate}%) despite ${skill.usageCount} injections. ` +
+                  `Estimated ${skill.estimatedTokenCost} tokens wasted. Consider retiring or rewriting.`,
+        });
+      } else if (skill.effectivenessRate < 40 && skill.usageCount >= 3) {
+        recommendations.push({
+          skill: skill.name,
+          action: 'REVIEW',
+          severity: 'medium',
+          reason: `Below-average effectiveness (${skill.effectivenessRate}%). ` +
+                  `May benefit from content refinement or keyword tuning.`,
+        });
+      } else if (skill.effectivenessRate >= 80 && skill.usageCount >= 5) {
+        recommendations.push({
+          skill: skill.name,
+          action: 'PROMOTE',
+          severity: 'info',
+          reason: `High-value skill (${skill.effectivenessRate}% effective, ${skill.usageCount} uses). ` +
+                  `Consider promoting to project-level load or sharing via Marketplace.`,
+        });
+      }
+
+      // Negative ROI detection
+      if (skill.roi < -0.5) {
+        recommendations.push({
+          skill: skill.name,
+          action: 'RETIRE_CANDIDATE',
+          severity: 'high',
+          reason: `Negative ROI (${skill.roi}). Token cost exceeds contribution. ` +
+                  `Ablation suggests removing this skill would improve overall performance.`,
+        });
+      }
+    }
+
+    // ── Build report ───────────────────────────────────────────────────────
+    const report = {
+      timestamp: new Date().toISOString(),
+      sessionId: this._sessionId,
+      totalSkills: skills.length,
+      analyzed: analyzed.length,
+      skipped: skipped.length,
+      skippedDetails: skipped,
+      // Aggregate metrics
+      avgEffectiveness: analyzed.length > 0
+        ? Math.round(analyzed.reduce((sum, s) => sum + s.effectivenessRate, 0) / analyzed.length * 10) / 10
+        : 0,
+      totalTokenCost: analyzed.reduce((sum, s) => sum + s.estimatedTokenCost, 0),
+      positiveROICount: analyzed.filter(s => s.roi > 0).length,
+      negativeROICount: analyzed.filter(s => s.roi < 0).length,
+      // Per-skill breakdown (sorted by contribution)
+      skills: analyzed,
+      // Actionable recommendations
+      recommendations,
+    };
+
+    this._log(`[EvolutionLoop] 🧪 Ablation Test Complete: ${analyzed.length} skills analyzed, ` +
+      `${recommendations.length} recommendation(s), avg effectiveness: ${report.avgEffectiveness}%`);
+
+    // ── Persist report ─────────────────────────────────────────────────────
+    try {
+      const reportPath = path.join(this.outputDir, 'skill-ablation-report.json');
+      fs.mkdirSync(this.outputDir, { recursive: true });
+      fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+      this._log(`[EvolutionLoop] 📄 Ablation report saved: ${reportPath}`);
+    } catch (err) {
+      this._log(`[EvolutionLoop] ⚠️ Failed to save ablation report: ${err.message}`);
+    }
+
+    return { success: true, report, recommendations };
+  }
+
+  /**
+   * Generate a human-readable Markdown ablation report.
+   *
+   * @param {object} ablationResult - Result from runAblationTest()
+   * @returns {string} Markdown report
+   */
+  formatAblationReport(ablationResult) {
+    if (!ablationResult.success || !ablationResult.report) {
+      return '# Skill Ablation Report\n\n❌ Ablation test failed or no data available.';
+    }
+
+    const r = ablationResult.report;
+    const lines = [
+      `# Skill Ablation Report`,
+      ``,
+      `**Generated**: ${r.timestamp}`,
+      `**Session**: ${r.sessionId}`,
+      ``,
+      `## Summary`,
+      ``,
+      `| Metric | Value |`,
+      `|--------|-------|`,
+      `| Total Skills | ${r.totalSkills} |`,
+      `| Analyzed | ${r.analyzed} |`,
+      `| Skipped | ${r.skipped} |`,
+      `| Avg Effectiveness | ${r.avgEffectiveness}% |`,
+      `| Total Token Cost | ~${r.totalTokenCost.toLocaleString()} tokens |`,
+      `| Positive ROI | ${r.positiveROICount} skills |`,
+      `| Negative ROI | ${r.negativeROICount} skills |`,
+      ``,
+      `## Per-Skill Breakdown`,
+      ``,
+      `| Skill | Usage | Effective% | Gate Pass% | Token Cost | Contribution | ROI |`,
+      `|-------|-------|-----------|-----------|-----------|-------------|-----|`,
+    ];
+
+    for (const s of r.skills) {
+      const gateStr = s.gatePassRate !== null ? `${s.gatePassRate}%` : 'N/A';
+      const roiIcon = s.roi > 0.5 ? '🟢' : s.roi < -0.5 ? '🔴' : '🟡';
+      lines.push(
+        `| ${s.name} | ${s.usageCount} | ${s.effectivenessRate}% | ${gateStr} | ~${s.estimatedTokenCost} | ${s.contributionScore} | ${roiIcon} ${s.roi} |`
+      );
+    }
+
+    if (r.recommendations.length > 0) {
+      lines.push(``);
+      lines.push(`## Recommendations`);
+      lines.push(``);
+      for (const rec of r.recommendations) {
+        const icon = rec.severity === 'high' ? '🔴' : rec.severity === 'medium' ? '🟡' : 'ℹ️';
+        lines.push(`- ${icon} **${rec.action}** \`${rec.skill}\`: ${rec.reason}`);
+      }
+    }
+
+    if (r.skippedDetails.length > 0) {
+      lines.push(``);
+      lines.push(`## Skipped Skills`);
+      lines.push(``);
+      for (const s of r.skippedDetails) {
+        lines.push(`- \`${s.name}\`: ${s.reason}`);
+      }
+    }
+
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(`_Generated by EvolutionLoop Ablation Test (Agent Skills Spec improvement)_`);
+
+    return lines.join('\n');
+  }
+
   // ─── External Learning ───────────────────────────────────────────────────────
 
   /**
@@ -938,6 +1185,8 @@ class EvolutionLoop {
       PLAN: 'task-planning',
       CODE: 'code-generation',
       TEST: 'test-automation',
+      REVIEW: 'code-review',
+      DEPLOY: 'troubleshooting',
     };
     return skillMap[stage] || null;
   }

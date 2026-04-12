@@ -16,7 +16,7 @@
  * structured ChangeSet that the caller decides whether to apply.
  *
  * Integration points:
- *   - _finalizeWorkflow() → runs YELLOW tier after each workflow session
+ *   - teardown pipeline → runs YELLOW tier after each workflow session
  *   - /evolve command    → runs all tiers as Step 5
  *   - deriveStrategy()   → feeds YELLOW tier with adaptive parameter suggestions
  */

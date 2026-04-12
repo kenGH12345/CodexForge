@@ -21,7 +21,7 @@
  *
  * Trigger:
  *   - `/deep-audit` command (manual, on-demand)
- *   - `_finalizeWorkflow()` integration (automatic, fire-and-forget)
+ *   - teardown pipeline integration (automatic, fire-and-forget)
  *
  * Output:
  *   - output/deep-audit-report.json  (machine-readable)

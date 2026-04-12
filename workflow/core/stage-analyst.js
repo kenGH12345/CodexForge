@@ -271,6 +271,91 @@ async function _runAnalyst(rawRequirement) {
     console.warn(`[Orchestrator] ⚠️  Code Graph seed injection failed (non-fatal): ${seedErr.message}`);
   }
 
+  // ── ADR-49 P1: Anchor-Driven Code Reading ─────────────────────────────────
+  // BLIND SPOT fix: AnalystAgent previously relied only on CodeGraph summaries,
+  // never reading actual source code. Now we extract anchor files and entity names
+  // from the user requirement, read the key files (up to 5), and inject their
+  // content into the AnalystAgent context. This gives the LLM concrete code
+  // evidence to base its analysis on — similar to Claude Code's Explore phase.
+  try {
+    const { extractAnchorFiles } = require('../agents/analyst-agent');
+    const { anchorFiles, anchorNames } = extractAnchorFiles(rawRequirement || '');
+
+    // Also extract CamelCase entity names for broader search
+    const entityPattern = /\b([A-Z][a-zA-Z0-9]{2,}(?:[A-Z][a-z]+)+)\b/g;
+    const entities = [];
+    const entitySeen = new Set();
+    let entityMatch;
+    while ((entityMatch = entityPattern.exec(rawRequirement || '')) !== null) {
+      if (!entitySeen.has(entityMatch[1])) {
+        entitySeen.add(entityMatch[1]);
+        entities.push(entityMatch[1]);
+      }
+    }
+
+    const searchTargets = [...anchorFiles.slice(0, 3), ...entities.slice(0, 5)];
+    if (searchTargets.length > 0) {
+      const codeSnippets = [];
+      const maxFiles = 5;
+      const maxCharsPerFile = 2000;
+      let filesRead = 0;
+
+      for (const target of searchTargets) {
+        if (filesRead >= maxFiles) break;
+
+        // Try to find the file in the project
+        const projectRoot = this._projectRoot || this.projectRoot || '.';
+        const targetPath = path.resolve(projectRoot, target);
+
+        // Direct file read if it looks like a file path
+        if (target.includes('/') || target.includes('\\') || /\.\w{1,5}$/.test(target)) {
+          try {
+            if (fs.existsSync(targetPath)) {
+              const content = fs.readFileSync(targetPath, 'utf-8');
+              const truncated = content.length > maxCharsPerFile
+                ? content.slice(0, maxCharsPerFile) + '\n... (truncated)'
+                : content;
+              codeSnippets.push(`### File: \`${target}\` (${content.length} chars)\n\`\`\`\n${truncated}\n\`\`\``);
+              filesRead++;
+              continue;
+            }
+          } catch (_) { /* fall through to search */ }
+        }
+
+        // Search via CodeGraph if available
+        if (this.codeGraph && typeof this.codeGraph.searchSymbol === 'function') {
+          try {
+            const results = this.codeGraph.searchSymbol(target, { maxResults: 2 });
+            if (results && results.length > 0) {
+              for (const result of results.slice(0, 1)) {
+                if (filesRead >= maxFiles) break;
+                const filePath = result.file || result.path;
+                if (filePath && fs.existsSync(filePath)) {
+                  const content = fs.readFileSync(filePath, 'utf-8');
+                  const truncated = content.length > maxCharsPerFile
+                    ? content.slice(0, maxCharsPerFile) + '\n... (truncated)'
+                    : content;
+                  codeSnippets.push(`### File: \`${filePath}\` (found via CodeGraph search for "${target}")\n\`\`\`\n${truncated}\n\`\`\``);
+                  filesRead++;
+                }
+              }
+            }
+          } catch (_) { /* non-fatal */ }
+        }
+      }
+
+      if (codeSnippets.length > 0) {
+        const codeBlock = `## Context: Anchor Code Files (auto-read from project)\n> The following ${codeSnippets.length} file(s) were automatically read based on references in the user requirement.\n> Use these as concrete evidence for your analysis — reference specific line numbers and function names.\n\n${codeSnippets.join('\n\n')}`;
+        clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n${codeBlock}`;
+        console.error(`[Orchestrator] 📖 ADR-49: ${codeSnippets.length} anchor code file(s) read and injected into AnalystAgent (${codeBlock.length} chars).`);
+      } else {
+        console.error(`[Orchestrator] 📖 ADR-49: No anchor files found for targets: [${searchTargets.slice(0, 5).join(', ')}]`);
+      }
+    }
+  } catch (anchorReadErr) {
+    console.warn(`[Orchestrator] ⚠️  ADR-49 anchor code reading failed (non-fatal): ${anchorReadErr.message}`);
+  }
+
   // ── P1 fix: Inject Experience for ANALYSE stage (was completely missing) ───
   // The ANALYSE stage now learns from past requirement analysis experiences,
   // enabling better clarification questions and risk identification over time.
@@ -425,9 +510,56 @@ async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
   _recordPromptABOutcome('analyst', true, clarResult.rounds ?? 0);
 
   // ── Defect J fix: Estimate task complexity from the enriched requirement ───
+  // Priority: LLM taskClassification (from JSON block) > regex-based estimation (fallback)
   if (this.obs) {
     const requirementText = clarResult.enrichedRequirement || '';
-    const complexity = Observability.estimateTaskComplexity(requirementText);
+
+    // ── Layer A: Try LLM-assessed taskClassification from ANALYST JSON block ──
+    let llmClassification = null;
+    let complexity = null;
+    try {
+      let analyseContent = '';
+      if (outputPath && fs.existsSync(outputPath)) {
+        analyseContent = fs.readFileSync(outputPath, 'utf-8');
+      }
+      const jsonBlock = extractJsonBlock(analyseContent);
+      if (jsonBlock && jsonBlock.taskClassification) {
+        const tc = jsonBlock.taskClassification;
+        // Validate the LLM output has the expected shape
+        const VALID_LEVELS = new Set(['simple', 'moderate', 'complex', 'very_complex']);
+        if (typeof tc.requiresCodeChange === 'boolean' && VALID_LEVELS.has(tc.complexity)) {
+          llmClassification = {
+            requiresCodeChange: tc.requiresCodeChange,
+            codeChangeReason: String(tc.codeChangeReason || '').slice(0, 300),
+            complexity: tc.complexity,
+            complexityScore: typeof tc.complexityScore === 'number'
+              ? Math.max(0, Math.min(100, Math.round(tc.complexityScore)))
+              : (tc.complexity === 'simple' ? 15 : tc.complexity === 'moderate' ? 38 : tc.complexity === 'complex' ? 63 : 85),
+            complexityReason: String(tc.complexityReason || '').slice(0, 300),
+            source: 'llm',
+          };
+          complexity = {
+            score: llmClassification.complexityScore,
+            level: llmClassification.complexity,
+            factors: { source: 'llm-taskClassification' },
+          };
+          console.error(`[Orchestrator] 🧠 LLM Task Classification: requiresCodeChange=${llmClassification.requiresCodeChange}, complexity=${llmClassification.complexity} (score=${llmClassification.complexityScore})`);
+          console.error(`[Orchestrator]    Code change reason: ${llmClassification.codeChangeReason}`);
+          console.error(`[Orchestrator]    Complexity reason: ${llmClassification.complexityReason}`);
+        } else {
+          console.warn(`[Orchestrator] ⚠️  LLM taskClassification has invalid shape — falling back to regex estimation.`);
+        }
+      }
+    } catch (tcErr) {
+      console.warn(`[Orchestrator] ⚠️  LLM taskClassification extraction failed (non-fatal): ${tcErr.message}`);
+    }
+
+    // ── Layer B: Fallback to regex-based estimation if LLM didn't provide valid classification ──
+    if (!complexity) {
+      complexity = Observability.estimateTaskComplexity(requirementText);
+      console.error(`[Orchestrator] 📊 Regex fallback complexity: level=${complexity.level}, score=${complexity.score}`);
+    }
+
     this.obs.recordTaskComplexity(complexity);
 
     if (this.stageCtx) {
@@ -437,18 +569,75 @@ async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
         meta: {
           ...(existingAnalyse.meta || {}),
           complexity,
+          llmClassification: llmClassification || null,
           traceability: traceabilityMeta || (existingAnalyse.meta || {}).traceability || null,
         },
       });
     }
 
-    console.error(`[Orchestrator] 📊 AEF Complexity Assessment: level=${complexity.level}, score=${complexity.score}`);
+    console.error(`[Orchestrator] 📊 AEF Complexity Assessment: level=${complexity.level}, score=${complexity.score} (source: ${llmClassification ? 'llm' : 'regex'})`);
     if (complexity.level === 'simple') {
       console.error(`[Orchestrator] ⚡ AEF Fast-Path: Simple task detected — ARCHITECT stage will use streamlined review.`);
     } else if (complexity.level === 'moderate') {
       console.error(`[Orchestrator] ▶️  AEF Standard-Path: Moderate task detected — standard review flow.`);
     } else if (complexity.level === 'complex' || complexity.level === 'very_complex') {
       console.error(`[Orchestrator] 🔍 AEF Full-Path: ${complexity.level === 'very_complex' ? 'Very complex' : 'Complex'} task detected — enhanced review budgets will be applied.`);
+    }
+
+    // ── Layer 2 Task Intent: LLM-assessed intent (priority) > regex estimation (fallback) ───
+    // The LLM has already analyzed the full requirement and codebase context during ANALYSE.
+    // Its taskIntent judgment is far more accurate than regex pattern matching.
+    try {
+      let taskIntentEstimate = null;
+
+      // Priority 1: LLM-assessed taskIntent from taskClassification JSON block
+      if (llmClassification && llmClassification.taskIntent) {
+        const VALID_INTENTS = new Set(['full', 'design_only', 'analysis_only', 'review_only', 'research_only']);
+        if (VALID_INTENTS.has(llmClassification.taskIntent)) {
+          taskIntentEstimate = {
+            intent: llmClassification.taskIntent,
+            description: String(llmClassification.taskIntentReason || `LLM-assessed: ${llmClassification.taskIntent}`).slice(0, 300),
+            confidence: 'high',
+            signals: [`llm-taskClassification: ${llmClassification.taskIntent}`],
+            source: 'llm',
+          };
+          console.error(`[Orchestrator] 🧠 LLM Task Intent: ${taskIntentEstimate.intent} (reason: ${taskIntentEstimate.description})`);
+        } else {
+          console.warn(`[Orchestrator] ⚠️  LLM taskIntent "${llmClassification.taskIntent}" is not a valid intent — falling back to regex estimation.`);
+        }
+      }
+
+      // Priority 2: Regex-based estimation (fallback)
+      if (!taskIntentEstimate) {
+        const { estimateTaskIntent } = require('./stage-smart-skip');
+        const enrichedText = clarResult.enrichedRequirement || '';
+        let fullAnalyseContent = enrichedText;
+        if (outputPath && fs.existsSync(outputPath)) {
+          try {
+            fullAnalyseContent = fs.readFileSync(outputPath, 'utf-8');
+          } catch (_) { /* use enrichedText as fallback */ }
+        }
+        taskIntentEstimate = estimateTaskIntent(fullAnalyseContent);
+        console.error(`[Orchestrator] 🎯 Regex fallback Task Intent: ${taskIntentEstimate.intent} (confidence: ${taskIntentEstimate.confidence}, signals: ${taskIntentEstimate.signals.length})`);
+      }
+
+      if (this.stageCtx) {
+        const existingAnalyse2 = this.stageCtx.get('ANALYSE') || {};
+        this.stageCtx.set('ANALYSE', {
+          ...existingAnalyse2,
+          meta: {
+            ...(existingAnalyse2.meta || {}),
+            taskIntent: taskIntentEstimate,
+          },
+        });
+      }
+
+      console.error(`[Orchestrator] 🎯 Layer 2 Task Intent: ${taskIntentEstimate.intent} (confidence: ${taskIntentEstimate.confidence}, source: ${taskIntentEstimate.source})`);
+      if (taskIntentEstimate.signals.length > 0) {
+        console.error(`[Orchestrator]    Signals: ${taskIntentEstimate.signals.slice(0, 3).join(', ')}`);
+      }
+    } catch (intentErr) {
+      console.warn(`[Orchestrator] ⚠️  Layer 2 task intent estimation failed (non-fatal): ${intentErr.message}`);
     }
 
     const cfgAutoFix = (this._config && this._config.autoFixLoop) || {};

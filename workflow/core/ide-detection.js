@@ -34,6 +34,29 @@
  * Each IDE sets specific env vars when running extensions or integrated terminals.
  */
 const IDE_SIGNATURES = {
+  // ⚠️ DETECTION ORDER MATTERS: More specific IDEs (CodeBuddy, Cursor) must come
+  // BEFORE generic ones (VS Code), because VS Code forks inherit VSCODE_* env vars.
+  codeBuddy: {
+    name: 'CodeBuddy',
+    // GONGFENG_AGENT is the actual env var set by CodeBuddy (工蜂 Agent).
+    // CODEBUDDY_API_KEY/AUTH_TOKEN are legacy — CodeBuddy doesn't set them in practice.
+    envVars: ['GONGFENG_AGENT', 'CODEBUDDY_API_KEY', 'CODEBUDDY_AUTH_TOKEN'],
+    processNames: ['codebuddy', 'CodeBuddy'],
+    capabilities: {
+      codebaseSearch: true,   // Semantic search (built-in, VS Code fork)
+      grepSearch: true,       // ripgrep-powered search
+      viewCodeItem: true,     // Symbol-level code viewer
+      readFile: true,         // File reading
+      listDir: true,          // Directory listing
+      builtinLSP: true,       // Full LSP via IDE (VS Code fork, complete LSP support)
+      callHierarchy: true,    // Call Hierarchy (VS Code fork, has this feature)
+      findReferences: true,   // Find All References - LSP capability
+      goToDefinition: true,   // Go to Definition - LSP capability
+      typeInference: true,    // Type inference via hover - LSP capability
+      terminal: true,         // Terminal command execution
+      editFile: true,         // File editing
+    },
+  },
   cursor: {
     name: 'Cursor',
     envVars: ['CURSOR_SESSION', 'CURSOR_TRACE_ID'],
@@ -114,25 +137,6 @@ const IDE_SIGNATURES = {
       typeInference: true,
       terminal: true,
       editFile: true,
-    },
-  },
-  codeBuddy: {
-    name: 'CodeBuddy',
-    envVars: ['CODEBUDDY_API_KEY', 'CODEBUDDY_AUTH_TOKEN'],
-    processNames: ['codebuddy', 'CodeBuddy'],
-    capabilities: {
-      codebaseSearch: true,   // Semantic search (built-in, VS Code fork)
-      grepSearch: true,       // ripgrep-powered search
-      viewCodeItem: true,     // Symbol-level code viewer
-      readFile: true,         // File reading
-      listDir: true,          // Directory listing
-      builtinLSP: true,       // Full LSP via IDE (VS Code fork, complete LSP support)
-      callHierarchy: true,    // Call Hierarchy (VS Code fork, has this feature)
-      findReferences: true,   // Find All References - LSP capability
-      goToDefinition: true,   // Go to Definition - LSP capability
-      typeInference: true,    // Type inference via hover - LSP capability
-      terminal: true,         // Terminal command execution
-      editFile: true,         // File editing
     },
   },
   rooCode: {

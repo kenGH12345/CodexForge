@@ -1,22 +1,23 @@
 ---
 name: code-review
-version: 2.0.0
+version: 3.0.0
 type: domain-skill
 domains: [quality, review, security]
 dependencies: []
 load_level: task
-max_tokens: 1200
+max_tokens: 1500
 triggers:
   keywords: [review, refactor, clean code, lint, quality, smell, audit, vulnerability, security]
   roles: [developer, architect, reviewer, coding-agent]
-description: "Code review checklist, anti-hallucination rules, and security audit best practices"
+description: "Two-stage code review (RuleChecker + ReviewFilter), anti-hallucination rules, data flywheel, and security audit best practices. Inspired by BitsAI-CR (ByteDance)."
 ---
 # Skill: code-review
 
 > **Type**: Domain Skill
-> **Version**: 2.0.0
-> **Description**: Code review checklist, anti-hallucination rules, and security audit best practices
+> **Version**: 3.0.0
+> **Description**: Two-stage code review with anti-hallucination verification, inspired by BitsAI-CR (ByteDance, 75% accuracy at 12K+ weekly active developers)
 > **Domains**: quality, review, security
+> **Industry References**: BitsAI-CR (ByteDance), Google Code Review Best Practices, Qodo Review
 
 ---
 
@@ -50,33 +51,78 @@ Every finding MUST satisfy ALL of the following conditions:
 - LOW: Style, readability, or minor improvement opportunity
 - Never inflate severity. A missing comment is LOW, not MEDIUM.
 
+### R5: Two-Stage Verification (BitsAI-CR Pattern)
+Every review finding MUST pass through two stages:
+1. **Stage 1 (RuleChecker)**: Generate finding based on checklist rules with code evidence
+2. **Stage 2 (ReviewFilter)**: Self-verify the finding by asking:
+   - "Is this finding actually correct, or did I misread the code?"
+   - "Is this finding actionable, or is it noise?"
+   - "Would a senior developer accept this feedback, or dismiss it?"
+   - If ANY answer is negative → DISCARD the finding (do NOT include it in the report)
+
+This two-stage approach reduces false positives from ~75% to ~25% (BitsAI-CR empirical data).
+
+### R6: Dynamic Rule Blacklist
+- Track which review rules consistently produce rejected/ignored findings
+- If a rule's "outdated rate" (developer dismissal rate) exceeds 50% over 5+ reviews → blacklist it
+- Blacklisted rules are skipped in Stage 1 to save token budget and reduce noise
+- The blacklist is stored in experience and evolves over time (data flywheel)
+
 ---
 
 ## SOP (Standard Operating Procedure)
 <!-- PURPOSE: Step-by-step workflow for the skill's domain. Numbered phases with clear entry/exit criteria. An agent following this SOP should produce consistent, high-quality output regardless of the specific project. -->
 
-### Phase 1: Structured Checklist Review
+### Phase 0: Context Assembly (BitsAI-CR: Tree-sitter Pattern)
+Before reviewing, build the review context:
+1. **Parse the diff** to identify changed code blocks (functions, classes, methods)
+2. **Expand context**: For each changed function, also read:
+   - The function's callers (who calls this?)
+   - The function's callees (what does this call?)
+   - The function's type definitions (interfaces, schemas)
+3. **Identify review scope**: Changed lines + 10-line context window above/below
+4. This prevents reviewing code in isolation (the #1 cause of false positives)
+
+### Phase 1: RuleChecker — Structured Checklist Review
 1. Read the entire diff/code before making any judgments
 2. Evaluate each checklist item in order (SEC → ERR → PERF → STYLE → REQ → SYNTAX → EDGE → INTF → EXPORT → CONST)
 3. For each item: PASS (with evidence), FAIL (with evidence + fix), or N/A (with brief reason)
 4. Record which review dimensions were actually exercised
+5. **Skip blacklisted rules** (R6) — check experience for rules with high dismissal rate
 
-### Phase 2: Adversarial Second Opinion
+### Phase 2: ReviewFilter — Self-Verification (BitsAI-CR Pattern)
+For EVERY finding from Phase 1:
+1. Re-read the code context with fresh eyes
+2. Ask the 3 verification questions from R5
+3. **Discard** findings that fail verification (false positives)
+4. **Upgrade** findings where verification reveals deeper issues
+5. Record the filter decision: `KEEP`, `DISCARD`, `UPGRADE`
+6. Target: ≤25% of Phase 1 findings should be discarded (if >50% are discarded, Phase 1 rules need tuning)
+
+### Phase 3: Adversarial Second Opinion
 1. All PASS/N/A items from Phase 1 are re-evaluated by a skeptical reviewer
 2. Focus on: subtle bugs, missing edge cases, security oversights, optimistic assumptions
 3. Any downgrade (PASS→FAIL) must include specific evidence the main reviewer missed
+4. **New**: Also check for "silent correctness" — code that works but is fragile/unmaintainable
 
-### Phase 3: Coverage Self-Check (NEW)
-1. After Phases 1+2, compute a Coverage Matrix across all security dimensions
+### Phase 4: Coverage Self-Check
+1. After Phases 1-3, compute a Coverage Matrix across all security dimensions
 2. If any dimension has 0 items evaluated (all N/A), flag as potential blind spot
 3. Dimensions: Injection, AuthN/AuthZ, Secrets, Input Validation, Error Info Leak, Race Condition, Resource Exhaustion, Crypto, Dependency, Business Logic
 
-### Phase 4: Attack Chain Analysis (for security-sensitive reviews)
+### Phase 5: Attack Chain Analysis (for security-sensitive reviews)
 1. After individual findings are identified, analyse: can 2+ findings be COMBINED into an end-to-end attack path?
 2. Example: Input validation bypass (SEC-003 FAIL) + SQL injection (SEC-001 FAIL) = authenticated SQLi attack chain
 3. Document each chain as: Entry Point → Vulnerability 1 → Vulnerability 2 → Impact
 
-### Phase 5: Self-Correction & Fix
+### Phase 6: Data Flywheel Feedback (BitsAI-CR Pattern)
+After the review is complete:
+1. **Record** which findings were accepted vs dismissed by the developer
+2. **Update** rule effectiveness scores based on acceptance rate
+3. **Evolve** the checklist: promote high-acceptance rules, demote low-acceptance rules
+4. This creates a continuous improvement loop — the review quality improves with every cycle
+
+### Phase 7: Self-Correction & Fix
 1. All FAIL items are sent to the fix agent with severity context
 2. Fix agent applies minimal, targeted changes
 3. Re-review only the affected dimensions (not full re-review)
@@ -166,6 +212,24 @@ The "attack chain" pattern generalises to code quality:
 - **Reliability chain**: Missing error handling + silent failure + no monitoring = undetected outage
 - **Maintenance chain**: Magic numbers + no comments + complex branching = unmaintainable code
 
+### 6. Review Comment Quality (BitsAI-CR Insight)
+A good review comment has 4 components:
+1. **What**: The specific issue (with code reference)
+2. **Why**: Why this is a problem (impact on correctness/security/performance)
+3. **How**: Concrete fix suggestion (not vague "improve this")
+4. **Severity**: Accurate severity level per R4
+
+Bad: "This function is too complex"
+Good: "Function `_decideChallengeTrigger` (line 142) has cyclomatic complexity 12 (threshold: 10). Extract the 3 independent condition blocks into helper methods to improve testability and reduce cognitive load. Severity: LOW."
+
+### 7. Outdated Rate Tracking (BitsAI-CR Metric)
+The "outdated rate" measures how often developers dismiss review comments:
+- **Outdated rate < 20%**: Excellent — review comments are high-value
+- **Outdated rate 20-40%**: Acceptable — some noise but mostly useful
+- **Outdated rate > 40%**: Poor — too many false positives, tune rules
+- Track per-rule outdated rates to identify which rules need improvement
+- This is the single most important metric for review quality
+
 ---
 
 ## Anti-Patterns
@@ -201,3 +265,4 @@ The "attack chain" pattern generalises to code quality:
 |---------|------|--------|
 | v1.0.0 | 2026-03-13 | Initial creation (empty shell) |
 | v2.0.0 | 2026-03-18 | Full population: Rules (anti-hallucination, confidence tiers, anti-bias, severity), SOP (5 phases incl. coverage check + attack chain), Checklist guidance, Best Practices (evidence-first, progressive disclosure, attack chain thinking, coverage-driven, defect chain), Anti-Patterns, Context Hints. Inspired by code-audit Skill article analysis. |
+| v3.0.0 | 2026-04-09 | Major upgrade: Added BitsAI-CR two-stage review (RuleChecker + ReviewFilter), R5 two-stage verification rule, R6 dynamic rule blacklist, Phase 0 context assembly, Phase 2 self-verification, Phase 6 data flywheel feedback, BP6 review comment quality, BP7 outdated rate tracking. Industry references: BitsAI-CR (ByteDance, 75% accuracy), Qodo Review. |

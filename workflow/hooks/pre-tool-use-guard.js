@@ -72,14 +72,17 @@ const bashCommand = toolInput.command || toolInput.tool_input?.command || '';
 // Try CWD first, then common locations
 const candidatePaths = [
   path.join(process.cwd(), 'output', 'workflow-status.json'),
+  path.join(process.cwd(), 'workflow', 'output', 'workflow-status.json'),
   path.join(process.cwd(), '..', 'output', 'workflow-status.json'),
 ];
 
 let statusData = null;
+let statusDataPath = null;
 for (const p of candidatePaths) {
   try {
     if (fs.existsSync(p)) {
       statusData = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      statusDataPath = p;
       break;
     }
   } catch { /* continue */ }
@@ -103,14 +106,28 @@ if (!statusData || !statusData.pendingRetry) {
   if (active) {
     // Check TTL expiry
     const expired = active.ttlExpiry && new Date(active.ttlExpiry) < new Date();
-    if (!expired) {
-      const analysisStages = ['ANALYSE', 'ARCHITECT', 'PLAN'];
-      const isAnalysisStage = analysisStages.includes(active.currentStage);
+    if (expired) {
+      // TTL expired — clean up stale activeWorkflow + pendingRetry (mirrors IDE Bridge cleanup)
+      try {
+        delete statusData.activeWorkflow;
+        if (statusData.pendingRetry) {
+          delete statusData.pendingRetry;
+        }
+        const statusPath = statusDataPath || candidatePaths.find(p => fs.existsSync(p));
+        if (statusPath) {
+          fs.writeFileSync(statusPath, JSON.stringify(statusData, null, 2), 'utf-8');
+          process.stderr.write(`[pre-tool-use-guard] 🧹 TTL expired for session=${active.session}. Cleaned up stale activeWorkflow.\n`);
+        }
+      } catch { /* non-fatal */ }
+      process.exit(0);
+    }
+    const analysisStages = ['ANALYSE', 'ARCHITECT', 'PLAN'];
+    const isAnalysisStage = analysisStages.includes(active.currentStage);
 
-      if (isAnalysisStage) {
-        // Strict mode: only allow workflow commands (ide-workflow-bridge.js)
-        const isWorkflowCommand = bashCommand.includes('ide-workflow-bridge.js');
-        if (!isWorkflowCommand) {
+    if (isAnalysisStage) {
+      // Strict mode: only allow workflow commands (ide-workflow-bridge.js)
+      const isWorkflowCommand = bashCommand.includes('ide-workflow-bridge.js');
+      if (!isWorkflowCommand) {
           process.stderr.write([
             ``,
             `╔══════════════════════════════════════════════════════════════╗`,
@@ -134,7 +151,6 @@ if (!statusData || !statusData.pendingRetry) {
         }
       }
       // Execution stages (DEVELOP/TEST/REVIEW/DEPLOY): allow all commands
-    }
   }
   process.exit(0);
 }

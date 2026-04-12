@@ -85,7 +85,8 @@ const { DecisionTrail } = require('./core/decision-trail');
 // Direction 5: Adaptive Stage Skipping based on task complexity
 const { StageSmartSkip } = require('./core/stage-smart-skip');
 // P1-2: Agent Negotiation Protocol (inter-agent concern resolution)
-const { NegotiationEngine } = require('./core/negotiation-engine');
+
+
 // P1-4: Structured Logger (JSON Lines logging)
 const { Logger, logger: structuredLogger } = require('./core/logger');
 // P2-1: Cross-project experience routing
@@ -409,12 +410,12 @@ this.projectId = projectId;
       console.error(`[Orchestrator] ⏭️  SmartRouterEnhancement disabled by config`);
     }
     this._rawLlmCall = async (prompt) => {
+      // Estimate tokens from prompt length (char / 4 heuristic, same as buildAgentPrompt)
+      const promptStr = Array.isArray(prompt)
+        ? prompt.map(m => (typeof m === 'object' ? (m.content || '') : String(m))).join(' ')
+        : String(prompt || '');
+      const estimatedTokens = Math.ceil(promptStr.length / 4);
       try {
-        // Estimate tokens from prompt length (char / 4 heuristic, same as buildAgentPrompt)
-        const promptStr = Array.isArray(prompt)
-          ? prompt.map(m => (typeof m === 'object' ? (m.content || '') : String(m))).join(' ')
-          : String(prompt || '');
-        const estimatedTokens = Math.ceil(promptStr.length / 4);
         this.obs.recordLlmCall('__internal', estimatedTokens, promptStr);
       } catch (_) { /* metering must never break the call */ }
 
@@ -429,6 +430,19 @@ this.projectId = projectId;
       //   [Assistant]: <content>
       //   ...
       // This is readable by any LLM and preserves the full reasoning chain.
+
+      // ── P0 fix: RunGuard beforeLlmCall check ─────────────────────────
+      // Checks global LLM call limits before executing. If limits are exceeded,
+      // throws RunGuardAbortError which propagates to the orchestrator's catch.
+      try {
+        if (this.runGuard && typeof this.runGuard.beforeLlmCall === 'function') {
+          this.runGuard.beforeLlmCall('__internal', estimatedTokens || 4000);
+        }
+      } catch (rgErr) {
+        if (rgErr.code === 'RUN_GUARD_ABORT') throw rgErr;
+        /* other errors are non-fatal */
+      }
+
       let response;
       if (Array.isArray(prompt)) {
         try {
@@ -456,6 +470,32 @@ this.projectId = projectId;
           this.obs.recordActualTokens('__internal', actualTokens);
         }
       } catch (_) { /* metering must never break the call */ }
+
+      // ── P1 fix: Emit LLM_CALL_RECORDED hook event ───────────────────
+      // Previously defined in constants.js HOOK_EVENTS but never emitted.
+      // Consumers: EventJournal, IntrospectionManager, RunGuard.
+      try {
+        if (this.hooks && typeof this.hooks.emit === 'function') {
+          const { HOOK_EVENTS } = require('./core/constants');
+          this.hooks.emit(HOOK_EVENTS.LLM_CALL_RECORDED, {
+            role: '__internal',
+            estimatedTokens: estimatedTokens || 0,
+            responseTokens: (response && typeof response === 'object')
+              ? (response.usage?.total_tokens ?? null) : null,
+          }).catch(() => {});
+        }
+      } catch (_) { /* hook emit must never break the call */ }
+
+      // ── P0 fix: RunGuard afterLlmCall integration ────────────────────
+      // Records the LLM call in RunGuard for budget and limit tracking.
+      try {
+        if (this.runGuard && typeof this.runGuard.afterLlmCall === 'function') {
+          const respTokens = (response && typeof response === 'object')
+            ? (response.usage?.total_tokens ?? 0) : 0;
+          this.runGuard.afterLlmCall('__internal', estimatedTokens || 0, respTokens, 0);
+        }
+      } catch (_) { /* runGuard must never break the call */ }
+
       return response;
     };
 
@@ -669,36 +709,59 @@ this.projectId = projectId;
     console.error(`[Orchestrator] 🔄 LoopGuard initialised (Plan-A: max ${this._loopGuard._maxRetries} retries per backward edge)`);
 
 // ── EntropyGC: architectural drift scanner ──────────────────────────────
+    // P0-STARTUP-1: wrapped in try/catch — EntropyGC is non-critical for
+    // workflow execution. If init fails (e.g. project scan OOM), degrade to null
+    // and log. Downstream code must check this.entropyGC before calling methods.
     const entropyCfg = (this._config && this._config.entropyGC) || {};
-    this.entropyGC = new EntropyGC({
-      projectRoot:  this.projectRoot,
-      outputDir:    PATHS.OUTPUT_DIR,
-      extensions:   entropyCfg.sourceExtensions,
-      ignoreDirs:   entropyCfg.ignoreDirs,
-      maxLines:     entropyCfg.maxLines,
-      docPaths:     entropyCfg.docPaths || [],
-      lintCommand:  entropyCfg.lintCommand || null,
-      llmCall:      this._rawLlmCall,
-    });
+    try {
+      this.entropyGC = new EntropyGC({
+        projectRoot:  this.projectRoot,
+        outputDir:    PATHS.OUTPUT_DIR,
+        extensions:   entropyCfg.sourceExtensions,
+        ignoreDirs:   entropyCfg.ignoreDirs,
+        maxLines:     entropyCfg.maxLines,
+        docPaths:     entropyCfg.docPaths || [],
+        lintCommand:  entropyCfg.lintCommand || null,
+        llmCall:      this._rawLlmCall,
+      });
+    } catch (entropyErr) {
+      console.error(`[Orchestrator] ⚠️ EntropyGC init failed (non-fatal, degraded to null): ${entropyErr.message}`);
+      this.entropyGC = null;
+    }
 
     // ── CIIntegration: pipeline validation bridge ───────────────────────────
+    // P0-STARTUP-1: wrapped in try/catch — CIIntegration is only used in TEST
+    // stage and can safely degrade if init fails (e.g. no lint/test commands).
     const ciCfg = (this._config && this._config.ci) || {};
-    this.ci = new CIIntegration({
-      projectRoot:  this.projectRoot,
-      lintCommand:  ciCfg.lintCommand || null,
-      testCommand:  ciCfg.testCommand || null,
-    });
+    try {
+      this.ci = new CIIntegration({
+        projectRoot:  this.projectRoot,
+        lintCommand:  ciCfg.lintCommand || null,
+        testCommand:  ciCfg.testCommand || null,
+      });
+    } catch (ciErr) {
+      console.error(`[Orchestrator] ⚠️ CIIntegration init failed (non-fatal, degraded to null): ${ciErr.message}`);
+      this.ci = null;
+    }
 
 // ── CodeGraph: structured code index ───────────────────────────────────
+    // P0-STARTUP-1: wrapped in try/catch — CodeGraph is ADR-37 fallback only;
+    // IDE Agent mode never uses it. If init fails, semantic search degrades to
+    // keyword-only. Downstream code already handles null codeGraph.
     const codeGraphCfg = (this._config && this._config.codeGraph) || {};
-    this.codeGraph = new CodeGraph({
-      projectRoot:    this.projectRoot,
-      outputDir:      PATHS.OUTPUT_DIR,
-      extensions:     codeGraphCfg.sourceExtensions,
-      ignoreDirs:     codeGraphCfg.ignoreDirs,
-      scopeDirs:      codeGraphCfg.scopeDirs,
-      llmCall:        this._rawLlmCall,
-    });
+    try {
+      this.codeGraph = new CodeGraph({
+        projectRoot:    this.projectRoot,
+        outputDir:      PATHS.OUTPUT_DIR,
+        extensions:     codeGraphCfg.sourceExtensions,
+        ignoreDirs:     codeGraphCfg.ignoreDirs,
+        scopeDirs:      codeGraphCfg.scopeDirs,
+        llmCall:        this._rawLlmCall,
+      });
+    } catch (codeGraphErr) {
+      console.error(`[Orchestrator] ⚠️ CodeGraph init failed (non-fatal, degraded to null): ${codeGraphErr.message}`);
+      this.codeGraph = null;
+    }
 
     // Create agents with hook emitter
     const emitter = this.hooks.getEmitter();
@@ -989,37 +1052,46 @@ this.projectId = projectId;
     this.services.registerValue('llmRouter', this.llmRouter);
     this.services.registerValue('modelHealth', this.modelHealth);
 
-    // ── Direction 1+2: RunGuard (cost-aware gateway + global execution ceiling) ──
-    // Layered defence: soft limit (downgrade model tier) + hard limit (abort execution).
-    // Reads budget from adaptiveStrategy.budgetUsd or defaults to $5.
-    const runGuardOpts = {
-      maxTotalLlmCalls:   (this._adaptiveStrategy && this._adaptiveStrategy.maxTotalLlmCalls) || 50,
-      maxTotalTokens:     (this._adaptiveStrategy && this._adaptiveStrategy.maxTotalTokens) || 800_000,
-      maxTotalDurationMs: (this._adaptiveStrategy && this._adaptiveStrategy.maxTotalDurationMs) || 30 * 60 * 1000,
-      budgetUsd:          (this._config && this._config.llmCostRouter && this._config.llmCostRouter.budgetUsd) || 5.0,
-      enabled:            !(this._config && this._config.runGuard && this._config.runGuard.enabled === false),
-    };
-    if (this._config && this._config.runGuard) {
-      Object.assign(runGuardOpts, this._config.runGuard);
+    // ── Direction 1+2: RunGuard — now managed by run-guard-plugin.js ──
+    // Previously created manually here but core methods were never called.
+    // Now auto-activated via LifecyclePluginRegistry → hooks.emit(STAGE_STARTED/ENDED).
+    // Fallback: create a lightweight instance if plugin system is unavailable.
+    if (!this._pluginRegistry) {
+      const runGuardOpts = {
+        maxTotalLlmCalls:   (this._adaptiveStrategy && this._adaptiveStrategy.maxTotalLlmCalls) || 50,
+        maxTotalTokens:     (this._adaptiveStrategy && this._adaptiveStrategy.maxTotalTokens) || 800_000,
+        maxTotalDurationMs: (this._adaptiveStrategy && this._adaptiveStrategy.maxTotalDurationMs) || 30 * 60 * 1000,
+        budgetUsd:          (this._config && this._config.llmCostRouter && this._config.llmCostRouter.budgetUsd) || 5.0,
+        enabled:            !(this._config && this._config.runGuard && this._config.runGuard.enabled === false),
+      };
+      if (this._config && this._config.runGuard) {
+        Object.assign(runGuardOpts, this._config.runGuard);
+      }
+      this.runGuard = new RunGuard(runGuardOpts);
+      this.services.registerValue('runGuard', this.runGuard);
+      console.warn(`[Orchestrator] ⚠️  RunGuard created manually (plugin system unavailable) — hook integration disabled`);
     }
-    this.runGuard = new RunGuard(runGuardOpts);
-    this.services.registerValue('runGuard', this.runGuard);
 
-    // ── Direction 4: DecisionTrail (structured decision audit log) ──
-    // Records every key decision point during workflow execution for
-    // explainability, debugging, and audit compliance.
-    this.decisionTrail = new DecisionTrail({
-      enabled: !(this._config && this._config.decisionTrail && this._config.decisionTrail.enabled === false),
-      maxEntries: (this._config && this._config.decisionTrail && this._config.decisionTrail.maxEntries) || 200,
-    });
-    this.services.registerValue('decisionTrail', this.decisionTrail);
+    // ── Direction 4: DecisionTrail — now managed by decision-trail-plugin.js ──
+    // Previously created manually here but record() was only called from stage-smart-skip.
+    // Now auto-records via LifecyclePluginRegistry → hooks.emit(STAGE_STARTED/ENDED).
+    // Fallback: create a lightweight instance if plugin system is unavailable.
+    if (!this._pluginRegistry) {
+      this.decisionTrail = new DecisionTrail({
+        enabled: !(this._config && this._config.decisionTrail && this._config.decisionTrail.enabled === false),
+        maxEntries: (this._config && this._config.decisionTrail && this._config.decisionTrail.maxEntries) || 200,
+      });
+      this.services.registerValue('decisionTrail', this.decisionTrail);
+    }
 
     // ── Direction 5: StageSmartSkip (adaptive stage skipping) ──
     // Evaluates task complexity (from ANALYSE) and skips non-essential stages
     // for simple tasks (e.g. one-file bug fix doesn't need architecture design).
+    // Note: decisionTrail is now injected by decision-trail-plugin.js after
+    // plugin activation, so we don't pass it here.
     const smartSkipOpts = {
       enabled: !(this._config && this._config.stageSmartSkip && this._config.stageSmartSkip.enabled === false),
-      decisionTrail: this.decisionTrail,
+      decisionTrail: this.decisionTrail || null,
     };
     if (this._config && this._config.stageSmartSkip && this._config.stageSmartSkip.skipRules) {
       smartSkipOpts.skipRules = this._config.stageSmartSkip.skipRules;
@@ -1043,11 +1115,9 @@ this.projectId = projectId;
     console.error(`[Orchestrator] 🔧 StageRegistry initialised: [${this.stageRegistry.getOrder().join(' → ')}]`);
 
     // ── P1-2: NegotiationEngine (Agent Negotiation Protocol) ────────────────
-    // Inter-agent negotiation to reduce wasteful rollbacks. When a downstream
-    // agent discovers an incompatibility, it negotiates instead of rolling back.
-    this.negotiation = new NegotiationEngine({ outputDir: this._outputDir });
-    this.services.registerValue('negotiation', this.negotiation);
-    console.error(`[Orchestrator] 🤝 NegotiationEngine initialised (maxRounds=${this.negotiation._maxRounds}).`);
+    // MIGRATED to negotiation-engine-plugin.js (Lifecycle Plugin Registry).
+    // The plugin's activate() creates the instance and registers it into
+    // orch.negotiation + ServiceContainer. No manual creation needed here.
 
     // ── P1-4: Structured Logger (JSON Lines) ────────────────────────────────
     // Configure the module-level logger singleton with session context.
@@ -1109,7 +1179,7 @@ this.projectId = projectId;
     this.hooks           = createSafeProxy(this.hooks,           'HookSystem',       { mode: _proxyMode });
     this.stateMachine    = createSafeProxy(this.stateMachine,    'StateMachine',     { mode: _proxyMode });
     this.stageCtx        = createSafeProxy(this.stageCtx,        'StageContextStore', { mode: _proxyMode });
-    this.negotiation     = createSafeProxy(this.negotiation,     'NegotiationEngine', { mode: _proxyMode });
+    // NegotiationEngine SafeProxy removed — now managed by negotiation-engine-plugin.js
     // Fix 1: Extend SafeProxy to cover 5 additional high-frequency shared objects
     // that were previously unprotected ("naked") — any call to a non-existent method
     // on these objects would silently return undefined instead of failing loudly.
@@ -1118,14 +1188,14 @@ this.projectId = projectId;
     this.bus              = createSafeProxy(this.bus,              'FileRefBus',         { mode: _proxyMode });
     this.experienceRouter = createSafeProxy(this.experienceRouter, 'ExperienceRouter',   { mode: _proxyMode });
     this.promptSlotManager = createSafeProxy(this.promptSlotManager, 'PromptSlotManager', { mode: _proxyMode });
-    console.error(`[Orchestrator] 🛡️  SafeInterfaceProxy active (mode=${_proxyMode}, 12 shared objects protected).`);
+console.error(`[Orchestrator] 🛡️  SafeInterfaceProxy active (mode=${_proxyMode}, 11 shared objects protected).`);
 
     // Fix: Re-register SafeProxy-wrapped objects into ServiceContainer so that
     // services.resolve('name') returns the protected Proxy, not the original raw
     // object. Without this, code using resolve() bypasses SafeProxy protection.
     for (const svcName of [
       'experienceStore', 'obs', 'complaintWall', 'hooks', 'stateMachine',
-      'stageCtx', 'negotiation', 'codeGraph', 'skillEvolution', 'bus',
+      'stageCtx', 'codeGraph', 'skillEvolution', 'bus',
       'experienceRouter',
     ]) {
       this.services.registerValue(svcName, this[svcName], { force: true });
@@ -1146,18 +1216,12 @@ this.projectId = projectId;
     displayModeBanner({ showCapabilities: true, compact: false });
 
     // ── MAPE Engine: Closed-Loop Autonomous Controller (ADR-35) ──────────────
-    // Initializes the Monitor-Analyze-Plan-Execute engine for self-governance.
-    // MAPE runs as a background service, monitoring workflow health and executing
-    // autonomous improvements. It complements SelfReflectionEngine (analytics)
-    // with closed-loop action execution.
-    const { MAPEEngine } = require('./core/mape-engine');
-    this.mape = new MAPEEngine({
-      orchestrator: this,
-      verbose: this._verbose,
-      outputDir: this._outputDir,
-    });
-    this.services.registerValue('mape', this.mape);
-    console.error(`[Orchestrator] 🔄 MAPE Engine initialised (closed-loop self-governance).`);
+    // NOTE: MAPEEngine is now instantiated on-demand in _finalizeWorkflow()
+    // (orchestrator-teardown-impl.js L668) via dynamic require. This avoids
+    // maintaining a duplicate instance that is never used at runtime.
+    // The previous `this.mape = new MAPEEngine(...)` was a zombie initialization
+    // — it was created but never invoked; teardown always created a fresh instance.
+    console.error(`[Orchestrator] 🔄 MAPE Engine: deferred to on-demand init in _finalizeWorkflow().`);
   }
 
   // ─── _initWorkflow and _finalizeWorkflow: see orchestrator-lifecycle.js ───
@@ -1185,8 +1249,8 @@ this.projectId = projectId;
 
 module.exports = {
   Orchestrator, ServiceContainer, StageRunner, StageRegistry, LlmRouter, FileLockManager, P0RuntimeLoop,
-  // P1-2: Agent Negotiation Protocol
-  NegotiationEngine,
+  // P1-2: Agent Negotiation Protocol (lazy require — class migrated to plugin but still exported for backward compat)
+  get NegotiationEngine() { const { NegotiationEngine } = require('./core/negotiation-engine'); return NegotiationEngine; },
   // P1-4: Structured Logger
   Logger, logger: structuredLogger,
   // P2-1: Cross-project experience routing
@@ -1212,9 +1276,25 @@ module.exports = {
 
 //  Mixin: attach extracted methods to Orchestrator.prototype 
 // This keeps index.js slim while preserving the same public/private API surface.
-Object.assign(Orchestrator.prototype, _git);
-Object.assign(Orchestrator.prototype, _stages);
-Object.assign(Orchestrator.prototype, _helpers);
-Object.assign(Orchestrator.prototype, _lifecycle);
-Object.assign(Orchestrator.prototype, _task);
-Object.assign(Orchestrator.prototype, _run);
+// P2-STARTUP-8: conflict detection — warn if later mixins silently override
+// methods from earlier ones. This catches accidental name collisions early.
+const _mixinSources = [
+  { name: '_git',       methods: _git },
+  { name: '_stages',    methods: _stages },
+  { name: '_helpers',   methods: _helpers },
+  { name: '_lifecycle', methods: _lifecycle },
+  { name: '_task',      methods: _task },
+  { name: '_run',       methods: _run },
+];
+const _seenMethods = new Map(); // methodName → sourceName
+for (const { name, methods } of _mixinSources) {
+  for (const key of Object.keys(methods)) {
+    if (_seenMethods.has(key)) {
+      console.warn(`[Orchestrator] ⚠️  Mixin conflict: "${name}" overrides "${key}" from "${_seenMethods.get(key)}"`);
+    }
+    _seenMethods.set(key, name);
+  }
+}
+for (const { methods } of _mixinSources) {
+  Object.assign(Orchestrator.prototype, methods);
+}

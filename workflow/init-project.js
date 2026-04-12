@@ -1307,6 +1307,41 @@ How it works:
   console.log(`    • .git/hooks/pre-commit                – Blocks commits without workflow completion`);
   console.log(`      🔒 Workflow enforced: All commits must have a valid session in workflow-progress.log`);
   console.log(`  You can now run: node workflow/index.js\n`);
+
+  // ── O4: Optional Enhancement Detection ─────────────────────────────────────
+  // Detect tree-sitter and embedding service availability, provide guidance.
+  console.log(`  Optional enhancements:`);
+  let treeSitterAvailable = false;
+  try {
+    const tsAdapter = require('./core/ast-parsers/tree-sitter-adapter');
+    treeSitterAvailable = tsAdapter.testAvailability();
+  } catch (_) { /* not installed */ }
+  if (treeSitterAvailable) {
+    console.log(`    ✅ tree-sitter: installed (AST-level code parsing enabled)`);
+  } else {
+    console.log(`    💡 tree-sitter: not installed (using regex fallback for CodeGraph)`);
+    console.log(`       Install for 3x better symbol extraction precision:`);
+    console.log(`       npm install tree-sitter tree-sitter-javascript tree-sitter-typescript`);
+  }
+
+  let embeddingAvailable = false;
+  try {
+    require.resolve('@huggingface/transformers');
+    embeddingAvailable = true;
+  } catch (_) {
+    try {
+      require.resolve('@xenova/transformers');
+      embeddingAvailable = true;
+    } catch (_) { /* not installed */ }
+  }
+  if (embeddingAvailable) {
+    console.log(`    ✅ embedding: installed (semantic skill matching enabled)`);
+  } else {
+    console.log(`    💡 embedding: not installed (using BM25 keyword matching for skills)`);
+    console.log(`       Install for semantic skill ranking:`);
+    console.log(`       npm install @huggingface/transformers`);
+  }
+  console.log('');
 }
 
 main().catch(err => {

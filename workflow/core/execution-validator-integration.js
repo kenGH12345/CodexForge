@@ -63,7 +63,7 @@ function withExecutionValidation(BaseClass) {
 
     /**
      * Runs execution validation after workflow completion.
-     * Called automatically by _finalizeWorkflow() if enabled.
+ * Called automatically by teardown pipeline if enabled.
      */
     async validateExecution() {
       if (!this._executionValidatorEnabled) {

@@ -631,6 +631,16 @@ class StageContextStore {
 
   // ─── Persistence ──────────────────────────────────────────────────────────
 
+  /**
+   * Sets the current requirement fingerprint so it gets persisted alongside
+   * the stage context data. This enables requirement-change detection on the
+   * next _load() call — if the fingerprint differs, the context is stale.
+   * @param {string} fingerprint - The normalized keyword fingerprint of the current requirement
+   */
+  setRequirementFingerprint(fingerprint) {
+    this._requirementFingerprint = fingerprint || '';
+  }
+
   _persist() {
     // Debounce writes via setImmediate to avoid blocking event loop. see CHANGELOG: P2-3
     if (this._persistPending) return;
@@ -640,6 +650,12 @@ class StageContextStore {
       try {
         const data = {};
         for (const [k, v] of this._store) data[k] = v;
+        // Include _meta block with requirement fingerprint for requirement-change detection.
+        // On next _load(), if the fingerprint doesn't match the current requirement,
+        // the stale context is discarded.
+        if (this._requirementFingerprint) {
+          data._meta = { requirementFingerprint: this._requirementFingerprint };
+        }
         const outPath = path.join(this._outputDir, 'stage-context.json');
         // Atomic write: write to .tmp first, then rename over the target.
         // This prevents a corrupt stage-context.json if the process crashes mid-write.
@@ -680,6 +696,28 @@ class StageContextStore {
       const raw = fs.readFileSync(outPath, 'utf-8');
       const data = JSON.parse(raw);
 
+      // ── Requirement-change guard ──
+      // If the workflow-status.json shows a different requirement fingerprint
+      // than what's stored in this stage-context.json, the context is from a
+      // previous requirement and MUST NOT be loaded. This prevents a new
+      // workflow from inheriting decisions made for a different problem.
+      if (data._meta?.requirementFingerprint) {
+        const statusPath = path.join(this._outputDir, 'workflow-status.json');
+        if (fs.existsSync(statusPath)) {
+          try {
+            const statusData = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+            const currentFp = statusData?.activeWorkflow?.requirementFingerprint || '';
+            if (currentFp && currentFp !== data._meta.requirementFingerprint) {
+              if (this._verbose) {
+                console.log(`[StageContextStore] 🔄 Requirement changed — skipping stale context (stored fp=${data._meta.requirementFingerprint.slice(0, 40)}, current fp=${currentFp.slice(0, 40)})`);
+              }
+              try { fs.unlinkSync(outPath); } catch { /* non-fatal */ }
+              return;
+            }
+          } catch { /* non-fatal: status file unreadable, proceed with normal loading */ }
+        }
+      }
+
       // P1-4 / P2-4 fix: check the age of the persisted data.
       // Use the most recent timestamp across all stored entries as the "file age".
       // If ALL entries are older than MAX_RESUME_AGE_MS, the file is stale.
@@ -716,7 +754,50 @@ class StageContextStore {
   }
 }
 
-module.exports = { StageContextStore };
+module.exports = { StageContextStore, requirementFingerprint };
+
+/**
+ * Computes a normalized keyword fingerprint for a requirement text.
+ * Two requirements with the same core keywords produce the same fingerprint,
+ * even if the phrasing or word order differs.
+ * Used by both IDE Bridge and Node Orchestrator for requirement-change detection.
+ *
+ * @param {string} text - The raw requirement text
+ * @returns {string} Sorted unique keyword fingerprint
+ */
+function requirementFingerprint(text) {
+  if (!text || typeof text !== 'string') return '';
+  const STOP_WORDS = new Set([
+    'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'shall', 'can', 'need', 'to', 'of', 'in',
+    'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through',
+    'during', 'before', 'after', 'above', 'below', 'between', 'out', 'off',
+    'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there',
+    'when', 'where', 'why', 'how', 'all', 'each', 'every', 'both', 'few',
+    'more', 'most', 'other', 'some', 'such', 'no', 'not', 'only', 'own',
+    'same', 'so', 'than', 'too', 'very', 'just', 'because', 'but', 'and',
+    'or', 'if', 'while', 'about', 'up', 'it', 'its', 'i', 'me', 'my',
+    'we', 'our', 'you', 'your', 'he', 'she', 'they', 'them', 'their',
+    'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those',
+    'de', 'le', 'la', 'les', 'un', 'une', 'des', 'du', 'et',
+    '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都',
+    '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会',
+    '着', '没有', '看', '好', '自己', '这', '他', '她', '它', '们',
+    '把', '被', '让', '给', '对', '而', '但', '如果', '因为', '所以',
+    '还', '又', '吗', '吧', '呢', '啊', '嗯', '什么', '怎么', '哪',
+    '那个', '这个', '那个', '那些', '这些', '可以', '需要', '应该',
+    '已经', '正在', '将', '能', '得', '地', '所', '之', '与', '其',
+    '中', '等', '即', '则', '或', '且', '以', '于', '为', '从',
+    '及', '该', '此', '某', '每', '各', '任', '何', '多', '少',
+  ]);
+  const words = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 1 && !STOP_WORDS.has(w));
+  return [...new Set(words)].sort().join(' ');
+}
 
 // ─── Module-level helpers (Defect D fix) ──────────────────────────────────────
 

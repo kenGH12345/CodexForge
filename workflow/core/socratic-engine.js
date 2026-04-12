@@ -416,7 +416,27 @@ try {
   _loadDecisions() {
     if (fs.existsSync(this.contextFilePath)) {
       try {
-        return JSON.parse(fs.readFileSync(this.contextFilePath, 'utf-8'));
+        const data = JSON.parse(fs.readFileSync(this.contextFilePath, 'utf-8'));
+        // Requirement-change guard: if the stored fingerprint doesn't match
+        // the current requirement fingerprint in workflow-status.json, discard
+        // stale decisions from a previous requirement.
+        if (data._meta?.requirementFingerprint) {
+          const statusPath = path.join(path.dirname(this.contextFilePath), '..', 'workflow-status.json');
+          if (fs.existsSync(statusPath)) {
+            try {
+              const statusData = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+              const currentFp = statusData?.activeWorkflow?.requirementFingerprint || '';
+              if (currentFp && currentFp !== data._meta.requirementFingerprint) {
+                console.log(`[SocraticEngine] 🔄 Requirement changed — discarding stale decisions (stored fp differs from current)`);
+                try { fs.unlinkSync(this.contextFilePath); } catch { /* non-fatal */ }
+                return {};
+              }
+            } catch { /* non-fatal: status file unreadable */ }
+          }
+        }
+        // Return only the decision entries (strip _meta)
+        const { _meta, ...decisions } = data;
+        return decisions;
       } catch (err) {
         console.warn(`[SocraticEngine] Failed to load decisions: ${err.message}`);
         return {};
@@ -428,11 +448,26 @@ try {
   _saveDecisions() {
     const dir = path.dirname(this.contextFilePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const data = { ...this._decisions };
+    // Include requirement fingerprint if available for requirement-change detection
+    if (this._requirementFingerprint) {
+      data._meta = { requirementFingerprint: this._requirementFingerprint };
+    }
     // N66 fix: atomic write – write to a .tmp file first, then rename over the target.
     // Prevents a process crash mid-write from corrupting decisions.json.
     const tmpPath = this.contextFilePath + '.tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(this._decisions, null, 2), 'utf-8');
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
     fs.renameSync(tmpPath, this.contextFilePath);
+  }
+
+  /**
+   * Sets the current requirement fingerprint so it gets persisted alongside
+   * the Socratic decisions. This enables requirement-change detection on the
+   * next _loadDecisions() call.
+   * @param {string} fingerprint
+   */
+  setRequirementFingerprint(fingerprint) {
+    this._requirementFingerprint = fingerprint || '';
   }
 }
 

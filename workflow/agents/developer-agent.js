@@ -51,6 +51,25 @@ You are acting as the **Code Development Agent** for this workflow.
 - Strictly follow the architecture: do not introduce components or patterns not described.
 - If accumulated experience is provided below, apply proven patterns and avoid known pitfalls.
 
+## Micro-Planning: Plan Deviation Protocol (ADR-48)
+If during implementation you discover the execution plan is insufficient (unexpected dependency,
+missing file, scope change, task needs revision), emit deviation markers in your output BEFORE
+the diff block. The orchestrator will automatically amend the execution plan — no need to abort.
+
+Available markers (use task ID when possible):
+- \`[PLAN_DEVIATION] T-XX: <reason>\` — general plan deviation
+- \`[SCOPE_CHANGE] T-XX: <what changed and why>\` — task scope changed
+- \`[UNEXPECTED_DEPENDENCY] T-XX: <what dependency was discovered>\` — new dependency found
+- \`[TASK_AMENDMENT] T-XX: <revised task description>\` — task needs revision
+
+Example:
+\`\`\`
+[PLAN_DEVIATION] T-03: Plan assumed config.json exists but project uses config.yaml instead.
+[UNEXPECTED_DEPENDENCY] T-05: Task requires lodash.merge which is not in package.json.
+\`\`\`
+
+⚠️ Use these for LOCAL adjustments only. Architectural changes still require rollback.
+
 ## File Size & Complexity Guidelines (CRITICAL)
 Follow these file organization principles to maintain code quality:
 
@@ -120,7 +139,21 @@ ${inputContent}
 ${expSection}
 ## Instructions
 First output the JSON metadata block (as instructed above), then write the "Architecture Design" and "Execution Plan" sections, then generate the code.diff inside a \`\`\`diff block.
-**CRITICAL**: Both preamble sections are MANDATORY. Do not omit them.`;
+**CRITICAL**: Both preamble sections are MANDATORY. Do not omit them.
+
+## Comment Discipline (MANDATORY — token efficiency)
+Comments are EXPENSIVE — every comment consumes tokens in every subsequent LLM context window.
+Follow these rules STRICTLY:
+
+1. **NO redundant comments** — if the code clearly expresses intent, DO NOT add a comment that restates it.
+   ❌ \`const retryCount = 3; // maximum retry count\`
+   ✅ \`const MAX_RETRY_COUNT = 3;\`
+2. **NO section-divider comments** — do not add \`// ─── Helper Functions ───\` style banners. Use file structure and naming instead.
+3. **NO JSDoc on private/internal functions** — only add JSDoc for exported public API functions. Use meaningful function names instead.
+4. **Comment ONLY the "why"** — if you must comment, explain WHY a decision was made, never WHAT the code does.
+5. **Maximum comment density: 1 comment per 10 lines of code** — if you exceed this, your code needs better naming, not more comments.
+
+This is NOT a style preference — it is a token cost control measure. Verbose comments inflate context windows and degrade LLM performance on subsequent stages.`;
   }
 
   /**

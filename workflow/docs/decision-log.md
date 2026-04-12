@@ -2326,6 +2326,317 @@ Updated rule 3 to explicitly mention `Read` as a tool to avoid alongside `cat`.
 - `docs/agent-collaboration.md` — Updated IDE Tool Usage Protocol with Read vs read_file warning
 - `docs/decision-log.md` — ADR-45
 
+---
+
+## ADR-46: Structured Output Skill + Role-Based Skill Filtering (SKILL_ROLE_FILTER)
+
+**Date**: 2026-04-09
+**Status**: Accepted
+
+**Context**:
+WorkFlowAgent had 3 layers of input-side token compression (BlockCompressor, SemanticCompressor,
+TokenBudget priority truncation) but zero output-side compression. Agent outputs (ANALYSE reports,
+ARCHITECT specs, REVIEW findings) were verbose, wasting tokens both in the current response and
+in downstream stages that consume upstream artifacts as context.
+
+An external `structured-output` skill (C:\workspace\structured-output\SKILL.md) provided 7 rules
+for maximizing information density per token. Analysis showed:
+- Output compression: ~15-25% token savings on long-text stages
+- Input cost: +800 tokens per injection
+- Net benefit: positive when restricted to long-text-generating roles only
+
+However, the ContextLoader had no mechanism to restrict a skill to specific roles. A broadly-
+triggered skill like structured-output would be injected into ALL 7 stages, wasting tokens on
+code-generating stages (DEVELOP, TEST) where output is mostly code, not prose.
+
+**Decision**:
+1. **New skill file**: `workflow/skills/structured-output.md` — 7 rules for output token compression
+2. **New config**: `SKILL_ROLE_FILTER` in `context-loader-config.js` — maps skill names to allowed
+   roles. Skills listed here are ONLY injected when the current role matches. Skills NOT listed
+   have no restriction (backward-compatible default).
+3. **Three injection paths patched**: `_matchSkills()` (BM25 sync), `_matchSkillsAsync()` (BM25+
+   Embedding async), `_matchSkillsByKeyword()` (keyword fallback) — all check SKILL_ROLE_FILTER
+   before including a skill in results.
+4. **Role restriction**: structured-output → `['analyst', 'architect', 'reviewer', 'planner']`
+   (excludes developer, tester, coding-agent where output is code)
+
+**Token Impact**:
+- 4 long-text stages × 800 tokens input = 3,200 tokens added
+- 4 stages × ~1,500 tokens output savings = ~6,000 tokens saved
+- Net savings: ~2,800 tokens per pipeline run
+
+**Consequences**:
+- First output-side compression mechanism in the pipeline
+- SKILL_ROLE_FILTER is a general mechanism — any future skill can be role-restricted
+- Zero regression: 125/138 unit tests pass, 24/24 F1-F7 tests pass
+- Dual-mode compatible: both Node Orchestrator and IDE Agent use the same ContextLoader
+
+**Files Changed**:
+- `workflow/skills/structured-output.md` — New skill file (71 lines)
+- `workflow/core/context-loader-config.js` — Added structured-output keywords + SKILL_ROLE_FILTER + export
+- `workflow/core/context-loader.js` — Import SKILL_ROLE_FILTER, apply in 3 matching paths
+- `workflow/docs/decision-log.md` — ADR-46
+
+---
+
+## ADR-47: Socratic Output Injection into MANDATORY_NEXT_ACTION (Plan A)
+
+**Date**: 2026-04-09
+**Status**: Accepted
+**Triggered by**: User observed that Socratic three-part structure (苏格拉底追问 → 自答 → BLIND SPOT) was never output by IDE Agent despite 137 trace events showing the mechanism was running.
+
+### Problem
+Socratic questions were returned in `data.socraticQuestions[]` — a field the LLM treated as optional information. The three-part output was enforced only by AGENTS.md prompt rules (0% compliance, same pattern as self-report before code-forcing).
+
+### Root Cause
+Two-layer failure:
+1. **Layer 3 (Agent Output)**: IDE Agent received questions but skipped the three-part structure
+2. **Layer 4 (Output Verification)**: No code mechanism verified Agent actually output the structure
+
+### Decision
+**Plan A**: Inject Socratic questions into `MANDATORY_NEXT_ACTION` (the field Agent CANNOT ignore) instead of burying them in `data{}`.
+
+Changes:
+1. `STOP_HOOK_INJECT` mandatoryNextAction now includes `socraticQuestions[]`, `blindSpots[]`, `socraticConfidence`, and `socraticInstruction`
+2. stderr banner now outputs Socratic questions visually before the "RUN NOW" command
+3. `socraticInstruction` is a non-null string when questions exist, making it a PREREQUISITE for executing the next command
+4. AGENTS.md RALPH LOOP RULE updated: "If socraticInstruction is non-null → FIRST output three-part structure → THEN execute command"
+5. memory-manager.js synced (dual-mode parity)
+
+### Why Not Plan B (Output Gate)
+Plan B would add a `socratic-output-gate` that parses Agent's natural language output to verify three-part structure presence. Rejected because:
+- Parsing natural language output is unreliable
+- Would add latency and complexity
+- Plan A leverages existing MANDATORY_NEXT_ACTION mechanism (proven 100% compliance for command execution)
+
+### Verification
+- F1-F7: 24/24 ✅ (zero regression)
+- Unit tests: 14/18 passed (3 pre-existing failures, zero regression)
+- Module load: ide-workflow-bridge.js ✅, memory-manager.js ✅
+
+**Files Changed**:
+- `workflow/tools/ide-workflow-bridge.js` — STOP_HOOK_INJECT mandatoryNextAction + stderr banner
+- `AGENTS.md` — RALPH LOOP RULE + Socratic Challenge Protocol
+- `workflow/core/memory-manager.js` — Synced RALPH LOOP RULE + Socratic Protocol
+- `workflow/docs/decision-log.md` — ADR-47
+
+
+---
+
+## ADR-48: Micro-Planning — Local Task Amendment During CODE Stage
+
+**Date**: 2026-04-09
+**Status**: Accepted
+**Triggered by**: Comparison with IDE Plan modes (Cursor, Claude Code, Kiro) revealed WFA's PLAN stage is "one-shot" — any deviation during CODE requires full PLAN rollback, wasting all completed work.
+
+### Problem
+When the DeveloperAgent encounters plan deviations during CODE execution (unexpected dependencies, missing files, scope changes), the only option is a full CODE→PLAN rollback. This:
+1. Discards all completed code generation work
+2. Re-runs the entire PLAN stage (expensive LLM call)
+3. May produce a different plan that invalidates other completed tasks
+4. Creates a poor developer experience (long wait for minor adjustments)
+
+### Root Cause
+The execution-plan.md is treated as immutable after PLAN stage completes. There is no mechanism for the CODE stage to locally amend individual tasks while preserving the overall plan structure.
+
+### Decision
+Introduce `_microPlanAmend()` in `stage-developer.js` that:
+1. Scans DeveloperAgent output for deviation markers (`[PLAN_DEVIATION]`, `[SCOPE_CHANGE]`, `[UNEXPECTED_DEPENDENCY]`, `[TASK_AMENDMENT]`)
+2. Appends structured amendment blocks to execution-plan.md (max 5 per run)
+3. Records amendments in stageCtx for downstream visibility
+4. Falls back to full rollback if amendment cap exceeded (too many deviations = plan is fundamentally wrong)
+
+Protocol added to AGENTS.md and memory-manager.js (dual-mode parity) instructing the DeveloperAgent to emit deviation markers instead of silently deviating.
+
+### Why Not Full Rolling Planning
+A "rolling planning" approach (plan one phase at a time, refine as you go) would be architecturally superior but requires:
+- Fundamental redesign of the PLAN→CODE pipeline
+- New inter-stage communication protocol
+- ~20h+ work
+Micro-planning is a targeted fix (~4h) that solves 80% of the pain with minimal risk.
+
+### Safety Caps
+- Max 5 amendments per CODE run (prevents runaway amendments)
+- Amendments are append-only (original plan preserved for audit)
+- Architectural changes still require full ARCHITECT rollback
+- Amendment count stored in stageCtx.CODE.meta for downstream stages
+
+### Verification
+- Module load: stage-developer.js ✅, developer-agent.js ✅, memory-manager.js ✅
+- F1-F7: 24/24 ✅ (zero regression)
+- Unit tests: 14/18 passed (3 pre-existing failures: smoke-runtime, integration-framework-fusion, dual-mode-e2e — zero regression)
+- Dual-mode sync: AGENTS.md + memory-manager.js ✅
+
+**Files Changed**:
+- `workflow/core/stage-developer.js` — `_microPlanAmend()` function + integration into CODE flow
+- `AGENTS.md` — MICRO-PLANNING PROTOCOL section
+- `workflow/core/memory-manager.js` — Synced MICRO-PLANNING PROTOCOL
+- `workflow/docs/decision-log.md` — ADR-48
+
+
+---
+
+## ADR-49: ANALYSE Anchor Code Reading + PLAN_AMEND Rollback Strategy + plan-amend Bridge Command
+
+**Date**: 2026-04-09
+**Status**: Accepted
+**Triggered by**: Comparative analysis of WFA ANALYSE/PLAN stages vs industry AI IDEs (Cursor, Claude Code, Kiro, Windsurf) revealed three P1 capability gaps.
+
+### Problem
+Three P1 gaps identified in WFA vs industry AI IDEs:
+
+1. **ANALYSE doesn't read code**: AnalystAgent relied only on CodeGraph summaries and user requirement text. It never read actual source files, unlike Claude Code's Explore phase which reads dozens of files. This meant analysis was "based on summaries" rather than "based on source code."
+
+2. **Rollback granularity too coarse**: When CODE stage detected plan deviations (via ADR-48 micro-planning), the only rollback option was still FULL_STAGE_ROLLBACK. There was no way to signal "plan was amended locally, no rollback needed."
+
+3. **IDE Agent mode lacks plan amendment**: Node Orchestrator had `_microPlanAmend()` (ADR-48), but IDE Agent mode had no equivalent command to amend execution-plan.md during CODE stage.
+
+### Decision
+
+**P1-A: Anchor-Driven Code Reading** (`stage-analyst.js`)
+- After extracting anchor files and entity names from user requirement, automatically read up to 5 key source files
+- Inject file contents (truncated to 2000 chars each) into AnalystAgent context as `## Context: Anchor Code Files`
+- Uses direct file read for explicit paths, falls back to CodeGraph symbol search for entity names
+- Gives AnalystAgent concrete code evidence, similar to Claude Code's Explore phase
+
+**P1-B: PLAN_AMEND Rollback Strategy** (`rollback-coordinator.js`)
+- New `analysePlanAmendStrategy()` function checks stageCtx.CODE.meta for micro-plan amendments
+- Returns `PLAN_AMEND` strategy type when amendments ≤5 and failure is not systemic
+- Preserves all completed code work — no rollback triggered
+- Falls through to existing FULL_STAGE_ROLLBACK if amendment cap exceeded or systemic error
+
+**P1-C: plan-amend Bridge Command** (`ide-workflow-bridge.js`)
+- New `plan-amend` subcommand for IDE Agent mode (dual-mode sync with ADR-48)
+- Args: `--task-id T-XX --reason "..." --amendment "..."`
+- Appends structured amendment block to execution-plan.md
+- Same 5-amendment cap as Node Orchestrator mode
+- Returns remaining cap in response for Agent awareness
+
+### Verification
+- Module load: stage-analyst.js ✅, rollback-coordinator.js ✅, ide-workflow-bridge.js ✅
+- Export check: analysePlanAmendStrategy ✅
+- F1-F7: 24/24 ✅ (zero regression)
+- Unit tests: 14/18 passed (3 pre-existing failures — zero regression)
+- Dual-mode sync: Node Orchestrator (_microPlanAmend) + IDE Agent (plan-amend command) ✅
+
+**Files Changed**:
+- `workflow/core/stage-analyst.js` — Anchor-driven code reading injection
+- `workflow/core/rollback-coordinator.js` — `analysePlanAmendStrategy()` + `PLAN_AMEND` type
+- `workflow/tools/ide-workflow-bridge.js` — `runPlanAmend()` + dispatch registration
+- `workflow/docs/decision-log.md` — ADR-49
+
+
+---
+
+## ADR-50: CodeGraph Patch Refresh After CODE Stage
+
+**Date**: 2026-04-10
+**Status**: Accepted
+**Triggered by**: User asked "修改代码的时候能刷新 CodeGraph 吗" — analysis revealed CodeGraph was built once during INIT and never refreshed after CODE stage generates new code.
+
+### Problem
+CodeGraph is built during `init-project.js` (INIT stage) and never updated after the CODE stage generates code changes. This means:
+1. If CODE stage is followed by a rollback retry, the retried stage queries a stale CodeGraph
+2. TEST stage's CodeGraph queries (if any) see outdated symbol data
+3. Any downstream stage relying on CodeGraph hotspot/module analysis uses pre-CODE data
+
+### Root Cause
+`stage-developer.js` had no CodeGraph refresh call after DeveloperAgent produces `code.diff`. The file extraction logic for Module Boundary Check already parsed changed files from the diff, but this data was not reused for CodeGraph patching.
+
+### Decision
+Insert a CodeGraph patch refresh block in `stage-developer.js` after Module Boundary Check and before risk recording:
+1. Extract changed file paths from `code.diff` using the same `+++ b/path` regex patterns
+2. Call `codeGraph.build({ patchFiles: [...] })` for incremental in-place update
+3. Only runs in Node Orchestrator mode (`!codeGraph._ideSearchAvailable`) — in IDE Agent mode, CodeGraph is fallback and IDE native tools provide real-time code understanding (ADR-37)
+4. Entire block is wrapped in try/catch — failure is non-fatal and logged as warning
+
+### Why Not File Watcher (Plan B)
+A `fs.watch`/`chokidar` approach was rejected because:
+- High complexity (~4h vs ~1h for Plan A)
+- Resource consumption (continuous file system monitoring)
+- Conflicts with IDE's own file watcher
+- Unnecessary in IDE Agent mode (ADR-37 IDE-First)
+
+### Verification
+- Module load: stage-developer.js ✅
+- F1-F7: 24/24 ✅ (zero regression)
+- Unit tests: 14/18 passed (3 pre-existing failures — zero regression)
+
+**Files Changed**:
+- `workflow/core/stage-developer.js` — CodeGraph patch refresh block (~35 lines)
+- `workflow/docs/decision-log.md` — ADR-50
+
+## ADR-51: Weighted Scoring Trigger for SocraticChallenger (Replaces Binary Count Threshold)
+
+**Date**: 2026-04-10
+**Status**: Accepted
+**Triggered by**: User reported `socratic : 0 question(s)` always showing 0 — root cause was `_decideChallengeTrigger` requiring ≥2 high-weight reasons (binary count), which was almost never satisfied.
+
+### Problem
+The SocraticChallenger's trigger gate used a binary count threshold (`highWeightReasons.length >= 2`) that was introduced to fix a previous over-triggering bug. This created the opposite problem: the gate almost never triggered because:
+1. Only 4 reason types qualified as "high-weight" (claim_gap, low_confidence, blind_spots_high_severity, high_risk_stage_low_confidence)
+2. Most artifacts had confidence in the 62-85% range (not "low")
+3. Blind spots rarely had missCount ≥ 4 (the tightened threshold)
+4. Result: 0% trigger rate instead of the intended ~25-40%
+
+Additionally, when `challenged=false`, all generated questions were discarded (`questions = challenged ? generatedQuestions : []`), wasting the question generation work.
+
+### Root Cause
+The ≥2 threshold was not derived from data — it was a reactive fix that swung from one extreme (always trigger) to the other (never trigger). The binary count approach treats all high-weight reasons as equal and ignores the cumulative signal from multiple low-weight reasons.
+
+### Decision: Weighted Scoring System
+Replace the binary count with a weighted scoring system:
+
+**Reason Weights**:
+| Reason | Weight | Rationale |
+|--------|--------|-----------|
+| claim_gap | 0.40 | Strong: evidence doesn't cover claims |
+| low_confidence | 0.35 | Strong: overall confidence below 62% |
+| blind_spots_high_severity | 0.35 | Strong: critical blind spots detected |
+| high_risk_stage_low_confidence | 0.30 | Compound: risk × low confidence |
+| low_logic | 0.15 | Moderate: LOGIC dimension weak |
+| low_first_principles | 0.15 | Moderate: FIRST_PRINCIPLES dimension weak |
+| low_evidence | 0.12 | Moderate: EVIDENCE dimension weak |
+
+**Stage Position Bonus**: Earlier stages (ANALYSE=0.10, ARCHITECT=0.08) get a small bonus because errors cascade further downstream.
+
+**Trigger Threshold**: 0.40 — calibrated so that:
+- 1 high-weight reason alone (0.35-0.40) is borderline (triggers for early stages with position bonus)
+- 1 high + 1 low (0.35+0.15=0.50) always triggers
+- 3 low-weight reasons (0.15+0.15+0.12=0.42) can trigger
+- 0 reasons (score=0) never triggers
+
+**Advisory Questions**: When `challenged=false`, questions are preserved as `advisoryQuestions` instead of being discarded. The bridge displays both challenge and advisory counts.
+
+### Changes
+1. **socratic-challenger.js `_decideChallengeTrigger()`**: Replaced binary `highWeightReasons.length >= 2` with weighted scoring. Returns `triggerScore`, `triggerThreshold`, `scoredReasons`.
+2. **socratic-challenger.js `challenge()`**: Added `advisoryQuestions` and `advisoryBlindSpots` fields — questions are never discarded.
+3. **ide-workflow-bridge.js**: `socraticCount` now sums `questions + advisoryQuestions`. Progress log shows `(N challenge + M advisory)` breakdown and trigger score.
+4. **ide-workflow-bridge.js trace event**: Added `triggerScore`, `triggerThreshold`, `advisoryQuestions`, `advisoryBlindSpots` fields.
+
+### Verification
+- ADR-51 test: 15/15 ✅
+- F1-F7: 24/24 ✅ (zero regression)
+- Unit tests: same pass/fail as before (zero regression)
+
+**Files Changed**:
+- `workflow/core/socratic-challenger.js` — weighted scoring in `_decideChallengeTrigger`, advisory questions in `challenge()`
+- `workflow/tools/ide-workflow-bridge.js` — socraticCount includes advisory, trace event updated
+- `workflow/tests/test-adr51-weighted-trigger.js` — new test file (15 tests)
+- `workflow/docs/decision-log.md` — ADR-51
+
+### ADR-51 Addendum: Skip Socratic Challenge for Terminal Stages (DEPLOY, REVIEW)
+
+**Date**: 2026-04-10
+**Rationale**: DEPLOY and REVIEW are terminal stages with no downstream cascade risk. Challenging them is wasteful because:
+1. **DEPLOY**: Last stage, no downstream to protect. Deployment correctness is verified by CI/CD execution, not text-based questioning.
+2. **REVIEW**: Is itself a quality check. Questioning a quality check is recursive with no termination condition.
+3. Both stages already had: `STAGE_POSITION_WEIGHTS=0`, no `STAGE_CHALLENGES` probes, no `stageDimensionChecks`, no required `ARTIFACT_SCHEMA` sections — the engine ran but produced nothing.
+
+**Change**: Added `SKIP_CHALLENGE_STAGES = new Set(['DEPLOY', 'REVIEW'])` early-exit in `challenge()`, returning immediately with `challenged=false` and `reason=terminal_stage_*`.
+
+**Verification**: F1-F7 24/24 ✅, ADR-51 tests 15/15 ✅, zero regression.
+
 
 
 

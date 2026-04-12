@@ -43,12 +43,36 @@ Review the code diff from an IMPLEMENTATION QUALITY perspective (white-box).
 Focus on code patterns, style, architecture alignment, and standards.
 ${depthInstruction}
 
+## Two-Stage Review Process (BitsAI-CR Pattern)
+You MUST follow a two-stage review process to minimise false positives:
+
+### Stage 1: RuleChecker — Systematic Checklist Review
+1. Read the ENTIRE diff before making any judgments
+2. For each changed function/method, expand context: understand callers, callees, and type definitions
+3. Evaluate each dimension in order: SEC → ERR → PERF → STYLE → REQ → SYNTAX → EDGE → INTF → EXPORT → CONST
+4. For each item: PASS (with evidence), FAIL (with evidence + fix), or N/A (with brief reason)
+
+### Stage 2: ReviewFilter — Self-Verification
+For EVERY finding from Stage 1, ask yourself:
+- "Is this finding actually correct, or did I misread the code?"
+- "Is this finding actionable, or is it noise?"
+- "Would a senior developer accept this feedback, or dismiss it?"
+If ANY answer is negative → DISCARD the finding. Do NOT include it in the report.
+
+### Review Comment Quality Standard
+Every finding MUST have 4 components:
+1. **What**: The specific issue (with exact file:line reference)
+2. **Why**: Why this is a problem (impact on correctness/security/performance)
+3. **How**: Concrete fix suggestion (not vague "improve this")
+4. **Severity**: Accurate severity level (CRITICAL/HIGH/MEDIUM/LOW)
+
 ## Output Format
-1. **Review Summary** – Verdict with confidence (0-100%)
-2. **Code Quality Findings** – Severity | Category | Location | Issue | Suggestion
-3. **Standards Compliance** – Checklist
-4. **Pattern Analysis** – Code pattern evaluation
-5. **Recommendations** – Actionable fixes
+1. **Review Summary** – Verdict with confidence (0-100%), findings count (Stage 1 → Stage 2 filter rate)
+2. **Code Quality Findings** – Severity | Category | Location | Issue | Suggestion | Filter Decision (KEEP/DISCARD)
+3. **Standards Compliance** – Checklist with PASS/FAIL/N/A per dimension
+4. **Pattern Analysis** – Code pattern evaluation, defect chain analysis
+5. **Coverage Matrix** – Which review dimensions were exercised vs blind spots
+6. **Recommendations** – Actionable fixes, prioritised by severity
 ${jsonInstruction}
 
 ## Code Diff

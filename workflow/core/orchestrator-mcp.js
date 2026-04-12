@@ -125,11 +125,11 @@ function initMCPSubsystems(orch) {
   orch.services.registerValue('adapterTelemetry', orch._adapterTelemetry);
 
   // ── Adapter Plugin Registry ────────────────────────────────────────────────
-  orch._pluginRegistry = new AdapterPluginRegistry();
-  orch.services.registerValue('pluginRegistry', orch._pluginRegistry);
+  orch._adapterPluginRegistry = new AdapterPluginRegistry();
+  orch.services.registerValue('adapterPluginRegistry', orch._adapterPluginRegistry);
   const builtinPlugins = createBuiltinPlugins();
   for (const plugin of builtinPlugins) {
-    orch._pluginRegistry.register(plugin);
+    orch._adapterPluginRegistry.register(plugin);
   }
 
   // ── IDE Environment Detection ──────────────────────────────────────────────

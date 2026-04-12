@@ -28,6 +28,12 @@ const { ContractViolationError } = require('./file-ref-bus');
 const { buildRetryContext } = require('./retry-divergence-guard');
 const { buildAgentPrompt } = require('./prompt-builder');
 
+// ── ADR-48: Micro-Planning — local task amendment during CODE stage ──────────
+// When the DeveloperAgent encounters plan deviations (unexpected dependencies,
+// missing files, scope changes), it can locally amend individual tasks in
+// execution-plan.md instead of triggering a full PLAN→CODE rollback.
+const MICRO_PLAN_AMEND_MARKER = '<!-- MICRO-PLAN-AMEND -->';
+
 // Forward reference: _runArchitect is needed for rollback. Lazy-loaded to avoid circular deps.
 let _runArchitect = null;
 function _getRunArchitect() {
@@ -35,6 +41,133 @@ function _getRunArchitect() {
     _runArchitect = require('./stage-architect')._runArchitect;
   }
   return _runArchitect;
+}
+
+/**
+ * ADR-48: Micro-Plan Amendment — locally revise a single task in execution-plan.md.
+ *
+ * When the DeveloperAgent's output indicates a plan deviation (e.g. unexpected
+ * dependency discovered, file doesn't exist, scope change needed), this function
+ * appends an amendment block to execution-plan.md rather than triggering a full
+ * PLAN stage rollback.
+ *
+ * Amendment format:
+ * ```
+ * <!-- MICRO-PLAN-AMEND -->
+ * ## Amendment #N (auto-generated during CODE stage)
+ * - **Task**: T-XX
+ * - **Reason**: <why the original plan was insufficient>
+ * - **Original**: <original task description>
+ * - **Amended**: <revised task description>
+ * - **Impact**: <downstream tasks affected, if any>
+ * ```
+ *
+ * @param {object} opts
+ * @param {string} opts.executionPlanPath - Path to execution-plan.md
+ * @param {string} opts.devOutput - DeveloperAgent's raw output text
+ * @param {Array}  opts.structuredTasks - Structured task list from PLAN stage
+ * @param {object} opts.orchestrator - Orchestrator instance (for logging/risks)
+ * @returns {{ amended: boolean, amendCount: number, amendments: string[] }}
+ */
+function _microPlanAmend({ executionPlanPath, devOutput, structuredTasks, orchestrator }) {
+  const result = { amended: false, amendCount: 0, amendments: [] };
+
+  if (!executionPlanPath || !devOutput || !structuredTasks || structuredTasks.length === 0) {
+    return result;
+  }
+
+  // Detect plan deviation signals in DeveloperAgent output
+  const deviationPatterns = [
+    // Explicit deviation markers the DeveloperAgent may emit
+    /\[PLAN[_-]?DEVIATION\]\s*(.+)/gi,
+    /\[SCOPE[_-]?CHANGE\]\s*(.+)/gi,
+    /\[UNEXPECTED[_-]?DEPENDENCY\]\s*(.+)/gi,
+    /\[TASK[_-]?AMENDMENT\]\s*(.+)/gi,
+    // Implicit signals: "the plan said X but I found Y"
+    /(?:plan|architecture)\s+(?:said|specified|expected|assumed)\s+(.+?)(?:but|however|instead)\s+(.+)/gi,
+    // Task skip signals
+    /(?:skipping|skipped|deferring|deferred)\s+task\s+(T-\d+)\s*[:\-]?\s*(.+)/gi,
+  ];
+
+  const deviations = [];
+  for (const pattern of deviationPatterns) {
+    let match;
+    while ((match = pattern.exec(devOutput)) !== null) {
+      deviations.push({
+        raw: match[0].trim(),
+        detail: match[1] ? match[1].trim() : '',
+        extra: match[2] ? match[2].trim() : '',
+      });
+    }
+  }
+
+  if (deviations.length === 0) {
+    return result;
+  }
+
+  // Read current plan to count existing amendments
+  let currentPlan = '';
+  try {
+    if (fs.existsSync(executionPlanPath)) {
+      currentPlan = fs.readFileSync(executionPlanPath, 'utf-8');
+    }
+  } catch (_) { /* non-fatal */ }
+
+  const existingAmendCount = (currentPlan.match(new RegExp(MICRO_PLAN_AMEND_MARKER, 'g')) || []).length;
+  const maxAmendments = 5; // Safety cap: too many amendments → full re-plan needed
+
+  if (existingAmendCount >= maxAmendments) {
+    console.error(`[MicroPlan] ⚠️  Amendment cap reached (${maxAmendments}). Too many deviations suggest the plan needs full revision.`);
+    if (orchestrator && orchestrator.stateMachine) {
+      orchestrator.stateMachine.recordRisk('medium',
+        `[MicroPlan] ${deviations.length} new deviation(s) detected but amendment cap (${maxAmendments}) reached. Consider re-planning.`);
+    }
+    return result;
+  }
+
+  // Build amendment blocks
+  const amendmentBlocks = [];
+  for (const dev of deviations.slice(0, maxAmendments - existingAmendCount)) {
+    const amendNum = existingAmendCount + amendmentBlocks.length + 1;
+    // Try to match deviation to a specific task
+    const taskMatch = dev.raw.match(/T-\d+/i);
+    const taskId = taskMatch ? taskMatch[0].toUpperCase() : 'UNMATCHED';
+    const matchedTask = structuredTasks.find(t => t.id === taskId);
+
+    const block = [
+      '',
+      MICRO_PLAN_AMEND_MARKER,
+      `## Amendment #${amendNum} (auto-generated during CODE stage)`,
+      `- **Task**: ${taskId}${matchedTask ? ` — ${matchedTask.title}` : ''}`,
+      `- **Reason**: ${dev.detail || dev.raw}`,
+      matchedTask ? `- **Original**: ${matchedTask.description || matchedTask.title}` : '',
+      `- **Amended**: ${dev.extra || dev.detail || dev.raw}`,
+      `- **Impact**: Downstream tasks may need adjustment`,
+      `- **Timestamp**: ${new Date().toISOString()}`,
+      '',
+    ].filter(Boolean).join('\n');
+
+    amendmentBlocks.push(block);
+    result.amendments.push(`Amendment #${amendNum}: ${taskId} — ${dev.detail || dev.raw}`);
+  }
+
+  if (amendmentBlocks.length > 0) {
+    try {
+      fs.appendFileSync(executionPlanPath, '\n' + amendmentBlocks.join('\n'), 'utf-8');
+      result.amended = true;
+      result.amendCount = amendmentBlocks.length;
+      console.error(`[MicroPlan] 📝 ${result.amendCount} amendment(s) appended to execution-plan.md (total: ${existingAmendCount + result.amendCount})`);
+
+      if (orchestrator && orchestrator.stateMachine) {
+        orchestrator.stateMachine.recordRisk('low',
+          `[MicroPlan] ${result.amendCount} task amendment(s) applied during CODE stage: ${result.amendments.join('; ').slice(0, 200)}`);
+      }
+    } catch (writeErr) {
+      console.warn(`[MicroPlan] ⚠️  Failed to write amendments (non-fatal): ${writeErr.message}`);
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -196,6 +329,43 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
     }
   }
 
+  // ── ADR-48: Micro-Plan Amendment — detect and record plan deviations ────────
+  // After DeveloperAgent produces output, scan for deviation signals and locally
+  // amend execution-plan.md instead of triggering a full PLAN rollback.
+  if (outputPath && fs.existsSync(outputPath)) {
+    try {
+      const devOutputForAmend = fs.readFileSync(outputPath, 'utf-8');
+      const planMetaForAmend = this.bus.getMeta(AgentRole.DEVELOPER);
+      const planCtxForAmend = this.stageCtx?.get(WorkflowState.PLAN)?.meta;
+      const tasksForAmend = planCtxForAmend?.tasks || [];
+      const planPath = planMetaForAmend?.executionPlanPath;
+
+      if (planPath && tasksForAmend.length > 0) {
+        const amendResult = _microPlanAmend({
+          executionPlanPath: planPath,
+          devOutput: devOutputForAmend,
+          structuredTasks: tasksForAmend,
+          orchestrator: this,
+        });
+
+        if (amendResult.amended) {
+          // Store amendment info in stageCtx for downstream visibility
+          const existingCodeCtx = this.stageCtx?.get(WorkflowState.CODE) || {};
+          this.stageCtx?.set(WorkflowState.CODE, {
+            ...existingCodeCtx,
+            meta: {
+              ...(existingCodeCtx.meta || {}),
+              microPlanAmendments: amendResult.amendments,
+              microPlanAmendCount: amendResult.amendCount,
+            },
+          });
+        }
+      }
+    } catch (amendErr) {
+      console.warn(`[Orchestrator] ⚠️  Micro-plan amendment scan failed (non-fatal): ${amendErr.message}`);
+    }
+  }
+
   // ── Adapter Telemetry ─────────────────────────────────────────────────────────
   if (this._adapterTelemetry && outputPath && fs.existsSync(outputPath)) {
     try {
@@ -347,6 +517,41 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
     }
   } catch (boundaryErr) {
     console.warn(`[Orchestrator] ⚠️  Module boundary check failed (non-fatal): ${boundaryErr.message}`);
+  }
+
+  // ── ADR-50: CodeGraph Patch Refresh after CODE stage ──────────────────────
+  // After DeveloperAgent generates code, refresh CodeGraph with the changed files
+  // so downstream stages (TEST, rollback retries) see up-to-date symbol data.
+  // Only runs in Node Orchestrator mode — in IDE Agent mode, CodeGraph is fallback
+  // and IDE native tools provide real-time code understanding (ADR-37).
+  try {
+    if (this.codeGraph && !this.codeGraph._ideSearchAvailable && outputPath && fs.existsSync(outputPath)) {
+      const diffContent = fs.readFileSync(outputPath, 'utf-8');
+      const patchFilePatterns = [
+        /^[+]{3}\s+b\/(.+)$/gm,
+        /^[-]{3}\s+a\/(.+)$/gm,
+      ];
+      const patchFiles = new Set();
+      for (const pat of patchFilePatterns) {
+        let m;
+        while ((m = pat.exec(diffContent)) !== null) {
+          const fp = m[1].trim().replace(/\\/g, '/');
+          if (fp && fp !== '/dev/null' && !fp.startsWith('null')) {
+            patchFiles.add(fp);
+          }
+        }
+      }
+
+      if (patchFiles.size > 0 && typeof this.codeGraph.build === 'function') {
+        const patchResult = await this.codeGraph.build({
+          patchFiles: [...patchFiles],
+          writeOutput: true,
+        });
+        console.error(`[Orchestrator] 🔄 CodeGraph patched: ${patchResult.changedFiles} file(s) updated, ${patchResult.symbolCount} symbols total.`);
+      }
+    }
+  } catch (cgPatchErr) {
+    console.warn(`[Orchestrator] ⚠️  CodeGraph patch refresh failed (non-fatal): ${cgPatchErr.message}`);
   }
 
   for (const note of reviewResult.riskNotes) {

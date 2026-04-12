@@ -38,6 +38,7 @@ const {
   BUILTIN_SKILL_KEYWORDS,
   ROLE_MANDATORY_DOCS,
   ROLE_CONSTRAINT_SECTIONS,
+  SKILL_ROLE_FILTER,
 } = require('./context-loader-config');
 
 // ─── Skill Loading (extracted to context-loader-skills.js) ──────────────────
@@ -612,7 +613,7 @@ class ContextLoader {
       hits: this._enrichmentCacheHits,
       misses: this._enrichmentCacheMisses,
       hitRate: total > 0 ? `${(this._enrichmentCacheHits / total * 100).toFixed(0)}%` : 'n/a',
-      cachedRoles: [...this._enrichmentCache.keys()].map(k => k.replace('static:', '')),
+      cachedRoles: [...this._enrichmentCache.keys()].map(k => k.replace(/^static:/, '').replace(/:retired=\d+$/, '')),
     };
   }
 
@@ -648,6 +649,11 @@ class ContextLoader {
       // Use BM25-only for the synchronous path.
       const bm25Results = this._skillRanker.rankBM25(taskText)
         .filter(r => !this._retiredSkills.has(r.name))
+        .filter(r => {
+          // Role-based skill filtering: skip skills restricted to other roles
+          const allowedRoles = SKILL_ROLE_FILTER[r.name];
+          return !allowedRoles || allowedRoles.includes(role);
+        })
         .map(r => {
           let policyWeight = 1;
           if (this._orchestrator && this._orchestrator.skillEvolution) {
@@ -688,7 +694,13 @@ class ContextLoader {
         excludeSkills: this._retiredSkills,
       });
       if (results.length > 0) {
-        return results.map(r => r.name);
+        // Role-based skill filtering: skip skills restricted to other roles
+        return results
+          .filter(r => {
+            const allowedRoles = SKILL_ROLE_FILTER[r.name];
+            return !allowedRoles || allowedRoles.includes(role);
+          })
+          .map(r => r.name);
       }
     }
 
@@ -778,6 +790,10 @@ class ContextLoader {
       // Use _readFileCached to benefit from the cache (also pre-warms the cache
       // for _loadSkill which will be called next for matching skills).
       if (!this._readFileCached(skillPath)) continue;
+
+      // Role-based skill filtering: skip skills restricted to other roles
+      const allowedRoles = SKILL_ROLE_FILTER[skillName];
+      if (allowedRoles && !allowedRoles.includes(role)) continue;
 
       let score = 0;
       for (const kw of keywords) {

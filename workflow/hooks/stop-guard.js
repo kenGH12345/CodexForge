@@ -31,14 +31,17 @@ const path = require('path');
 // ── Find workflow-status.json ─────────────────────────────────────────────────
 const candidatePaths = [
   path.join(process.cwd(), 'output', 'workflow-status.json'),
+  path.join(process.cwd(), 'workflow', 'output', 'workflow-status.json'),
   path.join(process.cwd(), '..', 'output', 'workflow-status.json'),
 ];
 
 let statusData = null;
+let statusDataPath = null;
 for (const p of candidatePaths) {
   try {
     if (fs.existsSync(p)) {
       statusData = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      statusDataPath = p;
       break;
     }
   } catch { /* continue */ }
@@ -57,7 +60,7 @@ if (expired) {
   // Expired — allow stop, clean up stale state
   try {
     delete statusData.activeWorkflow;
-    const statusPath = candidatePaths.find(p => fs.existsSync(p));
+    const statusPath = statusDataPath || candidatePaths.find(p => fs.existsSync(p));
     if (statusPath) {
       fs.writeFileSync(statusPath, JSON.stringify(statusData, null, 2), 'utf-8');
     }

@@ -514,7 +514,7 @@ function createDimensionChecks({ addFinding, log, orch, outputDir, AuditSeverity
         const hasRun = /async\s+run\s*\(/.test(indexContent);
         const hasRunTaskBased = /async\s+runTaskBased\s*\(/.test(indexContent) || /async\s+runAuto\s*\(/.test(indexContent);
         if (hasRun && hasRunTaskBased) {
-          const sharedMethods = ['_initWorkflow', '_finalizeWorkflow'];
+const sharedMethods = ['_initWorkflow', '_finalizeWorkflow', '_teardownPipeline'];
           for (const method of sharedMethods) {
             if (!indexContent.includes(method)) {
               addFinding({

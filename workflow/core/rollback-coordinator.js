@@ -317,11 +317,12 @@ class RollbackCoordinator {
 
 /**
  * @typedef {object} RollbackStrategy
- * @property {'FULL_STAGE_ROLLBACK'|'SUBTASK_RETRY'} type - Rollback granularity
+ * @property {'FULL_STAGE_ROLLBACK'|'SUBTASK_RETRY'|'PLAN_AMEND'} type - Rollback granularity
  * @property {string}   reason          - Human-readable explanation of the strategy choice
  * @property {string}   [failedSubtask] - Which subtask failed (SUBTASK_RETRY only)
  * @property {string[]} [subtasksToRerun]- Subtasks that need re-running (SUBTASK_RETRY only)
  * @property {Map<string, *>} [cachedResults] - Valid cached results for reuse (SUBTASK_RETRY only)
+ * @property {string[]} [amendments]    - Amendment descriptions (PLAN_AMEND only)
  */
 
 /**
@@ -341,6 +342,57 @@ const STAGE_SUBTASKS = {
   [WorkflowState.CODE]:      ['CodeGeneration', 'CodeReview'],
   [WorkflowState.TEST]:      ['TestCaseGen', 'TestExecution', 'TestReportReview'],
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADR-49 P1-B: PLAN_AMEND Strategy — Lightweight plan amendment during CODE
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// When CODE stage detects plan deviations (via micro-planning markers from ADR-48),
+// and the deviations are within the amendment cap (≤5), the rollback coordinator
+// can recommend PLAN_AMEND instead of FULL_STAGE_ROLLBACK. This preserves all
+// completed code work and only amends the execution plan.
+//
+// Decision logic:
+//   1. If stageCtx.CODE.meta.microPlanAmendments exists and count ≤ 5 → PLAN_AMEND
+//   2. If amendment cap exceeded → FULL_STAGE_ROLLBACK (plan is fundamentally wrong)
+//   3. If no micro-plan data available → fall through to existing logic
+
+/**
+ * Analyses whether a CODE stage failure can be resolved by plan amendment
+ * instead of full rollback. Checks for micro-planning amendment data in stageCtx.
+ *
+ * @param {object} orchestrator - The Orchestrator instance
+ * @param {string} reason - Failure reason
+ * @returns {RollbackStrategy|null} PLAN_AMEND strategy if applicable, null otherwise
+ */
+function analysePlanAmendStrategy(orchestrator, reason) {
+  const codeCtx = orchestrator.stageCtx?.get(WorkflowState.CODE);
+  const amendments = codeCtx?.meta?.microPlanAmendments;
+  const amendCount = codeCtx?.meta?.microPlanAmendCount || 0;
+
+  if (!amendments || !Array.isArray(amendments) || amendments.length === 0) {
+    return null; // No micro-plan data — fall through to existing logic
+  }
+
+  const MAX_AMENDMENTS = 5;
+  if (amendCount > MAX_AMENDMENTS) {
+    console.error(`[RollbackCoordinator] ⚠️  PLAN_AMEND rejected: ${amendCount} amendments exceed cap (${MAX_AMENDMENTS}). Full re-plan needed.`);
+    return null;
+  }
+
+  // Check if the failure reason is related to plan deviations (not systemic errors)
+  const SYSTEMIC_PATTERNS = /timeout|ETIMEDOUT|ECONNRESET|OOM|out of memory|rate.?limit|quota/i;
+  if (SYSTEMIC_PATTERNS.test(reason)) {
+    return null; // Systemic failure — plan amendment won't help
+  }
+
+  console.error(`[RollbackCoordinator] 📝 PLAN_AMEND strategy recommended: ${amendCount} amendment(s) already applied during CODE stage.`);
+  return {
+    type: 'PLAN_AMEND',
+    reason: `${amendCount} plan amendment(s) applied during CODE stage. Plan deviations were locally resolved without full rollback.`,
+    amendments,
+  };
+}
 
 /**
  * Maps the failing stage to the Bus sender role whose messages are now stale.
@@ -626,4 +678,4 @@ class SagaContext {
   }
 }
 
-module.exports = { RollbackCoordinator, STAGE_SUBTASKS, IdempotencyJournal, SagaContext };
+module.exports = { RollbackCoordinator, STAGE_SUBTASKS, IdempotencyJournal, SagaContext, analysePlanAmendStrategy };

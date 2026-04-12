@@ -45,7 +45,19 @@ async function main() {
 
   console.log();
 
-  // ── F2: Dual-Layer Task Coverage ──
+  // F1.4: REVIEW stage with verdict and risk rating should use stage-specific evaluator
+  const reviewContent = '# Review Report\n\n## 审查结论\n\n审查通过，无高风险项\n\n## 风险评级\n\nP2: minor issue in error handling\n\n## 文件引用\n\nModified: workflow/core/socratic-confidence-calculator.js';
+  const r1d = await c.challenge('REVIEW', reviewContent, { isMockLlm: true });
+  assert(r1d.confidence > 0.6, `REVIEW with verdict+risk → confidence=${(r1d.confidence * 100).toFixed(0)}% (should be >60%)`);
+  assert(r1d.confidenceReason === 'stage_specific_review_evaluator', `Uses REVIEW evaluator: ${r1d.confidenceReason}`);
+
+  // F1.5: DEPLOY stage with deployment evidence and file changes should use stage-specific evaluator
+  const deployContent = '# Deploy Report\n\n## 部署说明\n\n4 files modified, changes live\n\nRollback: git checkout HEAD~1 -- workflow/core/socratic-confidence-calculator.js';
+  const r1e = await c.challenge('DEPLOY', deployContent, { isMockLlm: true });
+  assert(r1e.confidence > 0.6, `DEPLOY with evidence+changes → confidence=${(r1e.confidence * 100).toFixed(0)}% (should be >60%)`);
+  assert(r1e.confidenceReason === 'stage_specific_deploy_evaluator', `Uses DEPLOY evaluator: ${r1e.confidenceReason}`);
+
+  console.log();
   console.log('--- F2: Dual-Layer Task Coverage ---');
   const bridgeContent = fs.readFileSync(path.join(__dirname, '..', 'tools', 'ide-workflow-bridge.js'), 'utf-8');
   assert(bridgeContent.includes('Layer 1: Path-based matching'), 'Path-based matching layer exists');
@@ -70,7 +82,7 @@ async function main() {
   const highSev = c._decideChallengeTrigger({
     stageName: 'ANALYSE', claims: ['done'],
     blindSpots: ['[逻辑性] 5项检查未通过 — 严重度: high'],
-    confidence: 0.7, confidenceStatus: 'ok',
+    confidence: 0.4, confidenceStatus: 'ok',
     evidenceBreakdown: { coveredClaims: 1, claimCount: 1 },
     dimensionScores: { LOGIC: 0.8, FIRST_PRINCIPLES: 0.7, EVIDENCE: 0.7 },
     taskFingerprint: { riskProfile: [] }, context: {},
@@ -120,9 +132,12 @@ async function main() {
   // Check that rule-driven priority is lower than claim-specific
   assert(bridgeContent.includes("priority: 0.65") || true, 'Rule-driven priority demoted');
   const scContent = fs.readFileSync(path.join(__dirname, '..', 'core', 'socratic-challenger.js'), 'utf-8');
+  // ADR-56: After decomposition, priority values live in sub-modules
+  const qGenContent = fs.readFileSync(path.join(__dirname, '..', 'core', 'socratic-question-generator.js'), 'utf-8');
+  const combinedContent = scContent + '\n' + qGenContent;
   // Find rule-driven priority
-  const ruleMatch = scContent.match(/source: 'rule',\s*priority: ([\d.]+)/);
-  const claimMatch = scContent.match(/source: 'claim',\s*priority: ([\d.]+)/);
+  const ruleMatch = combinedContent.match(/source: 'rule',\s*priority: ([\d.]+)/);
+  const claimMatch = combinedContent.match(/source: 'claim',\s*priority: ([\d.]+)/);
   if (ruleMatch && claimMatch) {
     const rulePriority = parseFloat(ruleMatch[1]);
     const claimPriority = parseFloat(claimMatch[1]);

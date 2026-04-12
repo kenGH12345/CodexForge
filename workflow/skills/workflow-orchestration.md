@@ -233,7 +233,7 @@ These principles apply to all code produced by the DeveloperAgent and any human 
 ## Rules
 <!-- PURPOSE: Prescriptive constraints for workflow orchestration. -->
 
-1. **Never skip a pipeline stage** �?Even if the user says "just code it", the workflow must pass through ANALYSE �?ARCHITECT �?PLAN �?CODE �?TEST. Each stage produces artifacts that downstream stages depend on. Skipping creates invisible debt.
+1. **Stage skipping follows StageSmartSkip two-layer detection** — Stages can be skipped based on: (a) **complexity-based**: simple tasks skip ARCHITECT/PLAN; (b) **intent-based (two-layer)**: Layer 1 (regex pre-detection from raw /wf input, instant) → Layer 2 (semantic confirmation from ANALYSE enriched output, post-ANALYSE). Layer 2 overrides Layer 1 when it has high confidence. Safety rule: if Layer 1 says non-code but Layer 2 says code is needed → revert to full pipeline. ANALYSE is NEVER skipped.
 
 2. **FileRefBus is the only inter-agent communication channel** �?Agents must NEVER pass raw content directly. All communication goes through file path references published to the bus. This ensures traceability and enables replay/debugging.
 

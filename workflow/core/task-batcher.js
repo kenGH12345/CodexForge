@@ -1,5 +1,6 @@
 /**
  * Task Batcher — Task-level Batch Processing System
+ * @status inactive — Library ready, integration pending. Zero callers in codebase.
  *
  * P0 Implementation: Optimizes workflow execution by batching independent tasks,
  * reducing LLM call overhead and Stage initialization costs.

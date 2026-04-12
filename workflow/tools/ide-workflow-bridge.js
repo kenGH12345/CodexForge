@@ -57,6 +57,7 @@ console.log = console.error;
  *   expert-block         — EKIC: Get formatted expert knowledge block for a role + task
  *   expert-generate      — EKIC: Generate expert knowledge from source files (requires LLM)
  *   failure-pattern-analyze — EvoSkill: Analyze failures and generate Skill recommendations
+ *   issue-pattern-collect   — Collect and record issue patterns to ExperienceStore for self-evolution
  *   run                    — Execute full workflow pipeline (ANALYSE→ARCHITECT→PLAN→CODE→TEST)
  *                            Use --llm-module to inject real LLM (IDE Agent or external API)
  *
@@ -117,6 +118,7 @@ const { executeWithToolGovernance } = require('../core/tool-governance-pipeline'
 const { enforceRuntimePolicy } = require('../core/runtime-policy-enforcer');
 const { enforceRequirementBudget } = require('../core/context-budget-policy');
 const { buildCapabilityCatalog, formatCapabilityCatalogForPrompt } = require('../core/capability-catalog');
+const { requirementFingerprint: _sharedRequirementFingerprint } = require('../core/stage-context-store');
 const { normalizeRunCategory, resolveHealthPaths } = require('../core/health-observability');
 
 // ─── CLI Argument Parsing ────────────────────────────────────────────────────
@@ -3604,13 +3606,44 @@ async function runSocraticChallenge(args) {
     }
     const artifactPath = path.join(outputDir, outputFile);
 
+    // ── Resolve LLM call for SocraticChallenger (SC-2: dual-mode parity) ─────
+    // Previously llmCall was always null in Bridge mode, preventing LLM question
+    // rewriting. Now we resolve it the same way as runWorkflow does:
+    //   1. --llm-module <path>  2. WORKFLOW_LLM_MODULE env var  3. null (rule-only)
+    let socraticLlmCall = null;
+    const llmModulePath = args.llmModule || process.env.WORKFLOW_LLM_MODULE || '';
+    if (llmModulePath) {
+      try {
+        const absLlmModulePath = path.resolve(llmModulePath);
+        const llmModule = require(absLlmModulePath);
+        if (typeof llmModule === 'function') {
+          socraticLlmCall = llmModule;
+        } else if (typeof llmModule.llmCall === 'function') {
+          socraticLlmCall = llmModule.llmCall;
+        } else if (typeof llmModule.createIdeLlmCall === 'function') {
+          socraticLlmCall = llmModule.createIdeLlmCall({
+            outputDir,
+            timeoutMs: parseInt(args.llmTimeoutMs || '300000', 10),
+          });
+        }
+        if (socraticLlmCall) {
+          console.error(`[SocraticChallenge] ✅ LLM rewrite enabled via: ${absLlmModulePath}`);
+        }
+      } catch (moduleErr) {
+        console.error(`[SocraticChallenge] ⚠️  Failed to load llm-module "${llmModulePath}": ${moduleErr.message}. LLM rewrite disabled.`);
+      }
+    } else {
+      console.error(`[SocraticChallenge] ℹ️  No --llm-module specified. Socratic questions use rule-driven generation only (no LLM rewrite).`);
+    }
+
     // ── Run SocraticChallenger synchronously ──────────────────────────────────
-    // SocraticChallenger.challenge() is async but all its internal logic is sync
-    // (no LLM calls in bridge mode). We use a sync wrapper pattern.
+    // SocraticChallenger.challenge() is async but internal LLM rewrite is opt-in.
+    // Without llmCall, all logic is sync (rule-driven only).
     const challenger = new SocraticChallenger({
       maxQuestions: 5,
       verbose,
       projectRoot,
+      llmCall: socraticLlmCall,
     });
 
     // D1: Cross-stage dedup in IDE mode — load previous questions from trace
@@ -3703,11 +3736,15 @@ async function runSocraticChallenge(args) {
       data: {
         challenged: challengeResult.challenged !== false,
         triggerReasons: challengeResult.triggerReasons || [],
+        triggerScore: challengeResult.triggerScore,
+        triggerThreshold: challengeResult.triggerThreshold,
         confidence: challengeResult.confidence,
         confidenceStatus: challengeResult.confidenceStatus || 'ok',
         confidenceReason: challengeResult.confidenceReason || null,
         questions: challengeResult.questions,
+        advisoryQuestions: challengeResult.advisoryQuestions || [],
         blindSpots: challengeResult.blindSpots,
+        advisoryBlindSpots: challengeResult.advisoryBlindSpots || [],
         shouldRetry: challengeResult.shouldRetry,
         requiresRevision: challengeResult.requiresRevision === true,
         revisionSummary: challengeResult.revisionSummary || null,
@@ -3725,7 +3762,11 @@ async function runSocraticChallenge(args) {
     const confidenceLabel = challengeResult?.confidenceStatus === 'na'
       ? `N/A (${challengeResult?.confidenceReason || 'insufficient evidence'})`
       : `${(challengeResult.confidence * 100).toFixed(0)}%`;
-    console.error(`[SocraticChallenge] 🤔 Stage: ${stage} | Confidence: ${confidenceLabel} | Questions: ${(challengeResult.questions || []).length} | Blind spots: ${(challengeResult.blindSpots || []).length}`);
+    const advisoryCount = (challengeResult.advisoryQuestions || []).length;
+    const scoreLabel = challengeResult.triggerScore !== undefined
+      ? ` | TriggerScore: ${challengeResult.triggerScore}/${challengeResult.triggerThreshold}`
+      : '';
+    console.error(`[SocraticChallenge] 🤔 Stage: ${stage} | Confidence: ${confidenceLabel} | Questions: ${(challengeResult.questions || []).length} | Advisory: ${advisoryCount} | Blind spots: ${(challengeResult.blindSpots || []).length}${scoreLabel}`);
     if (challengeResult.p2Protocol?.name) {
       console.error(`[SocraticChallenge] 🧪 P2 protocol: ${challengeResult.p2Protocol.name} | verification questions: ${(challengeResult.p2Protocol.verificationQuestions || []).length}`);
     }
@@ -4677,6 +4718,8 @@ The prompt requested analysis or generation of content related to the feature.
         stages: result.stages,
         totalDuration: result.totalDuration,
         pipeline: 'ANALYSE → ARCHITECT → PLAN → CODE → TEST',
+        taskIntent: result.taskIntent || { intent: 'full' },
+        smartSkip: result.smartSkip || { skippedStages: [], executedStages: [] },
         acceptance: result.acceptance || null,
         runtimePolicy: result.runtimePolicy || policyCheck,
         contextBudget: result.contextBudget || { requirement: budgetCheck },
@@ -4905,10 +4948,20 @@ function printHelp() {
           args: '--skill-name <name> [--content <text>] [--title <text>] [--tags <t1,t2>] [--project-root <dir>]',
           example: 'node workflow/tools/ide-workflow-bridge.js skill-update --skill-name "test-writing-jest" --title "Updated Jest Best Practices" --project-root .',
         },
+        'skill-ablation': {
+          description: 'Run Skill Ablation Test to quantify per-skill ROI (effectiveness, token cost, contribution)',
+          args: '[--project-root <dir>] [--min-usage <n>] [--format json|markdown]',
+          example: 'node workflow/tools/ide-workflow-bridge.js skill-ablation --project-root . --format markdown',
+        },
         'failure-pattern-analyze': {
           description: 'Analyze recent failures and generate Skill proposals (EvoSkill)',
           args: '[--project-root <dir>] [--enable-llm] [--min-occurrence <n>] [--export]',
           example: 'node workflow/tools/ide-workflow-bridge.js failure-pattern-analyze --project-root . --enable-llm --export',
+        },
+        'issue-pattern-collect': {
+          description: 'Collect and record issue patterns (orphan modules, broken routes) to ExperienceStore',
+          args: '[--project-root <dir>] [--severity <level>] [--flush]',
+          example: 'node workflow/tools/ide-workflow-bridge.js issue-pattern-collect --project-root . --flush',
         },
       },
     },
@@ -5149,6 +5202,93 @@ async function runWorkflowStage(args) {
     const sessionId = traceStartResult.data?.session || traceStartResult.data?.sessionId || args.session || '';
     console.error(`[runWorkflowStage] stage_start trace written. session=${sessionId} traceSuccess=${traceStartResult.success}`);
 
+    // ── P0-STARTUP-2: Lightweight init for IDE Agent mode ──────────────────
+    // Node Orchestrator mode calls _initWorkflow() which runs 14+ init steps
+    // (Experience preheat, Skill Discovery, MCP adapters, etc.). IDE Agent mode
+    // previously had NO equivalent — every stage was a cold start. This block
+    // runs a lightweight subset of _initWorkflow on the first ANALYSE stage to
+    // ensure cross-session learning (ExperienceStore) and project conventions
+    // (Skill Discovery) are available. Non-blocking: failures are logged but
+    // never block stage execution. Dual-mode parity per ADR-37.
+    if (stage === 'ANALYSE') {
+      const _ideInitMarker = path.join(
+        (args.projectRoot || process.cwd()),
+        '.workflow', 'ide-init-done.json'
+      );
+      let _ideInitNeeded = true;
+      try {
+        if (fs.existsSync(_ideInitMarker)) {
+          const marker = JSON.parse(fs.readFileSync(_ideInitMarker, 'utf-8'));
+          // Re-init if marker is older than 1 hour (stale project state)
+          const markerAge = Date.now() - (marker.timestamp || 0);
+          _ideInitNeeded = markerAge > 3600000;
+        }
+      } catch (_) { /* malformed marker — re-init */ }
+
+      if (_ideInitNeeded) {
+        console.error(`[runWorkflowStage] 🔧 IDE lightweight init starting (first ANALYSE)...`);
+        const _ideInitStart = Date.now();
+
+        // (a) Experience preheat — inject seed experiences if store is empty
+        try {
+          if (_bridgeExpStore) {
+            const stats = _bridgeExpStore.getStats();
+            if (stats.total < 3) {
+              const { preheatExperienceStore } = require('../core/context-budget-manager');
+              const techStack = _detectTechStackLite(args.projectRoot);
+              preheatExperienceStore(
+                { experienceStore: _bridgeExpStore, projectRoot: args.projectRoot, _rawLlmCall: null },
+                { techStack, projectType: 'auto' }
+              ).then(r => {
+                if (r && r.success && r.seeded > 0) {
+                  console.error(`[runWorkflowStage] 🌱 IDE Experience preheat: ${r.seeded} seed(s) injected`);
+                }
+              }).catch(e => console.error(`[runWorkflowStage] ⚠️ IDE Experience preheat failed (non-fatal): ${e.message}`));
+            }
+          }
+        } catch (e) { console.error(`[runWorkflowStage] ⚠️ IDE Experience preheat skipped: ${e.message}`); }
+
+        // (b) Skill Discovery — auto-discover project conventions (rule-based, zero LLM)
+        try {
+          const { SkillEvolutionEngine } = require('../core/skill-evolution-engine');
+          const _skillEvo = new SkillEvolutionEngine({ projectRoot: args.projectRoot || process.cwd() });
+          const { discoverProjectSkills } = require('../core/skill-discovery');
+          discoverProjectSkills({
+            projectRoot: args.projectRoot || process.cwd(),
+            skillEvolution: _skillEvo,
+            llmCall: null,
+            cheapLlmCall: null,
+            force: false,
+          }).then(result => {
+            if (result.discovered) {
+              console.error(`[runWorkflowStage] 🔍 IDE Skill Discovery: "${result.skillName}" (${result.signalCount} signals)`);
+            }
+          }).catch(e => console.error(`[runWorkflowStage] ⚠️ IDE Skill Discovery failed (non-fatal): ${e.message}`));
+        } catch (e) { console.error(`[runWorkflowStage] ⚠️ IDE Skill Discovery skipped: ${e.message}`); }
+
+        // (c) MCP adapters — connect external tool adapters if registry exists
+        try {
+          const mcpRegistryPath = path.join(args.projectRoot || process.cwd(), '.workflow', 'mcp-registry.json');
+          if (fs.existsSync(mcpRegistryPath)) {
+            // MCP connection is best-effort; IDE Agent has native tools as primary
+            console.error(`[runWorkflowStage] ℹ️ MCP registry detected — IDE Agent uses native tools as primary (ADR-37)`);
+          }
+        } catch (_) { /* non-fatal */ }
+
+        // Write marker to avoid re-init on subsequent stages
+        try {
+          const markerDir = path.dirname(_ideInitMarker);
+          if (!fs.existsSync(markerDir)) fs.mkdirSync(markerDir, { recursive: true });
+          fs.writeFileSync(_ideInitMarker, JSON.stringify({
+            timestamp: Date.now(),
+            steps: ['experiencePreheat', 'skillDiscovery'],
+          }, null, 2));
+        } catch (_) { /* non-fatal */ }
+
+        console.error(`[runWorkflowStage] 🔧 IDE lightweight init done in ${Date.now() - _ideInitStart}ms`);
+      }
+    }
+
     // Map stage to role
     const stageToRole = {
       ANALYSE: 'analyst',
@@ -5222,8 +5362,34 @@ async function runWorkflowStage(args) {
     // Instead of just listing file paths, inject actual semantic decisions from
     // previous stages so the current stage has meaningful context without re-reading
     // entire artifacts. This eliminates the "cold start" problem.
+    //
+    // P1-1 fix: Also read stage-context.json (produced by Node mode's StageContextStore)
+    // for richer upstream context (summary + keyDecisions + risks + correctionHistory).
+    // This bridges the information gap between Node mode and IDE Bridge mode.
     let previousStageDecisions = [];
+    let stageContextData = null;
+
+    // ── F4-REQ: Requirement-change guard ──
+    // Before loading ANY cross-stage context, check if the requirement has changed.
+    // If it has, the context files were produced for a different problem and MUST
+    // NOT be loaded — they would pollute the new workflow with irrelevant decisions.
+    let _requirementChanged = false;
     try {
+      const _statusFP = path.join(args.projectRoot || '.', 'output', 'workflow-status.json');
+      if (fs.existsSync(_statusFP)) {
+        const _sd = JSON.parse(fs.readFileSync(_statusFP, 'utf-8'));
+        const _storedFp = _sd?.activeWorkflow?.requirementFingerprint || '';
+        const _currentFp = _requirementFingerprint(args.requirement || '');
+        if (_currentFp && _storedFp && _currentFp !== _storedFp) {
+          _requirementChanged = true;
+          console.error(`[runWorkflowStage] ⏭️ F4-REQ: Skipping cross-stage context — requirement changed (stored fp=${_storedFp.slice(0, 40)}, current fp=${_currentFp.slice(0, 40)})`);
+        }
+      }
+    } catch (_) { /* non-fatal: proceed with loading if check fails */ }
+
+    if (!_requirementChanged) {
+    try {
+      // ── Source 1: stage-decisions.json (Bridge-native, regex-extracted) ──
       const decisionsPath = path.join(args.projectRoot || '.', 'output', 'stage-decisions.json');
       if (fs.existsSync(decisionsPath)) {
         const allDecisions = JSON.parse(fs.readFileSync(decisionsPath, 'utf-8'));
@@ -5242,9 +5408,68 @@ async function runWorkflowStage(args) {
           console.error(`[runWorkflowStage] ✅ F4: Loaded decisions from ${previousStageDecisions.length} previous stage(s)`);
         }
       }
+
+      // ── Source 2: stage-context.json (Node mode StageContextStore, richer) ──
+      // Contains summary + keyDecisions + risks + correctionHistory + meta.
+      // If available and not stale, merge into previousStageDecisions
+      // to provide downstream agents with richer upstream context.
+      const stageCtxPath = path.join(args.projectRoot || '.', 'output', 'stage-context.json');
+      if (fs.existsSync(stageCtxPath)) {
+        const rawCtx = JSON.parse(fs.readFileSync(stageCtxPath, 'utf-8'));
+        // P2-2 fix: Read stageContextMaxAgeHours from workflow.config.js (default: 24h).
+        // Different projects have different iteration speeds — fast projects may
+        // want 4-8h, long-cycle projects may want 48-72h.
+        let _stageCtxMaxAgeHours = 24;
+        try {
+          const _cfgPath = path.join(args.projectRoot || '.', 'workflow.config.js');
+          if (fs.existsSync(_cfgPath)) {
+            const _cfg = require(_cfgPath);
+            if (typeof _cfg.stageContextMaxAgeHours === 'number' && _cfg.stageContextMaxAgeHours > 0) {
+              _stageCtxMaxAgeHours = _cfg.stageContextMaxAgeHours;
+            }
+          }
+        } catch (_) { /* non-fatal: use default 24h */ }
+        const MAX_AGE_MS = _stageCtxMaxAgeHours * 60 * 60 * 1000;
+        const now = Date.now();
+        const timestamps = Object.values(rawCtx)
+          .map(e => e.timestamp ? new Date(e.timestamp).getTime() : 0)
+          .filter(t => t > 0);
+        const mostRecent = timestamps.length > 0 ? Math.max(...timestamps) : 0;
+        const isStale = mostRecent > 0 && (now - mostRecent) > MAX_AGE_MS;
+
+        if (!isStale) {
+          stageContextData = rawCtx;
+          // Merge richer context into previousStageDecisions
+          const stageNameMap = { ANALYSE: 'ANALYSE', ARCHITECT: 'ARCHITECT', PLAN: 'PLAN', CODE: 'DEVELOP', TEST: 'TEST' };
+          for (const [ctxStage, ctx] of Object.entries(rawCtx)) {
+            const bridgeStage = stageNameMap[ctxStage] || ctxStage;
+            const existing = previousStageDecisions.find(d => d.stage === bridgeStage);
+            if (existing) {
+              // Enrich existing entry with StageContextStore data
+              if (ctx.summary && !existing.summary) existing.summary = ctx.summary;
+              if (ctx.risks?.length > 0 && !existing.risks) existing.risks = ctx.risks;
+              if (ctx.correctionHistory?.length > 0 && !existing.correctionHistory) existing.correctionHistory = ctx.correctionHistory;
+            } else if (ctx.keyDecisions?.length > 0 || ctx.summary) {
+              // Add new entry from StageContextStore
+              previousStageDecisions.push({
+                stage: bridgeStage,
+                decisions: ctx.keyDecisions || [],
+                summary: ctx.summary || '',
+                risks: ctx.risks || [],
+                correctionHistory: ctx.correctionHistory || [],
+                source: 'stage-context.json',
+              });
+            }
+          }
+          console.error(`[runWorkflowStage] ✅ F4+: Enriched with stage-context.json (${Object.keys(rawCtx).length} stage(s))`);
+        } else {
+          console.error(`[runWorkflowStage] ⏭️ stage-context.json is stale (${Math.round((now - mostRecent) / 3600000)}h old), skipping`);
+        }
+      }
     } catch (decErr) {
       console.error(`[runWorkflowStage] ⚠️ F4 decision loading failed (non-fatal): ${decErr.message}`);
     }
+    } // end if (!_requirementChanged)
 
     console.error(`[runWorkflowStage][STAGE_END] stage=${stage} status=success ts=${new Date().toISOString()}`);
 
@@ -5288,19 +5513,71 @@ async function runWorkflowStage(args) {
       }
       const stageOrderForActive = ['ANALYSE', 'ARCHITECT', 'PLAN', 'DEVELOP', 'TEST', 'REVIEW', 'DEPLOY'];
       const TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+      // ── BUGFIX: TTL expiry auto-cleanup ──
+      // If the previous activeWorkflow's TTL has expired, treat it as stale
+      // and clear both activeWorkflow and pendingRetry to prevent zombie state.
+      if (statusData.activeWorkflow && statusData.activeWorkflow.ttlExpiry) {
+        const ttlExpired = new Date(statusData.activeWorkflow.ttlExpiry) < new Date();
+        if (ttlExpired && statusData.activeWorkflow.session !== sessionId) {
+          console.error(`[runWorkflowStage] 🧹 TTL expired for session=${statusData.activeWorkflow.session} (expired at ${statusData.activeWorkflow.ttlExpiry}). Clearing stale state.`);
+          delete statusData.activeWorkflow;
+          if (statusData.pendingRetry) {
+            console.error(`[runWorkflowStage] 🧹 Clearing stale pendingRetry for stage=${statusData.pendingRetry.stage} (belonged to expired session)`);
+            delete statusData.pendingRetry;
+          }
+        }
+      }
+
       if (!statusData.activeWorkflow || statusData.activeWorkflow.session !== sessionId) {
         // First stage or new session — create activeWorkflow
+        // BUGFIX: Also clear pendingRetry from previous session to prevent cross-session contamination
+        if (statusData.pendingRetry && statusData.activeWorkflow && statusData.activeWorkflow.session !== sessionId) {
+          console.error(`[runWorkflowStage] 🧹 Clearing pendingRetry from previous session (stage=${statusData.pendingRetry.stage})`);
+          delete statusData.pendingRetry;
+        }
         statusData.activeWorkflow = {
           session: sessionId,
           startedAt: new Date().toISOString(),
           currentStage: stage,
           completedStages: [],
           requirement: (args.requirement || '').slice(0, 300),
+          requirementFingerprint: _requirementFingerprint(args.requirement || ''),
           ttlExpiry: new Date(Date.now() + TTL_MS).toISOString(),
         };
       } else {
-        // Existing session — update currentStage
+        // Existing session — update currentStage and check for requirement change
         statusData.activeWorkflow.currentStage = stage;
+        // Requirement change detection: if the current requirement differs from what's stored,
+        // the cross-stage context is stale and must be reset.
+        const currentFp = _requirementFingerprint(args.requirement || '');
+        const storedFp = statusData.activeWorkflow.requirementFingerprint || '';
+        if (currentFp && storedFp && currentFp !== storedFp) {
+          console.error(`[runWorkflowStage] 🔄 Requirement changed mid-session — resetting cross-stage context`);
+          console.error(`[runWorkflowStage]    stored fp: ${storedFp}`);
+          console.error(`[runWorkflowStage]    current fp: ${currentFp}`);
+          let resetCount = 0;
+          const filesToReset = [
+            path.join(args.projectRoot || '.', 'output', 'stage-context.json'),
+            path.join(args.projectRoot || '.', 'output', 'stage-decisions.json'),
+            path.join(args.projectRoot || '.', 'output', 'decisions.json'),
+          ];
+          for (const f of filesToReset) {
+            if (fs.existsSync(f)) {
+              try {
+                fs.unlinkSync(f);
+                resetCount++;
+                console.error(`[runWorkflowStage]    🗑️ Deleted ${path.basename(f)}`);
+              } catch (e) { /* non-fatal */ }
+            }
+          }
+          // Reset completedStages so the pipeline starts from scratch
+          statusData.activeWorkflow.completedStages = [];
+          statusData.activeWorkflow.requirement = (args.requirement || '').slice(0, 300);
+          statusData.activeWorkflow.requirementFingerprint = currentFp;
+          statusData.activeWorkflow.startedAt = new Date().toISOString();
+          console.error(`[runWorkflowStage] 🧹 Requirement change: ${resetCount} file(s) deleted, completedStages reset`);
+        }
       }
       fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
       console.error(`[runWorkflowStage] ✅ activeWorkflow written: session=${sessionId} stage=${stage}`);
@@ -5312,17 +5589,30 @@ async function runWorkflowStage(args) {
     // If pendingRetry exists for this stage, inject socratic questions into instructions
     // so LLM has the full context of WHY it needs to redo and WHAT to fix.
     // After reading, clear pendingRetry to avoid stale state on next call.
+    // BUGFIX: Also clear pendingRetry from a different session (cross-session contamination).
     let pendingRetryContext = null;
     try {
       if (fs.existsSync(statusFilePath)) {
         const statusRaw = fs.readFileSync(statusFilePath, 'utf-8');
         const statusData = JSON.parse(statusRaw);
-        if (statusData.pendingRetry && statusData.pendingRetry.stage === stage) {
-          pendingRetryContext = statusData.pendingRetry;
-          // Clear pendingRetry so it doesn't persist across turns
-          delete statusData.pendingRetry;
-          fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
-          console.error(`[runWorkflowStage] 🔁 RETRY context injected for stage=${stage} retryCount=${pendingRetryContext.retryCount}`);
+        if (statusData.pendingRetry) {
+          const retrySession = statusData.pendingRetry.session;
+          const sameStage = statusData.pendingRetry.stage === stage;
+          const sameSession = !retrySession || retrySession === sessionId;
+          if (sameStage && sameSession) {
+            // Normal case: same session, same stage — inject retry context
+            pendingRetryContext = statusData.pendingRetry;
+            delete statusData.pendingRetry;
+            fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
+            console.error(`[runWorkflowStage] 🔁 RETRY context injected for stage=${stage} retryCount=${pendingRetryContext.retryCount}`);
+          } else if (!sameSession) {
+            // Cross-session contamination: clear stale pendingRetry from different session
+            console.error(`[runWorkflowStage] 🧹 Clearing stale pendingRetry from session=${retrySession || 'unknown'} (current=${sessionId}, stage=${statusData.pendingRetry.stage})`);
+            delete statusData.pendingRetry;
+            fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
+          }
+          // If same session but different stage, leave pendingRetry alone — it will be
+          // picked up when the correct stage is re-run
         }
       }
     } catch (statusErr) {
@@ -5594,6 +5884,24 @@ async function runWorkflowStage(args) {
  */
 function _extractKeyDecisions(stage, content) {
   const decisions = [];
+
+  // P1-1 fix: Try JSON block extraction first (same as Node mode's StageContextStore.extractFromFile).
+  // This unifies the extraction logic between Node and Bridge modes.
+  try {
+    const { extractJsonBlock, extractKeyDecisions: extractStructuredDecisions } = require('../core/agent-output-schema');
+    const jsonBlock = extractJsonBlock(content);
+    if (jsonBlock) {
+      const structured = extractStructuredDecisions(jsonBlock);
+      if (structured && structured.length > 0) {
+        return structured.slice(0, 5);
+      }
+    }
+  } catch (extractErr) {
+    // P2-1 fix: Log the fallback reason so developers can diagnose why
+    // JSON block extraction failed. Silent fallback makes debugging hard.
+    console.error(`[_extractKeyDecisions] ⚠️ JSON block extraction unavailable, falling back to regex: ${extractErr.message}`);
+  }
+
   const lines = content.split('\n');
 
   // Strategy 1: Extract from headings + first substantive line under each heading
@@ -5890,6 +6198,98 @@ function runInputReceived(args) {
       `  decision : ${decision}`,
     ].join('\n'));
 
+    // ── BUGFIX: Clean up expired/stale workflow state on new input ──
+    // Two scenarios to handle:
+    // 1. TTL expired: clear both activeWorkflow and pendingRetry (zombie state)
+    // 2. pendingRetry from a different session: always clear (cross-session contamination)
+    try {
+      const statusFilePath = path.join(projectRoot, 'output', 'workflow-status.json');
+      if (fs.existsSync(statusFilePath)) {
+        let statusData = {};
+        try { statusData = JSON.parse(fs.readFileSync(statusFilePath, 'utf-8')); } catch { statusData = {}; }
+        let wroteChanges = false;
+
+        // Scenario 1: TTL expired for previous session
+        if (statusData.activeWorkflow && statusData.activeWorkflow.ttlExpiry) {
+          const ttlExpired = new Date(statusData.activeWorkflow.ttlExpiry) < new Date();
+          if (ttlExpired && statusData.activeWorkflow.session !== sessionId) {
+            console.error(`[runInputReceived] 🧹 TTL expired for session=${statusData.activeWorkflow.session} (expired at ${statusData.activeWorkflow.ttlExpiry}). Clearing stale state.`);
+            delete statusData.activeWorkflow;
+            wroteChanges = true;
+          }
+        }
+
+        // Scenario 2: pendingRetry from a different session (always clear, regardless of TTL)
+        // This prevents cross-session contamination where a new session inherits
+        // an unrelated pendingRetry from a previous failed workflow.
+        if (statusData.pendingRetry) {
+          const retrySession = statusData.pendingRetry.session;
+          const belongsToActiveSession = retrySession && retrySession === sessionId;
+          const belongsToCurrentActive = !retrySession && statusData.activeWorkflow?.session === sessionId;
+          if (!belongsToActiveSession && !belongsToCurrentActive) {
+            console.error(`[runInputReceived] 🧹 Clearing stale pendingRetry for stage=${statusData.pendingRetry.stage} (from session=${retrySession || 'unknown'}, current=${sessionId})`);
+            delete statusData.pendingRetry;
+            wroteChanges = true;
+          }
+        }
+
+        if (wroteChanges) {
+          fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
+        }
+
+        // ── Scenario 3: Requirement change detection ──
+        // If the user's requirement has significantly changed (not just a minor rephrase),
+        // all cross-stage context files from the previous requirement are stale and MUST
+        // be cleared. Otherwise, the new workflow inherits decisions made for a different
+        // problem — which produces incorrect results.
+        // The fingerprint uses normalized keywords (stop-word filtered, sorted) rather than
+        // raw text hash, so minor rephrasing ("add login" → "implement authentication")
+        // does NOT trigger a reset, but a genuinely different requirement does.
+        const currentReq = (userInput || '').trim();
+        if (currentReq && statusData.activeWorkflow?.requirement) {
+          const prevReq = statusData.activeWorkflow.requirement;
+          const currentFp = _requirementFingerprint(currentReq);
+          const prevFp = _requirementFingerprint(prevReq);
+          if (currentFp !== prevFp) {
+            console.error(`[runInputReceived] 🔄 Requirement changed — resetting cross-stage context`);
+            console.error(`[runInputReceived]    prev: "${prevReq.slice(0, 80)}${prevReq.length > 80 ? '...' : ''}" (fp=${prevFp})`);
+            console.error(`[runInputReceived]    curr: "${currentReq.slice(0, 80)}${currentReq.length > 80 ? '...' : ''}" (fp=${currentFp})`);
+            let resetCount = 0;
+            // Clear cross-stage context files
+            const filesToReset = [
+              path.join(projectRoot, 'output', 'stage-context.json'),
+              path.join(projectRoot, 'output', 'stage-decisions.json'),
+              path.join(projectRoot, 'output', 'decisions.json'),
+            ];
+            for (const f of filesToReset) {
+              if (fs.existsSync(f)) {
+                try {
+                  fs.unlinkSync(f);
+                  resetCount++;
+                  console.error(`[runInputReceived]    🗑️ Deleted ${path.basename(f)}`);
+                } catch (e) {
+                  console.error(`[runInputReceived]    ⚠️ Failed to delete ${path.basename(f)}: ${e.message}`);
+                }
+              }
+            }
+            // Reset activeWorkflow so stages start from scratch
+            delete statusData.activeWorkflow;
+            delete statusData.pendingRetry;
+            fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
+            console.error(`[runInputReceived] 🧹 Requirement change cleanup: ${resetCount} file(s) deleted, activeWorkflow reset`);
+            _writeProgressLog(projectRoot, [
+              `🔄 需求变更检测 — 跨阶段上下文已重置`,
+              `  前需求 : ${prevReq.slice(0, 100)}`,
+              `  新需求 : ${currentReq.slice(0, 100)}`,
+              `  清理文件: ${resetCount} 个`,
+            ].join('\n'));
+          }
+        }
+      }
+    } catch (cleanupErr) {
+      console.error(`[runInputReceived] ⚠️ State cleanup failed (non-fatal): ${cleanupErr.message}`);
+    }
+
     // ── stderr MANDATORY banner (Hook Enhancement 2.1) ──────────────────────
     console.error([
       ``,
@@ -5919,6 +6319,19 @@ function runInputReceived(args) {
       error: err.message,
     };
   }
+}
+
+/**
+ * Compute a normalized keyword fingerprint of a requirement string.
+ * This is used to detect whether the user's requirement has *significantly*
+ * changed (not just rephrased) so we can reset stale cross-stage context.
+ *
+ * Algorithm: lowercase → split on non-alphanumeric → filter stop words →
+ * sort → join. Two requirements with the same core keywords produce the
+ * same fingerprint even if word order or phrasing differs.
+ */
+function _requirementFingerprint(text) {
+  return _sharedRequirementFingerprint(text);
 }
 
 /**
@@ -6197,10 +6610,14 @@ const STAGE_HARD_DEPS = {
     { file: 'output/analysis.md', stage: 'ANALYSE', description: 'Root cause analysis' },
   ],
   PLAN: [
-    { file: 'output/analysis.md', stage: 'ANALYSE', description: 'Root cause analysis' },
+    // P0-2 fix: PLAN consumes architecture.md from bus (ARCHITECT→PLANNER).
+    // ANALYSE context is injected via StageContextStore, not via direct file dependency.
     { file: 'output/architecture.md', stage: 'ARCHITECT', description: 'Architecture design' },
   ],
   DEVELOP: [
+    // P0-2 fix: DEVELOP consumes architecture.md from bus (PLANNER→DEVELOPER),
+    // with execution-plan.md path in meta. Both files are required.
+    { file: 'output/architecture.md', stage: 'ARCHITECT', description: 'Architecture design' },
     { file: 'output/execution-plan.md', stage: 'PLAN', description: 'Execution plan with tasks' },
   ],
   TEST: [
@@ -6230,6 +6647,28 @@ function _validateStageDependencies(stage, projectRoot) {
   }
 
   return { valid: true, depsChecked: deps.map(d => d.file) };
+}
+
+/**
+ * P0-STARTUP-2: Lightweight tech stack detection for IDE Agent mode.
+ * Used by Experience preheat to select relevant seed experiences.
+ * Mirrors Orchestrator._detectTechStackForPreheat() but without
+ * requiring a full Orchestrator instance.
+ */
+function _detectTechStackLite(projectRoot) {
+  const root = projectRoot || process.cwd();
+  const stack = [];
+  try {
+    const files = fs.readdirSync(root);
+    if (files.includes('package.json')) stack.push('node');
+    if (files.includes('requirements.txt') || files.includes('pyproject.toml')) stack.push('python');
+    if (files.includes('go.mod')) stack.push('go');
+    if (files.includes('Cargo.toml')) stack.push('rust');
+    if (files.includes('pom.xml') || files.includes('build.gradle')) stack.push('java');
+    if (files.includes('Gemfile')) stack.push('ruby');
+    if (files.includes('composer.json')) stack.push('php');
+  } catch (_) { /* non-fatal */ }
+  return stack.length > 0 ? stack : ['unknown'];
 }
 
 function _getInputArtifactsForStage(stage, projectRoot) {
@@ -6497,10 +6936,30 @@ async function runStageComplete(args) {
     });
 
     // ── P1: Auto-run socratic challenge ──
+    // BUGFIX: Skip socratic challenge for terminal stages (DEPLOY, REVIEW).
+    // Although SocraticChallenger.challenge() also skips these stages internally,
+    // we skip at the bridge level too to avoid wasting resources on:
+    // - Unnecessary runSocraticChallenge() call
+    // - Unnecessary trace events for skipped stages
+    // - Potential race conditions with stale status data
+    const TERMINAL_STAGES = new Set(['DEPLOY', 'REVIEW']);
     let socraticResult = null;
-    try {
-      socraticResult = await runSocraticChallenge({
-        projectRoot: args.projectRoot || '.',
+    if (TERMINAL_STAGES.has(stage.toUpperCase())) {
+      console.error(`[runStageComplete] 💤 Terminal stage ${stage} — skipping socratic challenge at bridge level`);
+      socraticResult = {
+        success: true,
+        subcommand: 'socratic-challenge',
+        data: {
+          challenged: false, confidence: 1.0, confidenceStatus: 'na',
+          confidenceReason: `${stage} is a terminal stage — challenge skipped`,
+          shouldRetry: false, advisoryOnly: false, questions: [],
+          advisoryQuestions: [], blindSpots: [], triggerReasons: [`terminal_stage_${stage.toLowerCase()}`],
+        },
+      };
+    } else {
+      try {
+        socraticResult = await runSocraticChallenge({
+          projectRoot: args.projectRoot || '.',
         stage,
         session: args.session,
         seq: args.seq || '1',
@@ -6509,6 +6968,7 @@ async function runStageComplete(args) {
     } catch (socErr) {
       console.error(`[runStageComplete] Socratic challenge failed (non-fatal): ${socErr.message}`);
     }
+    } // end else (non-terminal stage)
 
     console.error(`[runStageComplete] stage_end trace written. traceSuccess=${traceEndResult.success}`);
 
@@ -6525,9 +6985,11 @@ async function runStageComplete(args) {
     const remainingStages = nextStage ? stageOrder.slice(currentIdx + 1) : [];
 
     // ── Socratic retry gate: if shouldRetry=true and retryCount < maxRetry, force RETRY_STAGE ──
-    // This consumes the shouldRetry signal that was previously computed but discarded.
+    // Plan A+B: Only force retry when shouldRetry=true (confidence < 0.30).
+    // When advisoryOnly=true (0.30 ≤ confidence < 0.62), questions are returned as suggestions only.
     // Anti-infinite-loop: maxRetry=2 cap, enforced via stage_retry trace events.
     const shouldRetry = socraticResult?.data?.shouldRetry === true;
+    const advisoryOnly = socraticResult?.data?.advisoryOnly === true;
     const MAX_RETRY = 2;
     const runCategory = args.runCategory || 'prod';
     const tracePath = path.join(args.projectRoot || '.', 'output', 'health', runCategory, 'workflow-trace.jsonl');
@@ -6651,8 +7113,47 @@ async function runStageComplete(args) {
             session: args.session,
             artifactHash: artifactValidation?.hash || null,
           };
+          // Include requirement fingerprint for requirement-change detection
+          try {
+            const statusForFp = JSON.parse(fs.readFileSync(path.join(args.projectRoot || '.', 'output', 'workflow-status.json'), 'utf-8'));
+            if (statusForFp?.activeWorkflow?.requirementFingerprint) {
+              allDecisions._meta = { requirementFingerprint: statusForFp.activeWorkflow.requirementFingerprint };
+            }
+          } catch { /* non-fatal: fingerprint not available */ }
           fs.writeFileSync(decisionsPath, JSON.stringify(allDecisions, null, 2), 'utf-8');
           console.error(`[runStageComplete] ✅ F4: Extracted ${stageDecisions.length} key decisions for stage=${stage}`);
+
+          // P1-1 fix: Also write stage-context.json (compatible with Node mode's StageContextStore).
+          // This ensures Bridge mode produces the same richer context format that Node mode does,
+          // enabling subsequent workflow-stage calls to read summary + risks + correctionHistory.
+          try {
+            const stageCtxPath = path.join(args.projectRoot || '.', 'output', 'stage-context.json');
+            let stageCtxData = {};
+            if (fs.existsSync(stageCtxPath)) {
+              stageCtxData = JSON.parse(fs.readFileSync(stageCtxPath, 'utf-8'));
+            }
+            // Map Bridge stage names to Node stage names
+            const bridgeToNode = { ANALYSE: 'ANALYSE', ARCHITECT: 'ARCHITECT', PLAN: 'PLAN', DEVELOP: 'CODE', TEST: 'TEST', REVIEW: 'REVIEW', DEPLOY: 'DEPLOY' };
+            const nodeStage = bridgeToNode[stage] || stage;
+            stageCtxData[nodeStage] = {
+              stageName: nodeStage,
+              summary: stageDecisions.length > 0 ? stageDecisions[0] : `${stage} stage completed.`,
+              keyDecisions: stageDecisions,
+              artifacts: [path.join('output', artifactFile)],
+              risks: [],
+              correctionHistory: [],
+              meta: { session: args.session },
+              timestamp: new Date().toISOString(),
+            };
+            // Include requirement fingerprint for requirement-change detection
+            if (allDecisions._meta?.requirementFingerprint) {
+              stageCtxData._meta = { requirementFingerprint: allDecisions._meta.requirementFingerprint };
+            }
+            fs.writeFileSync(stageCtxPath, JSON.stringify(stageCtxData, null, 2), 'utf-8');
+            console.error(`[runStageComplete] ✅ F4+: Written stage-context.json for ${nodeStage}`);
+          } catch (ctxErr) {
+            console.error(`[runStageComplete] ⚠️ stage-context.json write failed (non-fatal): ${ctxErr.message}`);
+          }
         }
       } catch (decisionErr) {
         console.error(`[runStageComplete] ⚠️ F4 decision extraction failed (non-fatal): ${decisionErr.message}`);
@@ -6675,6 +7176,15 @@ async function runStageComplete(args) {
       command: `node workflow/tools/ide-workflow-bridge.js workflow-stage --stage ${nextStage} --session ${args.session} --project-root . --requirement "${args.requirement || ''}"`,
       instruction: `⛔ DO NOT STOP. You MUST execute the above command NOW. Stage ${stage} is done but the workflow is NOT complete. Remaining: [${remainingStages.join(' → ')}]`,
       remainingStages,
+      // ── P0 FIX: Inject Socratic questions into MANDATORY_NEXT_ACTION ──────
+      // Root cause: socraticQuestions were buried in data{} — Agent treated them as optional.
+      // Fix: surface them at the same level as 'command' and 'instruction' so Agent cannot skip.
+      socraticQuestions: socraticResult?.data?.questions || [],
+      blindSpots: socraticResult?.data?.blindSpots || [],
+      socraticConfidence: socraticResult?.data?.confidence,
+      socraticInstruction: (socraticResult?.data?.questions || []).length > 0
+        ? `🤔 SOCRATIC OUTPUT REQUIRED: Before executing the next stage command, you MUST output the Socratic three-part structure (苏格拉底追问 → 自答 → BLIND SPOT) for the ${(socraticResult?.data?.questions || []).length} question(s) below. This is NOT optional — it is part of the MANDATORY_NEXT_ACTION. Questions: ${(socraticResult?.data?.questions || []).slice(0, 3).map((q, i) => `Q${i+1}: ${q}`).join(' | ')}`
+        : null,
     } : {
       type: 'WORKFLOW_COMPLETE',
       instruction: '✅ All 7 stages complete. Run session-summary now. Check output/workflow-progress.log for full execution evidence.',
@@ -6717,7 +7227,13 @@ async function runStageComplete(args) {
     if (outputExists) {
       try { outputSize = ` (${fs.statSync(outputArtifactPath).size} bytes)`; } catch (_) {}
     }
-    const socraticCount = socraticResult?.data?.questions?.length || 0;
+    // ADR-51: Count both challenge questions AND advisory questions
+    const socraticChallengeCount = socraticResult?.data?.questions?.length || 0;
+    const socraticAdvisoryCount = socraticResult?.data?.advisoryQuestions?.length || 0;
+    const socraticCount = socraticChallengeCount + socraticAdvisoryCount;
+    const triggerScoreLabel = socraticResult?.data?.triggerScore !== undefined
+      ? ` (score=${socraticResult.data.triggerScore}/${socraticResult.data.triggerThreshold})`
+      : '';
 
     // ── Run metrics gate and include result in progress log ──
     let metricsLine = '  metrics  : (skipped)';
@@ -6830,7 +7346,7 @@ async function runStageComplete(args) {
         `  session  : ${args.session}`,
         `  output   : output/${outputArtifactFile}${outputExists ? outputSize : ' (not found)'}`,
         `  summary  : ${args.summary || '(no summary)'}`,
-        `  socratic : ${socraticCount} question(s) — MUST answer before retry`,
+      `  socratic : ${socraticChallengeCount} challenge(s)${triggerScoreLabel} — MUST answer before retry`,
         metricsLine,
         `  action   : Re-run workflow-stage --stage ${stage} to redo this stage`,
       ].filter(Boolean).join('\n'));
@@ -6840,7 +7356,7 @@ async function runStageComplete(args) {
         `  session  : ${args.session}`,
         `  output   : output/${outputArtifactFile}${outputExists ? outputSize : ' (not found)'}`,
         `  summary  : ${args.summary || '(no summary)'}`,
-        `  socratic : ${socraticCount} question(s)`,
+      `  socratic : ${socraticCount} question(s)${socraticAdvisoryCount > 0 ? ` (${socraticChallengeCount} challenge + ${socraticAdvisoryCount} advisory)` : ''}${triggerScoreLabel}`,
         metricsLine,
         taskCoverageLine,
         nextStage ? `  next     : ${nextStage}` : `  next     : (workflow complete)`,
@@ -6851,11 +7367,31 @@ async function runStageComplete(args) {
     // Output a visually prominent banner to stderr so LLM cannot miss the next action.
     // stderr is shown to LLM as debug output — more attention-grabbing than JSON fields.
     if (mandatoryNextAction.type === 'STOP_HOOK_INJECT') {
+      // ── Socratic questions stderr output (P0 FIX: make visible to Agent) ──
+      const sqQuestions = socraticResult?.data?.questions || [];
+      const sqBlindSpots = socraticResult?.data?.blindSpots || [];
+      const sqConfidence = socraticResult?.data?.confidence;
+      const sqLines = [];
+      if (sqQuestions.length > 0) {
+        sqLines.push(`║  🤔 SOCRATIC OUTPUT REQUIRED (${sqQuestions.length} questions):          ║`);
+        sqQuestions.slice(0, 3).forEach((q, i) => {
+          const qTrunc = q.length > 56 ? q.slice(0, 53) + '...' : q;
+          sqLines.push(`║    Q${i + 1}: ${qTrunc.padEnd(54)}║`);
+        });
+        if (sqQuestions.length > 3) sqLines.push(`║    ... and ${sqQuestions.length - 3} more question(s)                              ║`);
+        if (sqBlindSpots.length > 0) sqLines.push(`║    ⚠️  ${sqBlindSpots.length} blind spot(s) detected                                ║`);
+        const confLabel = sqConfidence != null ? `${Math.round(sqConfidence * 100)}%` : 'N/A';
+        sqLines.push(`║    Confidence: ${confLabel.padEnd(44)}║`);
+        sqLines.push(`╠══════════════════════════════════════════════════════════════╣`);
+        sqLines.push(`║  ⛔ You MUST output 苏格拉底追问 three-part structure       ║`);
+        sqLines.push(`║    BEFORE executing the next stage command.                 ║`);
+      }
       console.error([
         ``,
         `╔══════════════════════════════════════════════════════════════╗`,
         `║  ⛔ WORKFLOW CONTINUES — DO NOT STOP                        ║`,
         `╠══════════════════════════════════════════════════════════════╣`,
+        ...sqLines,
         `║  Next: ${(nextStage || '').padEnd(10)} (${stageOrder.indexOf(nextStage) + 1}/7)                                ║`,
         `║  Remaining: ${remainingStages.join(' → ').slice(0, 44).padEnd(44)} ║`,
         `╚══════════════════════════════════════════════════════════════╝`,
@@ -7021,6 +7557,104 @@ async function runStageComplete(args) {
       success: false,
       subcommand: 'stage-complete',
       error: err.message,
+    };
+  }
+}
+
+// ─── Sub-command: plan-amend (ADR-49 P1-C) ──────────────────────────────────
+
+/**
+ * Plan Amendment — Locally amend execution-plan.md during CODE stage.
+ *
+ * This is the IDE Agent mode counterpart of the Node Orchestrator's
+ * _microPlanAmend() function (ADR-48). It allows the IDE Agent to emit
+ * plan amendments without triggering a full PLAN rollback.
+ *
+ * Required args:
+ *   --task-id       Task ID to amend (e.g. T-03)
+ *   --reason        Why the plan needs amendment
+ *   --amendment     The revised task description
+ *
+ * Optional args:
+ *   --project-root  Project root (default: .)
+ *   --plan-file     Path to execution-plan.md (default: output/execution-plan.md)
+ */
+function runPlanAmend(args) {
+  try {
+    const taskId = (args.taskId || args['task-id'] || '').toUpperCase();
+    const reason = args.reason || '';
+    const amendment = args.amendment || '';
+    const projectRoot = args.projectRoot || args['project-root'] || '.';
+    const planFile = args.planFile || args['plan-file'] || 'output/execution-plan.md';
+
+    if (!taskId || !reason) {
+      return {
+        success: false,
+        subcommand: 'plan-amend',
+        error: 'Missing required args: --task-id and --reason are required.',
+        usage: 'node ide-workflow-bridge.js plan-amend --task-id T-03 --reason "config.json does not exist" --amendment "Use config.yaml instead"',
+      };
+    }
+
+    const planPath = path.resolve(projectRoot, planFile);
+    if (!fs.existsSync(planPath)) {
+      return {
+        success: false,
+        subcommand: 'plan-amend',
+        error: `Execution plan not found: ${planPath}`,
+        fixInstruction: 'Run the PLAN stage first to generate execution-plan.md.',
+      };
+    }
+
+    const MICRO_PLAN_AMEND_MARKER = '<!-- MICRO-PLAN-AMEND -->';
+    const currentPlan = fs.readFileSync(planPath, 'utf-8');
+    const existingAmendCount = (currentPlan.match(new RegExp(MICRO_PLAN_AMEND_MARKER, 'g')) || []).length;
+    const maxAmendments = 5;
+
+    if (existingAmendCount >= maxAmendments) {
+      return {
+        success: false,
+        subcommand: 'plan-amend',
+        error: `Amendment cap reached (${maxAmendments}). Too many deviations suggest the plan needs full revision.`,
+        recommendation: 'Re-run the PLAN stage with updated requirements.',
+        existingAmendments: existingAmendCount,
+      };
+    }
+
+    const amendNum = existingAmendCount + 1;
+    const block = [
+      '',
+      MICRO_PLAN_AMEND_MARKER,
+      `## Amendment #${amendNum} (IDE Agent — manual amendment)`,
+      `- **Task**: ${taskId}`,
+      `- **Reason**: ${reason}`,
+      amendment ? `- **Amended**: ${amendment}` : '',
+      `- **Impact**: Downstream tasks may need adjustment`,
+      `- **Timestamp**: ${new Date().toISOString()}`,
+      '',
+    ].filter(Boolean).join('\n');
+
+    fs.appendFileSync(planPath, '\n' + block, 'utf-8');
+    console.error(`[plan-amend] 📝 Amendment #${amendNum} appended to ${planFile} (task: ${taskId})`);
+
+    return {
+      success: true,
+      subcommand: 'plan-amend',
+      data: {
+        amendmentNumber: amendNum,
+        taskId,
+        reason,
+        amendment: amendment || null,
+        totalAmendments: amendNum,
+        planFile,
+        remainingCap: maxAmendments - amendNum,
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      subcommand: 'plan-amend',
+      error: `plan-amend failed: ${err.message}`,
     };
   }
 }
@@ -7234,6 +7868,87 @@ function runSkillUpdate(args) {
   }
 }
 
+// ─── Skill Ablation Test ─────────────────────────────────────────────────────
+
+/**
+ * skill-ablation — Run Skill Ablation Test to quantify per-skill ROI
+ *
+ * Inspired by ML ablation studies: remove one component at a time and measure
+ * the impact. Uses existing lifecycle data (usageCount, effectiveCount) to
+ * estimate each skill's contribution without actually removing anything.
+ *
+ * Options:
+ *   --project-root     Project root path
+ *   --min-usage        Minimum usage count to include (default: 3)
+ *   --format           Output format: 'json' | 'markdown' (default: 'json')
+ *
+ * Usage:
+ *   node workflow/tools/ide-workflow-bridge.js skill-ablation --project-root .
+ */
+function runSkillAblation(args) {
+  try {
+    const { EvolutionLoop } = require('../core/evolution-loop');
+    const { SkillEvolutionEngine } = require('../core/skill-evolution');
+    const { PATHS } = require('../core/constants');
+
+    const projectRoot = args.projectRoot || args['project-root'] || process.cwd();
+    const minUsage = args.minUsage || args['min-usage'] || 3;
+    const format = args.format || 'json';
+
+    // Initialize SkillEvolutionEngine
+    const engine = new SkillEvolutionEngine();
+
+    // Create EvolutionLoop with the engine
+    const loop = new EvolutionLoop({
+      skillEvolution: engine,
+      outputDir: PATHS.OUTPUT_DIR,
+      verbose: false,
+    });
+
+    // Run ablation test
+    const result = loop.runAblationTest({ minUsageCount: Number(minUsage) });
+
+    if (!result.success) {
+      return {
+        success: false,
+        subcommand: 'skill-ablation',
+        error: 'Ablation test failed. SkillEvolutionEngine may not be available.',
+      };
+    }
+
+    // Format output
+    const output = format === 'markdown'
+      ? { markdown: loop.formatAblationReport(result) }
+      : result.report;
+
+    return {
+      success: true,
+      subcommand: 'skill-ablation',
+      data: {
+        ...output,
+        recommendations: result.recommendations,
+        summary: {
+          totalSkills: result.report.totalSkills,
+          analyzed: result.report.analyzed,
+          skipped: result.report.skipped,
+          avgEffectiveness: result.report.avgEffectiveness,
+          positiveROI: result.report.positiveROICount,
+          negativeROI: result.report.negativeROICount,
+        },
+        hint: format !== 'markdown'
+          ? 'Use --format markdown for a human-readable report.'
+          : undefined,
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      subcommand: 'skill-ablation',
+      error: err.message,
+    };
+  }
+}
+
 // ─── EvoSkill: Failure Pattern Analysis ──────────────────────────────────────
 
 /**
@@ -7305,6 +8020,159 @@ async function runFailurePatternAnalyze(args) {
     return {
       success: false,
       subcommand: 'failure-pattern-analyze',
+      error: err.message,
+    };
+  }
+}
+
+// ─── Sub-command: issue-pattern-collect ──────────────────────────────────────
+
+/**
+ * Collect and record issue patterns (orphan modules, broken routes, missing
+ * artifacts) to ExperienceStore for self-evolution awareness.
+ *
+ * This is the IDE Agent (Bridge) counterpart to the automatic issue collection
+ * that runs in Node Orchestrator teardown. It allows manual triggering from
+ * the IDE, ensuring dual-mode parity (ADR-37).
+ *
+ * @param {object} args
+ * @returns {Promise<{success: boolean, subcommand: string, data?: object, error?: string}>}
+ */
+async function runIssuePatternCollect(args) {
+  try {
+    const { IssuePatternCollector, IssueType, IssueSeverity } = require('../core/issue-pattern-collector');
+    const fs = require('fs');
+    const path = require('path');
+
+    const projectRoot = args.projectRoot || process.cwd();
+    const outputDir = path.join(projectRoot, '.workflow', 'output');
+
+    // Load ExperienceStore (shared singleton from project .workflow directory)
+    let experienceStore = null;
+    try {
+      const { ExperienceStore } = require('../core/experience-store');
+      const storePath = path.join(projectRoot, '.workflow', 'experience-store.json');
+      experienceStore = new ExperienceStore({ storePath, autoSave: true });
+    } catch (_e) {
+      // ExperienceStore not available — collector will run in dry-run mode
+    }
+
+    const collector = new IssuePatternCollector(experienceStore, {
+      projectContext: path.basename(projectRoot),
+      verbose: args.verbose || false,
+    });
+
+    // Scan for known issue categories
+    let scannedIssues = 0;
+
+    // 1. Check for missing expected artifacts (using recordArtifactMissing)
+    const expectedArtifacts = ['analysis.md', 'execution-plan.md', 'review-output.md'];
+    for (const artifact of expectedArtifacts) {
+      const artifactPath = path.join(outputDir, artifact);
+      if (!fs.existsSync(artifactPath)) {
+        collector.recordArtifactMissing({
+          artifact,
+          expectedPath: artifactPath,
+          stage: artifact.replace('.md', ''),
+        });
+        scannedIssues++;
+      }
+    }
+
+    // 2. Check for stale artifacts (older than stageContextMaxAgeHours)
+    try {
+      const config = require('../workflow.config');
+      const maxAgeHours = config?.stageContextMaxAgeHours || 24;
+      const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
+      if (fs.existsSync(outputDir)) {
+        const files = fs.readdirSync(outputDir);
+        const now = Date.now();
+        for (const file of files) {
+          const stat = fs.statSync(path.join(outputDir, file));
+          if (now - stat.mtimeMs > maxAgeMs) {
+            // Use recordIssue with proper IssueType enum for staleness
+            collector.recordIssue({
+              type: IssueType.FORMAT_MISMATCH,
+              severity: IssueSeverity.LOW,
+              module: file,
+              description: `Artifact ${file} is older than ${maxAgeHours}h (staleness threshold)`,
+              suggestedFix: `Re-run the workflow to refresh ${file}`,
+            });
+            scannedIssues++;
+          }
+        }
+      }
+    } catch (_e) {
+      // Non-fatal: staleness check failure
+    }
+
+    // Summarize collected issues (recordIssue already wrote to ExperienceStore)
+    const summary = collector.generateSummary();
+
+    return {
+      success: true,
+      subcommand: 'issue-pattern-collect',
+      data: {
+        scannedIssues,
+        recordedToExperienceStore: summary.total,
+        hasExperienceStore: experienceStore !== null,
+        projectRoot,
+        summary,
+      },
+      message: summary.total > 0
+        ? `Found ${summary.total} issue(s) recorded to ExperienceStore.`
+        : 'No issues found — all clear.',
+    };
+  } catch (err) {
+    return {
+      success: false,
+      subcommand: 'issue-pattern-collect',
+      error: err.message,
+    };
+  }
+}
+
+// ─── Declarative Teardown Pipeline (P0 teardown-impl) ────────────────────────
+
+function runTeardownPipeline(args) {
+  try {
+    const { createTeardownPipeline } = require('../core/teardown-steps');
+    const pipeline = createTeardownPipeline();
+    const summary = pipeline.toBridgeSummary();
+
+    // If args.action is 'run', also execute the pipeline (Bridge-initiated teardown)
+    if (args.action === 'run') {
+      const { TeardownContext } = require('../core/teardown-pipeline');
+      const outputDir = args.outputDir || path.join(process.cwd(), 'output');
+
+      const ctx = new TeardownContext({
+        orch: { _outputDir: outputDir, _verbose: false },
+        mode: 'ide-bridge',
+        extra: {},
+        shouldEvolve: {},
+      });
+
+      // Execute is async, but Bridge commands should return immediately
+      pipeline.execute(ctx).then(result => {
+        console.error(`[Bridge] Teardown pipeline completed: ${result.executed} executed, ${result.skipped} skipped, ${result.failed} failed`);
+      }).catch(err => {
+        console.error(`[Bridge] Teardown pipeline error: ${err.message}`);
+      });
+    }
+
+    return {
+      success: true,
+      subcommand: 'teardown-pipeline',
+      data: {
+        action: args.action || 'status',
+        pipeline: summary,
+      },
+      message: `Teardown pipeline: ${summary.totalSteps} step(s) registered. Action: ${args.action || 'status'}`,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      subcommand: 'teardown-pipeline',
       error: err.message,
     };
   }
@@ -7708,14 +8576,26 @@ async function main() {
         case 'stage-complete':
           innerResult = await runStageComplete(args);
           break;
+        case 'plan-amend':
+          innerResult = runPlanAmend(args);
+          break;
         case 'skill-evolve':
           innerResult = runSkillEvolve(args);
           break;
         case 'skill-update':
           innerResult = runSkillUpdate(args);
           break;
+        case 'skill-ablation':
+          innerResult = runSkillAblation(args);
+          break;
         case 'failure-pattern-analyze':
           innerResult = await runFailurePatternAnalyze(args);
+          break;
+        case 'issue-pattern-collect':
+          innerResult = await runIssuePatternCollect(args);
+          break;
+        case 'teardown-pipeline':
+          innerResult = runTeardownPipeline(args);
           break;
         case 'run':
           innerResult = await runWorkflow(args);
@@ -7743,11 +8623,32 @@ async function main() {
         case '-h':
           innerResult = printHelp();
           break;
-        default:
+        default: {
+          // ── Lifecycle Plugin Registry: Dynamic subcommand dispatch ──
+          // Check if any registered plugin provides this subcommand
+          try {
+            const { getGlobalRegistry } = require('../core/lifecycle-plugin-registry');
+            const registry = getGlobalRegistry();
+            const pluginDir = require('path').join(__dirname, '..', 'core', 'plugins');
+
+            // Auto-discover plugins if not yet done
+            if (registry.getAll().length === 0) {
+              registry.autoDiscover(pluginDir);
+            }
+
+            if (registry.getBridgeSubcommands().includes(args.subcommand)) {
+              innerResult = await registry.executeBridgeCommand(args.subcommand, args);
+              break;
+            }
+          } catch (prErr) {
+            // Plugin registry not available — fall through to unknown command
+          }
+
           innerResult = {
             success: false,
             error: `Unknown sub-command: "${args.subcommand}". Run with "help" to see available commands.`,
           };
+        }
       }
       return innerResult;
     },
@@ -7833,5 +8734,8 @@ module.exports = {
   _generateContentAwareQuestions,
   runSkillEvolve,
   runSkillUpdate,
+  runSkillAblation,
   runFailurePatternAnalyze,
+  runIssuePatternCollect,
+  runTeardownPipeline,
 };

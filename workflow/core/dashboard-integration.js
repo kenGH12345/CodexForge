@@ -13,7 +13,7 @@
  *   - Supports real-time alerts for bottlenecks and quality regressions
  *
  * Design: zero-dependency (inline CSS/JS), backward-compatible.
- * Integration: Called by Orchestrator._finalizeWorkflow() after feedback flush.
+ * Integration: Called by Orchestrator teardown pipeline after feedback flush.
  */
 
 'use strict';

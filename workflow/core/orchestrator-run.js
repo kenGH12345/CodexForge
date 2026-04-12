@@ -28,6 +28,8 @@ const { runAcceptanceGate } = require('./acceptance-gate');
 const { buildCapabilityCatalog, formatCapabilityCatalogForPrompt } = require('./capability-catalog');
 const { computeHealthScore } = require('./health-score-model');
 const { resolveHealthPaths } = require('./health-observability');
+const { RollbackCoordinator } = require('./rollback-coordinator');
+const { HOOK_EVENTS } = require('./constants');
 
 // ─── Run Mixin ───────────────────────────────────────────────────────────────
 
@@ -84,11 +86,17 @@ const OrchestratorRunMixin = {
     console.error(`${'═'.repeat(60)}\n`);
 
     // ── Initialize SocraticChallenger for quality checks ─────────────────────
+    // P1-STARTUP-4 fix: use wrappedLlm() so SocraticChallenger calls go through
+    // LlmRouter's 4-hop fallback chain + Observability metering + RunGuard limits.
+    // Previously used this._rawLlmCall which bypassed all LLM routing protection.
+    const _challengerLlm = this.agents?.[AgentRole.ANALYST]
+      ? (prompt) => this.agents[AgentRole.ANALYST].llmCall(prompt)
+      : this._rawLlmCall || null;
     const challenger = new SocraticChallenger({
       minContentLength: 200,
       maxRetries: 1,
       verbose: true,
-      llmCall: this._rawLlmCall || null,
+      llmCall: _challengerLlm,
     });
     console.error(`[Orchestrator] 🤔 SocraticChallenger initialized (maxRetries=1)`);
 
@@ -140,7 +148,13 @@ const OrchestratorRunMixin = {
         await this.stateMachine.jumpTo(WorkflowState.INIT, 'Reset for full /wf replay from INIT');
         console.error(`[Orchestrator] 🔄 StateMachine reset to INIT for full pipeline replay (was ${resumeState}).`);
       } catch (resetErr) {
-        console.warn(`[Orchestrator] ⚠️ Failed to reset state to INIT: ${resetErr.message}`);
+        // P1-STARTUP-5 fix: jumpTo failure is FATAL, not just a warning.
+        // Continuing with an inconsistent state (StateMachine thinks it's in TEST
+        // but stage loop starts from ANALYSE) causes "already in terminal state"
+        // errors on the first state transition. Better to fail fast and clear.
+        const fatalMsg = `[Orchestrator] ❌ FATAL: Failed to reset StateMachine from ${resumeState} to INIT: ${resetErr.message}. Cannot safely replay pipeline with inconsistent state.`;
+        console.error(fatalMsg);
+        throw new Error(fatalMsg);
       }
     }
 
@@ -164,7 +178,19 @@ const OrchestratorRunMixin = {
 
     // 4. Determine execution order (always start from first stage - ADR-XX)
     const stageOrder = this.stageRegistry.getOrder();
-    const stagesToRun = stageOrder; // Always run all stages
+    const stagesToRun = stageOrder; // Always run all stages (skipping is per-stage via SmartSkip)
+
+    // 4b. Detect task intent for non-code tasks (design/analysis/review/research)
+    // Layer 1: Regex pre-detection — instant feedback before pipeline starts.
+    // Layer 2 confirmation happens after ANALYSE completes (see stage loop below).
+    if (this.stageSmartSkip) {
+      const intentResult = this.stageSmartSkip.setTaskIntent(effectiveRequirement);
+      if (intentResult.intent !== 'full') {
+        console.error(`[Orchestrator] 🎯 Layer 1 pre-detection: ${intentResult.intent} (matched: "${intentResult.matchedPattern}")`);
+        console.error(`[Orchestrator] 📋 ${intentResult.description}`);
+        console.error(`[Orchestrator] ℹ️  This is a preliminary detection — will be confirmed after ANALYSE.`);
+      }
+    }
 
     console.error(`[Orchestrator] 📊 Pipeline stages: [${stagesToRun.join(' → ')}]\n`);
 
@@ -179,6 +205,52 @@ const OrchestratorRunMixin = {
         continue;
       }
 
+      // ── StageSmartSkip: Check if this stage should be skipped ──────────────
+      if (this.stageSmartSkip) {
+        const skipResult = this.stageSmartSkip.shouldSkip(stageName, {
+          stageCtx: this.stageCtx,
+          complexity: null, // Will be read from stageCtx internally
+        });
+        if (skipResult.skip) {
+          console.error(`\n${'─'.repeat(60)}`);
+          console.error(`[Orchestrator] ⏭️  SKIPPING stage: ${stageName}`);
+          console.error(`[Orchestrator]    Reason: ${skipResult.reason}`);
+          console.error(`${'─'.repeat(60)}`);
+
+          // Record skip in trace
+          traceCollector.recordStageStart(stageName, {
+            inputArtifactPath: currentArtifact,
+            context: { skipped: true, reason: skipResult.reason },
+          });
+          traceCollector.recordStageEnd(stageName, {
+            success: true,
+            outputArtifactPath: currentArtifact,
+            duration: 0,
+            skipped: true,
+            skipReason: skipResult.reason,
+          });
+
+          // Transition state machine past this stage
+          if (this.stateMachine) {
+            try {
+              await this.stateMachine.transition(currentArtifact, `Stage ${stageName} skipped: ${skipResult.reason}`);
+            } catch (transErr) {
+              console.warn(`[Orchestrator] ⚠️ StateMachine transition for skipped stage failed: ${transErr.message}`);
+            }
+          }
+
+          executionResults.push({
+            stage: stageName,
+            success: true,
+            duration: 0,
+            skipped: true,
+            skipReason: skipResult.reason,
+            skipSource: skipResult.skipSource || 'unknown',
+          });
+          continue;
+        }
+      }
+
       console.error(`\n${'─'.repeat(60)}`);
       console.error(`[Orchestrator] ▶️  Executing stage: ${stageName}`);
       console.error(`${'─'.repeat(60)}`);
@@ -188,6 +260,17 @@ const OrchestratorRunMixin = {
         this.p0RuntimeLoop.markStageStart(stageName, {
           previousArtifact: currentArtifact || null,
         });
+      }
+
+      // ── P0 fix: Emit STAGE_STARTED hook event ────────────────────────
+      // Previously defined in constants.js HOOK_EVENTS but never emitted.
+      // Consumers: DecisionTrail (plugin), EventJournal, P0RuntimeLoop,
+      // IntrospectionManager, RunGuard (plugin).
+      if (this.hooks && typeof this.hooks.emit === 'function') {
+        await this.hooks.emit(HOOK_EVENTS.STAGE_STARTED, {
+          stage: stageName,
+          previousArtifact: currentArtifact || null,
+        }).catch(() => {});
       }
       let stageSuccess = false;
       let stageResult = null;
@@ -212,6 +295,20 @@ const OrchestratorRunMixin = {
           console.error(`[Orchestrator][STAGE_START] ${stageName} (attempt=${retryCount + 1}) @ ${new Date().toISOString()}`);
 
           // Build stage context
+          // P0-1 fix: Expose stageCtx and bus directly on context so StageRunners
+          // can access cross-stage context and file-ref bus without coupling to
+          // the full Orchestrator instance. This enables independent testing of
+          // StageRunners with minimal mocking.
+          // P2-3 fix: Assert stageCtx and bus are initialized before building
+          // context. These are created in _initWorkflow() (workflow/index.js L274/L370).
+          // If they're missing, downstream StageRunners will get null and may NPE.
+          if (!this.stageCtx) {
+            console.error(`[Orchestrator] ⚠️ stageCtx not initialized — cross-stage context will be unavailable`);
+          }
+          if (!this.bus) {
+            console.error(`[Orchestrator] ⚠️ bus (FileRefBus) not initialized — file-ref routing will be unavailable`);
+          }
+
           const context = {
             rawRequirement: effectiveRequirement,
             originalRequirement: rawRequirement,
@@ -223,11 +320,36 @@ const OrchestratorRunMixin = {
             capabilityCatalogPrompt,
             stageBudgetPlan,
             runtimePolicy: runtimePolicyCheck.policy,
+            stageCtx: this.stageCtx || null,
+            bus: this.bus || null,
           };
 
           // Execute stage
           console.error(`[Orchestrator] 🏃 Running stage executor...`);
+
+          // ── P1 fix: Emit AGENT_START hook event ──────────────────────
+          // Previously subscribed by IntrospectionManager but never emitted.
+          // This enables agent execution tracking and introspection.
+          if (this.hooks && typeof this.hooks.emit === 'function') {
+            await this.hooks.emit(HOOK_EVENTS.AGENT_START, {
+              stage: stageName,
+              role: stageName.toLowerCase(),
+              attempt: retryCount + 1,
+            }).catch(() => {});
+          }
+
           const result = await runner.execute(context);
+
+          // ── P1 fix: Emit AGENT_COMPLETE hook event ───────────────────
+          if (this.hooks && typeof this.hooks.emit === 'function') {
+            await this.hooks.emit(HOOK_EVENTS.AGENT_COMPLETE, {
+              stage: stageName,
+              role: stageName.toLowerCase(),
+              success: true,
+              attempt: retryCount + 1,
+            }).catch(() => {});
+          }
+
           const stageDuration = Date.now() - stageStartTime;
           console.error(`[Orchestrator] ⏱️  Stage execution time: ${stageDuration}ms`);
 
@@ -252,6 +374,18 @@ const OrchestratorRunMixin = {
               artifactPath = inferredPath;
               currentArtifact = inferredPath;
               console.error(`[Orchestrator] 📄 Artifact path (inferred): ${inferredPath}`);
+            } else if (this.bus) {
+              // P1-3 fix: Sync with FileRefBus — check if the stage published
+              // an artifact to the bus that we missed from the return value.
+              const busLog = this.bus.getLog();
+              const lastPublish = [...busLog].reverse().find(l => l.timestamp);
+              if (lastPublish && lastPublish.filePath && require('fs').existsSync(lastPublish.filePath)) {
+                artifactPath = lastPublish.filePath;
+                currentArtifact = lastPublish.filePath;
+                console.error(`[Orchestrator] 📄 Artifact path (from bus log): ${artifactPath}`);
+              } else {
+                console.warn(`[Orchestrator] ⚠️  Stage ${stageName} returned no artifact path (result type: ${typeof result})`);
+              }
             } else {
               console.warn(`[Orchestrator] ⚠️  Stage ${stageName} returned no artifact path (result type: ${typeof result})`);
             }
@@ -313,8 +447,9 @@ const OrchestratorRunMixin = {
           // ── UnifiedTraceCollector: Record Socratic challenge result ────────────────────────
           traceCollector.recordSocraticChallenge(stageName, challengeResultWithDelta);
 
-          // P1: revision loop (single retry) - only when challenge is triggered
-          if (challengeResult.challenged && retryCount < maxRetries) {
+          // P1: revision loop (single retry) - only when challenge is triggered AND not advisory-only
+          // Plan A+B: advisoryOnly challenges provide questions as suggestions, not forced retries
+          if (challengeResult.challenged && !challengeResult.advisoryOnly && retryCount < maxRetries) {
             pendingRevisionContext = {
               stageName,
               triggerReasons: challengeResult.triggerReasons || [],
@@ -345,6 +480,19 @@ const OrchestratorRunMixin = {
             duration: Date.now() - stageStartTime,
           });
           console.error(`[Orchestrator][STAGE_END] ${stageName} (success) @ ${new Date().toISOString()}`);
+
+          // ── P0 fix: Emit STAGE_ENDED hook event (success) ──────────────
+          // Previously defined in constants.js HOOK_EVENTS but never emitted.
+          // Consumers: DecisionTrail (plugin), EventJournal, P0RuntimeLoop.
+          if (this.hooks && typeof this.hooks.emit === 'function') {
+            await this.hooks.emit(HOOK_EVENTS.STAGE_ENDED, {
+              stage: stageName,
+              success: true,
+              artifactPath: currentArtifact || null,
+              duration: Date.now() - stageStartTime,
+              confidence: challengeResult?.confidence || null,
+            }).catch(() => {});
+          }
 
           executionResults.push({
             stage: stageName,
@@ -403,11 +551,35 @@ const OrchestratorRunMixin = {
           });
           console.error(`[Orchestrator][STAGE_END] ${stageName} (failed) @ ${new Date().toISOString()} reason=${stageError.message}`);
 
+          // ── P0 fix: Emit STAGE_ENDED hook event (failure) ──────────────
+          if (this.hooks && typeof this.hooks.emit === 'function') {
+            await this.hooks.emit(HOOK_EVENTS.STAGE_ENDED, {
+              stage: stageName,
+              success: false,
+              artifactPath: currentArtifact || null,
+              duration: stageDuration,
+              error: stageError.message,
+            }).catch(() => {});
+          }
+
           if (retryCount < maxRetries) {
             console.error(`[Orchestrator] 🔄 Retrying stage ${stageName} due to error...`);
             retryCount++;
             continue;
           }
+
+          // P1-2 fix: Feed stage failure signal to EvolutionLoop so it can
+          // learn from negative outcomes (not just Socratic challenges).
+          // Without this, the quality report misses the most important signal
+          // source — actual execution failures.
+          evolutionLoop.processSignal({
+            type: 'STAGE_FAILURE',
+            severity: 'critical',
+            stage: stageName,
+            evidence: `Stage ${stageName} failed after ${retryCount + 1} attempt(s): ${stageError.message}`,
+            context: { stack: (stageError.stack || '').slice(0, 500), retryCount },
+            confidence: 0.95,
+          });
 
           // Record failure
           executionResults.push({
@@ -419,12 +591,41 @@ const OrchestratorRunMixin = {
 
           // Emit stage error event
           this._emit?.('stage:error', { stageName, error: stageError });
+
+          // P0: Use RollbackCoordinator for unified rollback cleanup.
+          // Previously, stage failure just threw the error without cleaning up
+          // Bus messages, StageContext entries, or cache – causing the "fake rollback"
+          // bug where stateMachine rolled back but stale data remained.
+          try {
+            const rollbackCoord = new RollbackCoordinator(this);
+            await rollbackCoord.rollback(stageName, `Stage ${stageName} failed: ${stageError.message}`);
+            console.error(`[Orchestrator] 🧹 RollbackCoordinator: coordinated cleanup for ${stageName} completed.`);
+          } catch (rbErr) {
+            console.warn(`[Orchestrator] ⚠️  RollbackCoordinator cleanup failed (non-fatal): ${rbErr.message}`);
+          }
+
           throw stageError;
         }
       }
 
       // Clear challenge history for next stage
       challenger.clearHistory();
+
+      // ── Layer 2: Confirm/override task intent after ANALYSE completes ─────
+      // ANALYSE is always the first stage. After it completes, we have the enriched
+      // requirement with LLM-processed context. Use this to confirm or override
+      // the Layer 1 regex pre-detection.
+      if (stageName === 'ANALYSE' && this.stageSmartSkip) {
+        console.error(`\n[Orchestrator] 🔄 Running Layer 2 task intent confirmation...`);
+        const confirmResult = this.stageSmartSkip.confirmTaskIntent({
+          stageCtx: this.stageCtx,
+        });
+        if (confirmResult.overridden) {
+          console.error(`[Orchestrator] 🔄 Task intent updated: ${confirmResult.layer1?.intent || 'unknown'} → ${confirmResult.intent} (source: ${confirmResult.source})`);
+        } else {
+          console.error(`[Orchestrator] ✅ Task intent confirmed: ${confirmResult.intent} (source: ${confirmResult.source})`);
+        }
+      }
     }
 
     // 6. Finalize workflow (teardown, reports, evolution)
@@ -456,12 +657,24 @@ const OrchestratorRunMixin = {
     const totalChallenges = executionResults.reduce((sum, r) => sum + (r.challengeQuestions?.length || 0), 0);
     const totalBlindSpots = executionResults.reduce((sum, r) => sum + (r.blindSpots?.length || 0), 0);
 
+    const skippedResults = executionResults.filter(r => r.skipped);
+    const executedResults = executionResults.filter(r => !r.skipped);
+
     console.error(`\n${'═'.repeat(60)}`);
     console.error(`[Orchestrator] 📊 WORKFLOW SUMMARY`);
     console.error(`${'═'.repeat(60)}`);
     console.error(`  Total stages:     ${executionResults.length}`);
+    console.error(`  Executed:         ${executedResults.length}`);
+    console.error(`  Skipped:          ${skippedResults.length}`);
+    if (skippedResults.length > 0) {
+      console.error(`  Skipped stages:   ${skippedResults.map(r => r.stage).join(', ')}`);
+      const taskIntent = this.stageSmartSkip?.getTaskIntent?.();
+      if (taskIntent && taskIntent.intent !== 'full') {
+        console.error(`  Task intent:      ${taskIntent.intent} (matched: "${taskIntent.matchedPattern}")`);
+      }
+    }
     console.error(`  Successful:       ${successCount}`);
-    console.error(`  Failed:           ${executionResults.length - successCount}`);
+    console.error(`  Failed:           ${executionResults.length - successCount - skippedResults.length}`);
     console.error(`  Total time:       ${(totalDuration / 1000).toFixed(2)}s`);
     console.error(`  Avg confidence:   ${avgConfidence}`);
     console.error(`  Challenges made:  ${totalChallenges}`);
@@ -499,6 +712,27 @@ const OrchestratorRunMixin = {
     console.error(`[Orchestrator] 📄 Evolution log: ${logResult.path} (${logResult.success ? '✅' : '❌'} ${logResult.size} bytes)`);
     console.error(`[Orchestrator] 📊 Quality report: ${reportResult.path} (${reportResult.success ? '✅' : '❌'} ${reportResult.size} bytes)`);
 
+    // 9b. Run Skill Ablation Test (Agent Skills Spec improvement)
+    // Auto-runs after every pipeline to accumulate per-skill ROI data.
+    // Uses minUsageCount=0 to include all skills (even cold-start).
+    try {
+      const ablationResult = evolutionLoop.runAblationTest({ minUsageCount: 0 });
+      if (ablationResult.success && ablationResult.report) {
+        const { analyzed, avgEffectiveness, positiveROICount, negativeROICount } = ablationResult.report;
+        console.error(`[Orchestrator] 🧪 Skill Ablation: ${analyzed} skill(s) analyzed, avg effectiveness: ${avgEffectiveness}%`);
+        if (negativeROICount > 0) {
+          console.error(`[Orchestrator]    ⚠️  ${negativeROICount} skill(s) with negative ROI — review recommended`);
+        }
+        if (ablationResult.recommendations.length > 0) {
+          for (const rec of ablationResult.recommendations.slice(0, 3)) {
+            console.error(`[Orchestrator]    ${rec.severity === 'high' ? '🔴' : rec.severity === 'medium' ? '🟡' : 'ℹ️'} ${rec.action} "${rec.skill}": ${rec.reason.slice(0, 100)}`);
+          }
+        }
+      }
+    } catch (ablationErr) {
+      console.error(`[Orchestrator] ⚠️  Skill ablation test failed (non-fatal): ${ablationErr.message}`);
+    }
+
     // ── UnifiedTraceCollector: Final verification and workflow end ────────────────────────
     traceCollector.recordWorkflowEnd({
       success: successCount === executionResults.length,
@@ -511,7 +745,10 @@ const OrchestratorRunMixin = {
     // generate-health-report.js right after workflow completion.
     await traceCollector.end();
 
-    const traceVerification = traceCollector.verifyCompleteness(['ANALYSE', 'ARCHITECT', 'PLAN', 'CODE', 'TEST']);
+    // Exclude skipped stages from completeness check — they are intentionally not executed
+    const skippedStageNames = new Set(skippedResults.map(r => r.stage));
+    const expectedStages = ['ANALYSE', 'ARCHITECT', 'PLAN', 'CODE', 'TEST'].filter(s => !skippedStageNames.has(s));
+    const traceVerification = traceCollector.verifyCompleteness(expectedStages);
     const traceSummary = traceCollector.getSummary();
 
     // ── Independent Acceptance Gate (做事/验收分离) ─────────────────────────
@@ -730,6 +967,12 @@ const OrchestratorRunMixin = {
       },
       capabilityCatalog,
       capabilityCatalogPrompt,
+      // Task intent and smart-skip info
+      taskIntent: this.stageSmartSkip?.getTaskIntent?.() || { intent: 'full' },
+      smartSkip: {
+        skippedStages: skippedResults.map(r => ({ stage: r.stage, reason: r.skipReason, source: r.skipSource })),
+        executedStages: executedResults.map(r => r.stage),
+      },
       outputVerification: {
         passed: outputVerification.passed,
         files: outputVerification.files,
@@ -790,6 +1033,8 @@ const OrchestratorRunMixin = {
       'PLAN': 'execution-plan.md',
       'CODE': 'code.diff',
       'TEST': 'test-report.md',
+      'REVIEW': 'review-output.md',
+      'DEPLOY': 'deploy-output.md',
     };
     return ARTIFACT_FILE_NAMES[stageName] || `${stageName.toLowerCase()}-output.md`;
   },
