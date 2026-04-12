@@ -213,8 +213,8 @@ class CIStatusAdapter extends MCPAdapter {
     let lastTestResult = 'unknown';
     try {
       // Check if there's a recent test execution report in the output directory
-      const { PATHS } = require('../../core/constants');
-      const outputDir = PATHS.OUTPUT_DIR;
+      const { getDefaultOutputDir } = require('../../core/constants');
+      const outputDir = getDefaultOutputDir();
       const reportPath = path.join(outputDir, 'test-report.md');
       if (fs.existsSync(reportPath)) {
         const stat = fs.statSync(reportPath);

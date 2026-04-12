@@ -141,7 +141,7 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
   try {
     const tcGen = new TestCaseGenerator(this._rawLlmCall, {
       verbose: true,
-      outputDir: PATHS.OUTPUT_DIR,
+      outputDir: this._outputDir,
     });
     
     if (useDetailedTestGen && fs.existsSync(PATHS.CODE_DIFF_FILE)) {
@@ -180,7 +180,7 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
         projectRoot: this.projectRoot,
         testCommand: this._config.testCommand || null,
         framework: this._config.testFramework || 'auto',
-        outputDir: PATHS.OUTPUT_DIR,
+        outputDir: this._outputDir,
         timeoutMs: 90_000,
         verbose: true,
       });
@@ -189,7 +189,7 @@ async function _runTesterOnce(testIteration, maxIterations, fixConversationHisto
         const _manualPending = tcExecutionReport.manualPending ?? 0;
         const _automatedTotal = tcExecutionReport.automatedTotal ?? (tcExecutionReport.total - _manualPending);
         console.error(`[Orchestrator] 📊 Test case execution: ${tcExecutionReport.passed}/${_automatedTotal} passed, ${tcExecutionReport.failed} failed, ${tcExecutionReport.blocked} blocked, ${_manualPending} manual-pending`);
-        const execReportPath = path.join(PATHS.OUTPUT_DIR, 'test-execution-report.md');
+        const execReportPath = path.join(this._outputDir, 'test-execution-report.md');
         fs.writeFileSync(execReportPath, tcExecutionReport.summaryMd, 'utf-8');
         console.error(`[Orchestrator] 📝 Execution report saved → output/test-execution-report.md`);
         if (tcExecutionReport.failed > 0) {
@@ -306,11 +306,11 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
             this.handoffLog.recordRollback('TEST', 'CODE', `Test report failed: ${riskMsg.slice(0, 200)}`);
           }
 
-          const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
+          const codeDiffPath = path.join(this._outputDir, 'code.diff');
           // RetryDivergenceGuard: build enhanced failure note with Negative Prompt + Creativity Directive
           let previousTestOutput = '';
           try {
-            const testReportPath = path.join(PATHS.OUTPUT_DIR, 'test-report.md');
+            const testReportPath = path.join(this._outputDir, 'test-report.md');
             if (fs.existsSync(testReportPath)) previousTestOutput = fs.readFileSync(testReportPath, 'utf-8');
           } catch (_) { /* non-fatal */ }
 
@@ -324,7 +324,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
           if (fs.existsSync(codeDiffPath)) {
             fs.appendFileSync(codeDiffPath, failureNote, 'utf-8');
           }
-          const archOutputPath = path.join(PATHS.OUTPUT_DIR, 'architecture.md');
+          const archOutputPath = path.join(this._outputDir, 'architecture.md');
           if (fs.existsSync(archOutputPath)) {
           this.bus.publish(AgentRole.ARCHITECT, AgentRole.PLANNER, archOutputPath, {
               testReportFailed: true,
@@ -357,7 +357,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
             const stageCtxCodePath = Array.isArray(codeCtxArtifacts) && codeCtxArtifacts.length > 0
               ? codeCtxArtifacts[0]
               : null;
-            devOutputPath = stageCtxCodePath || path.join(PATHS.OUTPUT_DIR, 'code.diff');
+            devOutputPath = stageCtxCodePath || path.join(this._outputDir, 'code.diff');
           }
           if (fs.existsSync(devOutputPath)) {
             this.bus.publish(AgentRole.DEVELOPER, AgentRole.TESTER, devOutputPath, {
@@ -499,7 +499,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
 
   let outputValidationResult = { passed: true, details: {} };
 
-  const stageOutputDir = this._outputDir || PATHS.OUTPUT_DIR;
+  const stageOutputDir = this._outputDir || this._outputDir;
 
   try {
     // 1. Validate required output files exist
@@ -712,7 +712,7 @@ async function _runRealTestLoop({ testCommand, baselineTestCommand = testCommand
     const failureContext = _rawFailureContext.length > 6000
       ? `... [${_rawFailureContext.length - 6000} chars omitted] ...\n` + _rawFailureContext.slice(-6000)
       : _rawFailureContext;
-    const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
+    const codeDiffPath = path.join(this._outputDir, 'code.diff');
     const existingDiff = fs.existsSync(codeDiffPath) ? fs.readFileSync(codeDiffPath, 'utf-8') : '(no previous diff)';
 
     const previousFixesBlock = fixRound > 1
@@ -848,7 +848,7 @@ const fixPrompt = buildFixAgentPrompt({
       break;
     }
 
-    const fixedDiffPath = path.join(PATHS.OUTPUT_DIR, `code-fix-round${fixRound}.txt`);
+    const fixedDiffPath = path.join(this._outputDir, `code-fix-round${fixRound}.txt`);
     fs.writeFileSync(fixedDiffPath, fixResponse, 'utf-8');
     console.error(`[Orchestrator] 📝 Fix response saved to: ${fixedDiffPath}`);
 
@@ -974,7 +974,7 @@ const fixPrompt = buildFixAgentPrompt({
           const tcExecutorForUpdate = new TestCaseExecutor({
             projectRoot: this.projectRoot,
             testCommand,
-            outputDir: PATHS.OUTPUT_DIR,
+            outputDir: this._outputDir,
             verbose: false,
           });
           const cases = tcExecutorForUpdate._parseCasesFromMd();
@@ -1003,7 +1003,7 @@ const fixPrompt = buildFixAgentPrompt({
               `|---------|-------|--------|`,
               ...rows,
             ].join('\n');
-            const testCasesPath = path.join(PATHS.OUTPUT_DIR, 'test-cases.md');
+            const testCasesPath = path.join(this._outputDir, 'test-cases.md');
             if (fs.existsSync(testCasesPath)) {
               fs.appendFileSync(testCasesPath, annotation, 'utf-8');
               console.error(`[Orchestrator] 📝 test-cases.md updated with post-fix PASS statuses (${updatedResults.length} case(s)).`);
@@ -1069,7 +1069,7 @@ function _normalizeTestProfile(profile) {
  */
 function _hasHighRiskTestScope() {
   try {
-    const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
+    const codeDiffPath = path.join(this._outputDir, 'code.diff');
     if (!fs.existsSync(codeDiffPath)) return false;
 
     const diff = fs.readFileSync(codeDiffPath, 'utf-8');
@@ -1123,7 +1123,7 @@ function _buildProfiledTestCommand(baseTestCommand, testProfile, impactedSuites 
  */
 function _collectChangedFilesFromCodeDiff() {
   try {
-    const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
+    const codeDiffPath = path.join(this._outputDir, 'code.diff');
     if (!fs.existsSync(codeDiffPath)) return [];
 
     const diff = fs.readFileSync(codeDiffPath, 'utf-8');

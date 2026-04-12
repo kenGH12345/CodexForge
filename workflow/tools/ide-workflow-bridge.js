@@ -7889,7 +7889,7 @@ function runSkillAblation(args) {
   try {
     const { EvolutionLoop } = require('../core/evolution-loop');
     const { SkillEvolutionEngine } = require('../core/skill-evolution');
-    const { PATHS } = require('../core/constants');
+    const { PATHS, getDefaultOutputDir } = require('../core/constants');
 
     const projectRoot = args.projectRoot || args['project-root'] || process.cwd();
     const minUsage = args.minUsage || args['min-usage'] || 3;
@@ -7901,7 +7901,7 @@ function runSkillAblation(args) {
     // Create EvolutionLoop with the engine
     const loop = new EvolutionLoop({
       skillEvolution: engine,
-      outputDir: PATHS.OUTPUT_DIR,
+      outputDir: getDefaultOutputDir(),
       verbose: false,
     });
 

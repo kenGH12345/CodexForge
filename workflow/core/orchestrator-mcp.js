@@ -76,7 +76,7 @@ function initMCPSubsystems(orch) {
     const dgConfig = typeof cfgMcp.docGen === 'object' ? cfgMcp.docGen : {};
     orch.mcpRegistry.register(new DocGenAdapter({
       projectRoot: orch.projectRoot,
-      outputDir: orch._outputDir || require('./constants').PATHS.OUTPUT_DIR,
+      outputDir: orch._outputDir,
       ...dgConfig,
     }));
   }

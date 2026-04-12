@@ -620,8 +620,8 @@ const OrchestratorTeardownMixin = {
     // P3: Generate cross-session trends report
     try {
       const ObsStrategy = require('./observability-strategy');
-      const history = ObsStrategy.loadHistory(PATHS.OUTPUT_DIR);
-      const trendsPath = ObsStrategy.generateTrendsReport(history, PATHS.OUTPUT_DIR);
+      const history = ObsStrategy.loadHistory(this._outputDir);
+      const trendsPath = ObsStrategy.generateTrendsReport(history, this._outputDir);
       if (trendsPath) {
         console.log(`[Orchestrator] 📈 Cross-session trends report: ${trendsPath}`);
       }

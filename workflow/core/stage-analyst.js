@@ -641,7 +641,7 @@ async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
     }
 
     const cfgAutoFix = (this._config && this._config.autoFixLoop) || {};
-    const updatedStrategy = Observability.deriveStrategy(PATHS.OUTPUT_DIR, {
+    const updatedStrategy = Observability.deriveStrategy(this._outputDir, {
       maxFixRounds:    cfgAutoFix.maxFixRounds    ?? 2,
       maxReviewRounds: cfgAutoFix.maxReviewRounds ?? 2,
       maxExpInjected:  cfgAutoFix.maxExpInjected  ?? 5,

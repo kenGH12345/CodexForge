@@ -148,7 +148,7 @@ async function _runArchitect() {
       this,
       requirementContent,
       archExpContext,
-      { inputPath, outputPath: path.join(PATHS.OUTPUT_DIR, 'architecture.md') },
+      { inputPath, outputPath: path.join(this._outputDir, 'architecture.md') },
     );
     if (moduleSplitResult.used) {
       outputPath = moduleSplitResult.outputPath;
@@ -256,7 +256,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
     {
       maxRounds: 2,
       verbose: true,
-      outputDir: PATHS.OUTPUT_DIR,
+      outputDir: this._outputDir,
       investigationTools: this._buildInvestigationTools('Architecture'),
       checklist: ARCHITECTURE_CHECKLIST,
       reportFileName: 'architecture-review.md',
@@ -405,13 +405,13 @@ throw new Error(`[_runArchitect] CodeReviewAgent (architecture mode) failed: ${a
           {
             maxRounds: 2,
             verbose: true,
-            outputDir: PATHS.OUTPUT_DIR,
+            outputDir: this._outputDir,
             investigationTools: this._buildInvestigationTools('Architecture'),
             checklist: ARCHITECTURE_CHECKLIST,
             reportFileName: 'architecture-review.md',
           }
         );
-        const requirementPathRetry = path.join(PATHS.OUTPUT_DIR, 'requirements.md');
+        const requirementPathRetry = path.join(this._outputDir, 'requirements.md');
 
         const retryNote = `\n\n---\n## ⚠️ Architecture Review Retry (Attempt ${rollbackCount + 1})\n\nPrevious review found these issues:\n${failedNotes}\n\nPlease address these concerns in a focused re-review.`;
         fs.appendFileSync(outputPath, retryNote, 'utf-8');
@@ -465,7 +465,7 @@ throw new Error(`[_runArchitect] CodeReviewAgent (architecture mode) failed: ${a
       // constraints + escalating creativity instructions.
       let previousArchOutput = '';
       try {
-        const archPath = path.join(PATHS.OUTPUT_DIR, 'architecture.md');
+        const archPath = path.join(this._outputDir, 'architecture.md');
         if (fs.existsSync(archPath)) previousArchOutput = fs.readFileSync(archPath, 'utf-8');
       } catch (_) { /* non-fatal */ }
 

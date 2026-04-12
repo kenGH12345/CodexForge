@@ -406,7 +406,7 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
     } catch (_) { /* non-fatal */ }
   }
 
-  const requirementPath = path.join(PATHS.OUTPUT_DIR, 'requirements.md');
+  const requirementPath = path.join(this._outputDir, 'requirements.md');
   const reviewRiskProfile = (() => {
     const notes = (reviewResultLike => (reviewResultLike?.riskNotes || []).join(' '))({ riskNotes: [] });
     const diffText = outputPath && fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : '';
@@ -442,7 +442,7 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
     {
       maxRounds: 2,
       verbose: true,
-      outputDir: PATHS.OUTPUT_DIR,
+      outputDir: this._outputDir,
       investigationTools: this._buildInvestigationTools('Code'),
     }
   );
@@ -630,11 +630,11 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
           {
             maxRounds: 2,
             verbose: true,
-            outputDir: PATHS.OUTPUT_DIR,
+            outputDir: this._outputDir,
             investigationTools: this._buildInvestigationTools('Code'),
           }
         );
-        const reqPath = path.join(PATHS.OUTPUT_DIR, 'requirements.md');
+        const reqPath = path.join(this._outputDir, 'requirements.md');
 
         const retryNote = `\n\n// --- Code Review Retry (Attempt ${codeRollbackCount + 1}) ---\n// Previous review found these issues:\n// ${failedNotes.replace(/\n/g, '\n// ')}\n// Please address the above.`;
         fs.appendFileSync(outputPath, retryNote, 'utf-8');
@@ -670,12 +670,12 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
         this.handoffLog.recordRollback('CODE', 'ARCHITECT', `Code review failed: ${failedNotes.slice(0, 200)}`);
       }
 
-      const archOutputPath = path.join(PATHS.OUTPUT_DIR, 'architecture.md');
+      const archOutputPath = path.join(this._outputDir, 'architecture.md');
       if (fs.existsSync(archOutputPath)) {
         // RetryDivergenceGuard: build enhanced failure note with Negative Prompt + Creativity Directive
         let previousCodeOutput = '';
         try {
-          const codeDiffPath = path.join(PATHS.OUTPUT_DIR, 'code.diff');
+          const codeDiffPath = path.join(this._outputDir, 'code.diff');
           if (fs.existsSync(codeDiffPath)) previousCodeOutput = fs.readFileSync(codeDiffPath, 'utf-8');
         } catch (_) { /* non-fatal */ }
 

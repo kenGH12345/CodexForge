@@ -61,14 +61,15 @@ function expect(actual) {
     toBeNull: () => assert.strictEqual(actual, null),
     toBeInstanceOf: (cls) => assert.ok(actual instanceof cls, `Expected instance of ${cls.name}`),
     toContain: (str) => {
+      if (actual == null) assert.fail(`toContain: actual value is ${actual}`);
       if (typeof actual === 'string') assert.ok(actual.includes(str), `Expected "${actual.slice(0,100)}" to contain "${str}"`);
       else if (Array.isArray(actual)) assert.ok(actual.includes(str), `Expected array to contain ${str}`);
-      else if (actual && typeof actual === 'object') {
+      else if (typeof actual === 'object') {
         // For objects, check if JSON representation contains the string
         const json = JSON.stringify(actual);
         assert.ok(json.includes(str), `Expected object to contain "${str}" (got: ${json.slice(0,200)})`);
       }
-      else assert.fail(`toContain: unsupported type ${typeof actual}`);
+      else assert.fail(`toContain: unsupported type ${typeof actual} (value: ${String(actual).slice(0,100)})`);
     },
     toHaveProperty: (key, val) => {
       assert.ok(actual != null && key in actual, `Expected object to have property "${key}"`);

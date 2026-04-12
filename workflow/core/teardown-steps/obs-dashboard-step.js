@@ -47,8 +47,8 @@ class ObsDashboardStep extends TeardownStep {
     // Cross-session trends report
     try {
       const ObsStrategy = require('../observability-strategy');
-      const history = ObsStrategy.loadHistory(PATHS.OUTPUT_DIR);
-      const trendsPath = ObsStrategy.generateTrendsReport(history, PATHS.OUTPUT_DIR);
+      const history = ObsStrategy.loadHistory(orch._outputDir);
+      const trendsPath = ObsStrategy.generateTrendsReport(history, orch._outputDir);
       if (trendsPath) {
         console.log(`[Orchestrator] 📈 Cross-session trends report: ${trendsPath}`);
       }
@@ -59,7 +59,7 @@ class ObsDashboardStep extends TeardownStep {
     // Dashboard Integration – Visual analytics and feedback reporting
     try {
       const dashboardPath = generateDashboard({
-        outputDir: orch._outputDir || PATHS.OUTPUT,
+        outputDir: orch._outputDir,
       });
       if (dashboardPath) {
         console.log(`[Orchestrator] 📊 Integrated Dashboard generated: ${dashboardPath}`);
