@@ -384,7 +384,7 @@ function generateAnchoredQuestions(schemaGaps, stageName, headings, truncateFn) 
     const excerptRef = excerptText ? `原文：「${excerptText}」——` : '';
 
     if (gap.status === 'missing') {
-      question = `[Schema缺口][${stageName}] artifact 中缺少"${gap.section}"部分。`
+      question = `artifact 中缺少"${gap.section}"部分。`
         + (gap.severity === 'missing_required'
           ? `这是必需 section，缺失会导致后续阶段缺乏关键输入。请补充。`
           : `这是可选 section，但补充后能提升产物完整性。`);
@@ -392,17 +392,17 @@ function generateAnchoredQuestions(schemaGaps, stageName, headings, truncateFn) 
       const lineRef = gap.line ? `（第 ${gap.line} 行附近）` : '';
       if (gap.failedChecks && gap.failedChecks.length > 0) {
         const checkLabels = gap.failedChecks.map(c => c.replace(/_/g, ' ')).join('、');
-        question = `[内容锚定][${stageName}] "${gap.section}"${lineRef}内容不够充分：缺少 ${checkLabels}。`
+        question = `"${gap.section}"${lineRef}内容不够充分：缺少 ${checkLabels}。`
           + `${excerptRef}当前内容是否足以支撑后续阶段的决策？`;
       } else {
-        question = `[内容锚定][${stageName}] "${gap.section}"${lineRef}内容过于简短（${gap.reason}）。`
+        question = `"${gap.section}"${lineRef}内容过于简短（${gap.reason}）。`
           + `${excerptRef}是否遗漏了关键信息？`;
       }
     } else if (gap.status === 'untested_assumption') {
-      question = `[假设验证][${stageName}] "${gap.section}"中存在未验证的假设：${excerptRef}`
+      question = `"${gap.section}"中存在未验证的假设：${excerptRef}`
         + `该假设的依据是什么？如何验证？`;
     } else if (gap.status === 'weak_evidence') {
-      question = `[量化缺失][${stageName}] "${gap.section}"中存在量化声明但缺少具体数值：${excerptRef}`
+      question = `"${gap.section}"中存在量化声明但缺少具体数值：${excerptRef}`
         + `请提供具体的数据支撑。`;
     }
 

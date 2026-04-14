@@ -236,6 +236,23 @@ class PMAgent {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
+    
+    // Check if record is a ModuleLogEntry (ARCHITECTURE.md D-1)
+    // ModuleLogEntry has: module, action, level, summary fields
+    if (record.module && record.action && record.level) {
+      try {
+        const ModuleLogFormatter = require('../core/module-log-formatter');
+        // Use human-readable format for workflow-progress.log
+        const formatted = ModuleLogFormatter.format(record);
+        fs.appendFileSync(this.progressLogPath, formatted + '\n');
+        return;
+      } catch (err) {
+        // Fallback to JSON format if ModuleLogFormatter fails
+        console.error(`[PMAgent] ModuleLogFormatter failed: ${err.message}`);
+      }
+    }
+    
+    // Default: write as JSON (existing behavior)
     fs.appendFileSync(this.progressLogPath, JSON.stringify(record) + '\n');
   }
 

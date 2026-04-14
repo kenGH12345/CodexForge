@@ -1072,79 +1072,30 @@ class ContextLoader {
     }
   }
 
-  // ─── YAML Frontmatter Parsing ──────────────────────────────────────────────
+  // ─── YAML Frontmatter Parsing (delegated to shared module) ──────────────────
 
   /**
    * Parses YAML frontmatter from a skill file.
-   * Returns the parsed metadata and the body content after the frontmatter.
+   * Delegates to shared yaml-frontmatter.js to eliminate duplication.
    *
    * @param {string} content - Full skill file content
    * @returns {{ meta: object, body: string }}
    */
   _parseFrontmatter(content) {
-    if (!content || !content.startsWith('---')) {
-      return { meta: {}, body: content || '' };
-    }
-    const endIdx = content.indexOf('---', 3);
-    if (endIdx === -1) {
-      return { meta: {}, body: content };
-    }
-
-    const yamlBlock = content.slice(3, endIdx).trim();
-    const meta = {};
-    let currentKey = null;
-
-    for (const line of yamlBlock.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      // Handle nested keys (e.g. "  keywords: [...]")
-      if (line.startsWith('  ') && currentKey) {
-        const nestedMatch = trimmed.match(/^(\w+):\s*(.*)$/);
-        if (nestedMatch) {
-          if (typeof meta[currentKey] !== 'object' || Array.isArray(meta[currentKey])) {
-            meta[currentKey] = {};
-          }
-          meta[currentKey][nestedMatch[1]] = this._parseYamlValue(nestedMatch[2]);
-        }
-        continue;
-      }
-
-      // Handle top-level keys
-      const match = trimmed.match(/^(\w[\w_]*):\s*(.*)$/);
-      if (match) {
-        currentKey = match[1];
-        const val = match[2];
-        if (val === '' || val === undefined) {
-          meta[currentKey] = {};
-        } else {
-          meta[currentKey] = this._parseYamlValue(val);
-        }
-      }
-    }
-
-    return { meta, body: content.slice(endIdx + 3).trim() };
+    const { parseFrontmatter } = require('./yaml-frontmatter');
+    const result = parseFrontmatter(content);
+    return { meta: result.meta, body: result.body };
   }
 
   /**
    * Parses a simple YAML value (string, number, array).
+   * Delegates to shared yaml-frontmatter.js.
    * @param {string} val
    * @returns {*}
    */
   _parseYamlValue(val) {
-    if (!val || val.trim() === '') return '';
-    const trimmed = val.trim();
-    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-      const inner = trimmed.slice(1, -1).trim();
-      if (!inner) return [];
-      return inner.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
-    }
-    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-      return trimmed.slice(1, -1);
-    }
-    if (/^\d+$/.test(trimmed)) return Number(trimmed);
-    return trimmed;
+    const { parseYamlValue } = require('./yaml-frontmatter');
+    return parseYamlValue(val);
   }
 
   // ─── Skill Loading (with Dependency Resolution) ─────────────────────────────

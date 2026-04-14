@@ -18,7 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { WorkflowState } = require('./types');
+const { WorkflowState, AgentRole } = require('./types');
 const { SocraticChallenger } = require('./socratic-challenger');
 const { EvolutionLoop } = require('./evolution-loop');
 const { UnifiedTraceCollector, TraceEventType } = require('./unified-trace-collector');
@@ -28,8 +28,7 @@ const { runAcceptanceGate } = require('./acceptance-gate');
 const { buildCapabilityCatalog, formatCapabilityCatalogForPrompt } = require('./capability-catalog');
 const { computeHealthScore } = require('./health-score-model');
 const { resolveHealthPaths } = require('./health-observability');
-const { RollbackCoordinator } = require('./rollback-coordinator');
-const { HOOK_EVENTS } = require('./constants');
+// RollbackCoordinator and HOOK_EVENTS moved to stage-executor.js
 
 // ─── Run Mixin ───────────────────────────────────────────────────────────────
 
@@ -205,407 +204,33 @@ const OrchestratorRunMixin = {
         continue;
       }
 
-      // ── StageSmartSkip: Check if this stage should be skipped ──────────────
-      if (this.stageSmartSkip) {
-        const skipResult = this.stageSmartSkip.shouldSkip(stageName, {
-          stageCtx: this.stageCtx,
-          complexity: null, // Will be read from stageCtx internally
-        });
-        if (skipResult.skip) {
-          console.error(`\n${'─'.repeat(60)}`);
-          console.error(`[Orchestrator] ⏭️  SKIPPING stage: ${stageName}`);
-          console.error(`[Orchestrator]    Reason: ${skipResult.reason}`);
-          console.error(`${'─'.repeat(60)}`);
+      // Delegate to StageExecutor for single-stage lifecycle management
+      const { executeStage } = require('./stage-executor');
+      const stageResult = await executeStage({
+        stageName,
+        runner,
+        orchestrator: this,
+        challenger,
+        evolutionLoop,
+        traceCollector,
+        effectiveRequirement,
+        rawRequirement,
+        currentArtifact,
+        capabilityCatalog,
+        capabilityCatalogPrompt,
+        stageBudgetPlan,
+        runtimePolicy: runtimePolicyCheck.policy,
+      });
 
-          // Record skip in trace
-          traceCollector.recordStageStart(stageName, {
-            inputArtifactPath: currentArtifact,
-            context: { skipped: true, reason: skipResult.reason },
-          });
-          traceCollector.recordStageEnd(stageName, {
-            success: true,
-            outputArtifactPath: currentArtifact,
-            duration: 0,
-            skipped: true,
-            skipReason: skipResult.reason,
-          });
-
-          // Transition state machine past this stage
-          if (this.stateMachine) {
-            try {
-              await this.stateMachine.transition(currentArtifact, `Stage ${stageName} skipped: ${skipResult.reason}`);
-            } catch (transErr) {
-              console.warn(`[Orchestrator] ⚠️ StateMachine transition for skipped stage failed: ${transErr.message}`);
-            }
-          }
-
-          executionResults.push({
-            stage: stageName,
-            success: true,
-            duration: 0,
-            skipped: true,
-            skipReason: skipResult.reason,
-            skipSource: skipResult.skipSource || 'unknown',
-          });
-          continue;
-        }
+      // Update shared state from stage result
+      if (stageResult.currentArtifact) {
+        currentArtifact = stageResult.currentArtifact;
       }
+      executionResults.push(stageResult.executionRecord);
 
-      console.error(`\n${'─'.repeat(60)}`);
-      console.error(`[Orchestrator] ▶️  Executing stage: ${stageName}`);
-      console.error(`${'─'.repeat(60)}`);
-
-      const stageStartTime = Date.now();
-      if (this.p0RuntimeLoop) {
-        this.p0RuntimeLoop.markStageStart(stageName, {
-          previousArtifact: currentArtifact || null,
-        });
-      }
-
-      // ── P0 fix: Emit STAGE_STARTED hook event ────────────────────────
-      // Previously defined in constants.js HOOK_EVENTS but never emitted.
-      // Consumers: DecisionTrail (plugin), EventJournal, P0RuntimeLoop,
-      // IntrospectionManager, RunGuard (plugin).
-      if (this.hooks && typeof this.hooks.emit === 'function') {
-        await this.hooks.emit(HOOK_EVENTS.STAGE_STARTED, {
-          stage: stageName,
-          previousArtifact: currentArtifact || null,
-        }).catch(() => {});
-      }
-      let stageSuccess = false;
-      let stageResult = null;
-      let retryCount = 0;
-      const maxRetries = 1; // Max one retry per stage
-      let pendingRevisionContext = null;
-      let previousConfidence = null;
-
-      // Retry loop with SocraticChallenger
-      while (!stageSuccess && retryCount <= maxRetries) {
-        if (retryCount > 0) {
-          console.error(`\n[Orchestrator] 🔄 Retry attempt ${retryCount} for stage: ${stageName}`);
-        }
-
-        try {
-          // ── UnifiedTraceCollector: Record stage start with INPUT artifact ────────────────────────
-          // NOTE: keep this as the first operation in the attempt so start events are never skipped.
-          traceCollector.recordStageStart(stageName, {
-            inputArtifactPath: currentArtifact,
-            context: { retryCount, requirement: effectiveRequirement.slice(0, 200) },
-          });
-          console.error(`[Orchestrator][STAGE_START] ${stageName} (attempt=${retryCount + 1}) @ ${new Date().toISOString()}`);
-
-          // Build stage context
-          // P0-1 fix: Expose stageCtx and bus directly on context so StageRunners
-          // can access cross-stage context and file-ref bus without coupling to
-          // the full Orchestrator instance. This enables independent testing of
-          // StageRunners with minimal mocking.
-          // P2-3 fix: Assert stageCtx and bus are initialized before building
-          // context. These are created in _initWorkflow() (workflow/index.js L274/L370).
-          // If they're missing, downstream StageRunners will get null and may NPE.
-          if (!this.stageCtx) {
-            console.error(`[Orchestrator] ⚠️ stageCtx not initialized — cross-stage context will be unavailable`);
-          }
-          if (!this.bus) {
-            console.error(`[Orchestrator] ⚠️ bus (FileRefBus) not initialized — file-ref routing will be unavailable`);
-          }
-
-          const context = {
-            rawRequirement: effectiveRequirement,
-            originalRequirement: rawRequirement,
-            orchestrator: this,
-            services: this.services,
-            previousArtifact: currentArtifact,
-            previousChallenge: pendingRevisionContext,
-            capabilityCatalog,
-            capabilityCatalogPrompt,
-            stageBudgetPlan,
-            runtimePolicy: runtimePolicyCheck.policy,
-            stageCtx: this.stageCtx || null,
-            bus: this.bus || null,
-          };
-
-          // Execute stage
-          console.error(`[Orchestrator] 🏃 Running stage executor...`);
-
-          // ── P1 fix: Emit AGENT_START hook event ──────────────────────
-          // Previously subscribed by IntrospectionManager but never emitted.
-          // This enables agent execution tracking and introspection.
-          if (this.hooks && typeof this.hooks.emit === 'function') {
-            await this.hooks.emit(HOOK_EVENTS.AGENT_START, {
-              stage: stageName,
-              role: stageName.toLowerCase(),
-              attempt: retryCount + 1,
-            }).catch(() => {});
-          }
-
-          const result = await runner.execute(context);
-
-          // ── P1 fix: Emit AGENT_COMPLETE hook event ───────────────────
-          if (this.hooks && typeof this.hooks.emit === 'function') {
-            await this.hooks.emit(HOOK_EVENTS.AGENT_COMPLETE, {
-              stage: stageName,
-              role: stageName.toLowerCase(),
-              success: true,
-              attempt: retryCount + 1,
-            }).catch(() => {});
-          }
-
-          const stageDuration = Date.now() - stageStartTime;
-          console.error(`[Orchestrator] ⏱️  Stage execution time: ${stageDuration}ms`);
-
-          // ── CRITICAL: Handle stage result (path or object) ─────────────────
-          // Stage runners return artifact PATH string, not content
-          let artifactPath = null;
-          if (result && typeof result === 'string') {
-            // Stage returned artifact path - use directly
-            artifactPath = result;
-            currentArtifact = artifactPath;
-            console.error(`[Orchestrator] 📄 Artifact path: ${artifactPath}`);
-          } else if (result && result.artifactPath) {
-            // Stage returned result object with artifactPath
-            currentArtifact = result.artifactPath;
-            artifactPath = result.artifactPath;
-            console.error(`[Orchestrator] 📄 Artifact path (from object): ${artifactPath}`);
-          } else {
-            // Fallback: infer artifact path from stage name convention
-            const inferredFileName = this._getArtifactFileName(stageName);
-            const inferredPath = require('path').join(this._outputDir || 'output', inferredFileName);
-            if (require('fs').existsSync(inferredPath)) {
-              artifactPath = inferredPath;
-              currentArtifact = inferredPath;
-              console.error(`[Orchestrator] 📄 Artifact path (inferred): ${inferredPath}`);
-            } else if (this.bus) {
-              // P1-3 fix: Sync with FileRefBus — check if the stage published
-              // an artifact to the bus that we missed from the return value.
-              const busLog = this.bus.getLog();
-              const lastPublish = [...busLog].reverse().find(l => l.timestamp);
-              if (lastPublish && lastPublish.filePath && require('fs').existsSync(lastPublish.filePath)) {
-                artifactPath = lastPublish.filePath;
-                currentArtifact = lastPublish.filePath;
-                console.error(`[Orchestrator] 📄 Artifact path (from bus log): ${artifactPath}`);
-              } else {
-                console.warn(`[Orchestrator] ⚠️  Stage ${stageName} returned no artifact path (result type: ${typeof result})`);
-              }
-            } else {
-              console.warn(`[Orchestrator] ⚠️  Stage ${stageName} returned no artifact path (result type: ${typeof result})`);
-            }
-          }
-          stageResult = result;
-
-          // ── SocraticChallenger: Challenge the CONCLUSIONS (self-doubt) ─────────────────────────
-          console.error(`[Orchestrator] 🤔 Running SocraticChallenger: DEVIL'S ADVOCATE mode...`);
-          const challengeResult = await challenger.challenge(stageName, currentArtifact, {
-            rawRequirement: effectiveRequirement,
-            retryCount,
-            previousChallenge: pendingRevisionContext,
-            llmSource: this._llmSource || 'external',
-            isMockLlm: (this._llmSource || 'external') === 'mock',
-          });
-
-          // Log the challenge questions (self-doubt in action)
-          if (challengeResult.challenged && challengeResult.questions && challengeResult.questions.length > 0) {
-            console.error(`[Orchestrator] ── CHALLENGE QUESTIONS (Self-Doubt) ──`);
-            challengeResult.questions.forEach((q, i) => {
-              console.error(`[Orchestrator]    Q${i + 1}: ${q}`);
-            });
-          }
-
-          if (challengeResult.challenged && challengeResult.blindSpots && challengeResult.blindSpots.length > 0) {
-            console.error(`[Orchestrator] ── BLIND SPOTS DETECTED ──`);
-            challengeResult.blindSpots.forEach((bs, i) => {
-              console.error(`[Orchestrator]    ${i + 1}. ${bs}`);
-            });
-          }
-
-          if (!challengeResult.challenged) {
-            console.error(`[Orchestrator] 💤 Challenge gate skipped: ${(challengeResult.triggerReasons || []).join('; ') || 'no critical gap'}`);
-          }
-
-          const confidenceLabel = challengeResult?.confidenceStatus === 'na'
-            ? `N/A (${challengeResult?.confidenceReason || 'insufficient evidence'})`
-            : `${(challengeResult.confidence * 100).toFixed(0)}%`;
-          console.error(`[Orchestrator] 📊 Confidence in conclusions: ${confidenceLabel}`);
-
-          const preChallengeScore = Number.isFinite(previousConfidence) ? previousConfidence : null;
-          const postRevisionScore = Number.isFinite(challengeResult.confidence) ? challengeResult.confidence : null;
-          const deltaScore = (Number.isFinite(preChallengeScore) && Number.isFinite(postRevisionScore))
-            ? Number((postRevisionScore - preChallengeScore).toFixed(4))
-            : null;
-          const effectiveChallenge = challengeResult.challenged && Number.isFinite(deltaScore) ? deltaScore >= 0.05 : false;
-
-          const challengeResultWithDelta = {
-            ...challengeResult,
-            preChallengeScore,
-            postRevisionScore,
-            deltaScore,
-            effectiveChallenge,
-          };
-
-          // ── EvolutionLoop: Process Socratic challenge for self-evolution ───────────
-          evolutionLoop.processSocraticChallenge(stageName, challengeResultWithDelta);
-
-          // ── UnifiedTraceCollector: Record Socratic challenge result ────────────────────────
-          traceCollector.recordSocraticChallenge(stageName, challengeResultWithDelta);
-
-          // P1: revision loop (single retry) - only when challenge is triggered AND not advisory-only
-          // Plan A+B: advisoryOnly challenges provide questions as suggestions, not forced retries
-          if (challengeResult.challenged && !challengeResult.advisoryOnly && retryCount < maxRetries) {
-            pendingRevisionContext = {
-              stageName,
-              triggerReasons: challengeResult.triggerReasons || [],
-              revisionSummary: challengeResult.revisionSummary || null,
-              questions: challengeResult.questions || [],
-              blindSpots: challengeResult.blindSpots || [],
-              p2Protocol: challengeResult.p2Protocol || null,
-            };
-            console.warn(`[Orchestrator] 🔁 Revision required, revisiting stage once with challenge context...`);
-            retryCount++;
-            previousConfidence = challengeResult.confidence;
-            continue;
-          }
-
-          // Stage completed (even if challenged - that's normal)
-          console.error(`[Orchestrator] ✅ Stage ${stageName} completed (challenged=${challengeResult.challenged ? 'yes' : 'no'}, questions=${challengeResult.questions?.length || 0})`);
-          stageSuccess = true;
-          previousConfidence = challengeResult.confidence;
-          pendingRevisionContext = null;
-
-          // Record success
-          console.error(`[Orchestrator] ✅ Stage ${stageName} completed in ${Date.now() - stageStartTime}ms`);
-          
-          // ── UnifiedTraceCollector: Record stage end with OUTPUT artifact ────────────────────────
-          traceCollector.recordStageEnd(stageName, {
-            success: true,
-            outputArtifactPath: currentArtifact,
-            duration: Date.now() - stageStartTime,
-          });
-          console.error(`[Orchestrator][STAGE_END] ${stageName} (success) @ ${new Date().toISOString()}`);
-
-          // ── P0 fix: Emit STAGE_ENDED hook event (success) ──────────────
-          // Previously defined in constants.js HOOK_EVENTS but never emitted.
-          // Consumers: DecisionTrail (plugin), EventJournal, P0RuntimeLoop.
-          if (this.hooks && typeof this.hooks.emit === 'function') {
-            await this.hooks.emit(HOOK_EVENTS.STAGE_ENDED, {
-              stage: stageName,
-              success: true,
-              artifactPath: currentArtifact || null,
-              duration: Date.now() - stageStartTime,
-              confidence: challengeResult?.confidence || null,
-            }).catch(() => {});
-          }
-
-          executionResults.push({
-            stage: stageName,
-            success: true,
-            duration: Date.now() - stageStartTime,
-            artifact: currentArtifact,
-            confidence: challengeResult.confidence,
-            challengeTriggered: !!challengeResult.challenged,
-            challengeQuestions: challengeResult.questions,
-            blindSpots: challengeResult.blindSpots,
-            triggerReasons: challengeResult.triggerReasons || [],
-            p2Protocol: challengeResult.p2Protocol || null,
-            preChallengeScore: Number.isFinite(challengeResultWithDelta.preChallengeScore) ? challengeResultWithDelta.preChallengeScore : null,
-            postRevisionScore: Number.isFinite(challengeResultWithDelta.postRevisionScore) ? challengeResultWithDelta.postRevisionScore : null,
-            deltaScore: Number.isFinite(challengeResultWithDelta.deltaScore) ? challengeResultWithDelta.deltaScore : null,
-            effectiveChallenge: !!challengeResultWithDelta.effectiveChallenge,
-          });
-
-          if (this.p0RuntimeLoop) {
-            this.p0RuntimeLoop.markStageEnd(stageName, {
-              artifactPath: currentArtifact || null,
-              confidence: challengeResult.confidence,
-            });
-          }
-
-          // Emit stage complete event
-          this._emit?.('stage:complete', { stageName, result, duration: Date.now() - stageStartTime });
-
-          // Update state machine - CRITICAL: pass artifactPath for precondition validation
-          // But if stage already performed transition via rollback chain, do not transition again.
-          const stageAlreadyTransitioned = !!(
-            (result && typeof result === 'object' && result.__alreadyTransitioned) ||
-            (result && typeof result === 'object' && result.__stageResult === true && result.type === 'rolled_back')
-          );
-          if (this.stateMachine && !stageAlreadyTransitioned) {
-            await this.stateMachine.transition(artifactPath, `Stage ${stageName} completed`);
-            console.error(`[Orchestrator] 📊 StateMachine transitioned to: ${stageName} (artifact: ${artifactPath})`);
-          } else if (stageAlreadyTransitioned) {
-            console.error(`[Orchestrator] ℹ️  Stage ${stageName} already transitioned StateMachine via rollback chain. Skipping duplicate transition.`);
-          }
-
-        } catch (stageError) {
-          const stageDuration = Date.now() - stageStartTime;
-          console.error(`[Orchestrator] ❌ Stage ${stageName} failed: ${stageError.message}`);
-          console.error(stageError.stack);
-
-          // ── UnifiedTraceCollector: Record stage error ────────────────────────
-          traceCollector.recordError(stageName, stageError);
-          traceCollector.recordStageEnd(stageName, {
-            success: false,
-            outputArtifactPath: currentArtifact,
-            duration: stageDuration,
-            error: stageError.message,
-            mainlinePhase,
-            mainlineStepIndex,
-          });
-          console.error(`[Orchestrator][STAGE_END] ${stageName} (failed) @ ${new Date().toISOString()} reason=${stageError.message}`);
-
-          // ── P0 fix: Emit STAGE_ENDED hook event (failure) ──────────────
-          if (this.hooks && typeof this.hooks.emit === 'function') {
-            await this.hooks.emit(HOOK_EVENTS.STAGE_ENDED, {
-              stage: stageName,
-              success: false,
-              artifactPath: currentArtifact || null,
-              duration: stageDuration,
-              error: stageError.message,
-            }).catch(() => {});
-          }
-
-          if (retryCount < maxRetries) {
-            console.error(`[Orchestrator] 🔄 Retrying stage ${stageName} due to error...`);
-            retryCount++;
-            continue;
-          }
-
-          // P1-2 fix: Feed stage failure signal to EvolutionLoop so it can
-          // learn from negative outcomes (not just Socratic challenges).
-          // Without this, the quality report misses the most important signal
-          // source — actual execution failures.
-          evolutionLoop.processSignal({
-            type: 'STAGE_FAILURE',
-            severity: 'critical',
-            stage: stageName,
-            evidence: `Stage ${stageName} failed after ${retryCount + 1} attempt(s): ${stageError.message}`,
-            context: { stack: (stageError.stack || '').slice(0, 500), retryCount },
-            confidence: 0.95,
-          });
-
-          // Record failure
-          executionResults.push({
-            stage: stageName,
-            success: false,
-            duration: stageDuration,
-            error: stageError.message,
-          });
-
-          // Emit stage error event
-          this._emit?.('stage:error', { stageName, error: stageError });
-
-          // P0: Use RollbackCoordinator for unified rollback cleanup.
-          // Previously, stage failure just threw the error without cleaning up
-          // Bus messages, StageContext entries, or cache – causing the "fake rollback"
-          // bug where stateMachine rolled back but stale data remained.
-          try {
-            const rollbackCoord = new RollbackCoordinator(this);
-            await rollbackCoord.rollback(stageName, `Stage ${stageName} failed: ${stageError.message}`);
-            console.error(`[Orchestrator] 🧹 RollbackCoordinator: coordinated cleanup for ${stageName} completed.`);
-          } catch (rbErr) {
-            console.warn(`[Orchestrator] ⚠️  RollbackCoordinator cleanup failed (non-fatal): ${rbErr.message}`);
-          }
-
-          throw stageError;
-        }
+      // If stage failed, propagate the error (preserves original behavior)
+      if (!stageResult.success && !stageResult.skipped) {
+        throw stageResult.error || new Error(`Stage ${stageName} failed`);
       }
 
       // Clear challenge history for next stage
@@ -1014,9 +639,14 @@ const OrchestratorRunMixin = {
    * @param {Error} error
    * @returns {boolean}
    */
-  _shouldRetryStage(stageName, error) {
-    // Default: don't retry
-    // Subclasses can override for custom retry logic
+  _shouldRetryStage(stageName, error, challengeResult) {
+    // Confidence-based retry gate: if SocraticChallenger produced a very low
+    // confidence score (< 0.30), allow one retry with challenge context injected.
+    // This is a pure extension — existing callers that don't pass challengeResult
+    // will still get `false` (no retry), preserving backward compatibility.
+    if (challengeResult && typeof challengeResult.confidence === 'number') {
+      return challengeResult.confidence < 0.30;
+    }
     return false;
   },
 

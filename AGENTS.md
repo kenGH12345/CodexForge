@@ -49,6 +49,7 @@ Each sub-package has its own `AGENTS.md` with detailed context.
   - **Modified Files table**: `| # | File | Action | Description |` listing ALL changed files
   - Key decisions made during the workflow
   - Acceptance criteria verification status
+  - **Retrospective table** (3 layers): Prevention / Capability / Efficiency — each row MUST have a specific answer, not blank
   - ⚠️ The Modified Files table is CRITICAL — users must see exactly which files were changed
 ## `/wf init` Command Protocol
 When the user sends `/wf init` or `/wf init --path <dir>`, you **MUST** execute the initialisation script via **terminal**:
@@ -323,16 +324,22 @@ node C:/workspace/WorkFlowAgent/workflow/tools/ide-workflow-bridge.js session-su
 For EVERY rewritten question, output in this exact three-part structure:
 
 ```
-苏格拉底追问（针对本次 <STAGE>）：
-1. <specific question referencing actual artifact content>
-2. <specific question about the fundamental gap or assumption>
+苏格拉底追问（针对本次 <STAGE>，从 BLIND SPOT 派生）：
+1. <specific question — directly derived from a detected BLIND SPOT, referencing actual artifact section/line/decision>
+2. <specific question — targeting the root cause of the gap, not the surface symptom>
 
 **自答**：
-- 问题1：<direct answer — what the real issue is, with evidence from artifacts>
-- 问题2：<direct answer — if it's a genuine blind spot, say so explicitly>
+- 问题1：<direct answer — MUST cite specific artifact content (section name, line number, decision text, code snippet)>
+- 问题2：<direct answer — if it's a genuine blind spot, state the root cause explicitly, not just "needs improvement">
 
-**⚠️ [BLIND SPOT]**（如有）：<description of the fundamental flaw — not surface symptoms>
+**⚠️ [BLIND SPOT]**（如有）：<root cause of the flaw — WHY it's a blind spot, WHAT the real fix direction is. NOT surface symptoms like "缺少测试">
 ```
+
+**Self-answer rules** (MANDATORY):
+- ❌ BAD: `"这里可能需要补充更多证据"` (vague, no artifact reference)
+- ✅ GOOD: `"artifact 第3节'方案选型'中选择了 X，但未提供与 Y 的对比数据——这是 EVIDENCE 维度的盲点"` (specific)
+- ❌ BAD BLIND SPOT: `"缺少测试覆盖"` (symptom)
+- ✅ GOOD BLIND SPOT: `"测试策略未覆盖并发场景，根因是 artifact 中假设了单线程执行，但实际部署是多实例"` (root cause + fix direction)
 
 **First-Principles check** (MANDATORY for every stage):
 After self-answering, always ask: **"这个方案/结论的本质是什么？和业界最优解的真正差距在哪里？"**

@@ -198,4 +198,14 @@ module.exports = {
       maxHistoryEntries: 200,
     },
   },
+
+  // ─── Module-Level Logging (ARCHITECTURE.md D-1) ────────────────────────────
+  // Controls module-level monitoring logs written to workflow-progress.log
+  // Enables fine-grained visibility into Experience, CodeGraph, Skill, Evolution modules
+  moduleLog: {
+    enabled: true,               // Master switch for module-level logging
+    defaultLevel: 'INFO',        // Default log level: 'INFO' | 'WARN' | 'ERROR' | 'DETAIL'
+    moduleOverrides: {},         // Per-module level overrides (e.g., { Experience: 'WARN' })
+    maxEntriesPerSession: 200,   // Safety limit to prevent log explosion
+  },
 };

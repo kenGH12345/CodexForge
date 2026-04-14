@@ -49,6 +49,10 @@ const EvolutionSignalType = {
   QUALITY_GATE_FAIL: 'QUALITY_GATE_FAIL', // Quality gate validation failed
   EXECUTION_LOG_FAIL: 'EXECUTION_LOG_FAIL', // Execution log validation failed
   LOW_CONFIDENCE: 'LOW_CONFIDENCE',       // SocraticChallenger confidence < threshold
+  // Retrospective signals (confidence=1.0, human-confirmed)
+  RETROSPECTIVE_PREVENTION: 'RETROSPECTIVE_PREVENTION', // Prevention layer: what to avoid next time
+  RETROSPECTIVE_CAPABILITY: 'RETROSPECTIVE_CAPABILITY', // Capability layer: what to replicate
+  RETROSPECTIVE_EFFICIENCY: 'RETROSPECTIVE_EFFICIENCY', // Efficiency layer: process improvement
 };
 
 const SignalSeverity = {
@@ -511,6 +515,20 @@ class EvolutionLoop {
 
         this._log(`[EvolutionLoop]    → Evolved skill: ${skillName} (dimension: ${preventionRule.dimension})`);
         return `recorded+evolved:${skillName}`;
+      }
+    }
+
+    // 3. Route Efficiency signals to PromptAutoOptimizer (non-blocking)
+    const category = this._getCategoryForSignal(type);
+    if (category === 'process_improvement') {
+      try {
+        const { PromptAutoOptimizer } = require('./prompt-auto-optimizer');
+        const outputDir = this.outputDir || 'output';
+        const optimizer = new PromptAutoOptimizer({ outputDir });
+        optimizer.recordFeedback({ stage, evidence, signalType: type });
+        this._log(`[EvolutionLoop]    → Efficiency insight routed to PromptAutoOptimizer`);
+      } catch (e) {
+        this._log(`[EvolutionLoop]    ⚠️ PromptAutoOptimizer.recordFeedback failed (non-fatal): ${e.message}`);
       }
     }
 
@@ -1168,6 +1186,9 @@ class EvolutionLoop {
       [EvolutionSignalType.QUALITY_GATE_FAIL]: 'quality_issue',
       [EvolutionSignalType.EXECUTION_LOG_FAIL]: 'execution_quality',
       [EvolutionSignalType.LOW_CONFIDENCE]: 'uncertainty',
+      [EvolutionSignalType.RETROSPECTIVE_PREVENTION]: 'pitfall',
+      [EvolutionSignalType.RETROSPECTIVE_CAPABILITY]: 'stable_pattern',
+      [EvolutionSignalType.RETROSPECTIVE_EFFICIENCY]: 'process_improvement',
     };
     return categories[type] || 'general';
   }
@@ -1238,6 +1259,65 @@ class EvolutionLoop {
       signalCounts: Object.fromEntries(this._signalCounts),
       qualityScore: this.calculateQualityScore(),
     };
+  }
+
+  /**
+   * Process retrospective data from FINISHED stage into evolution signals.
+   * Retrospective signals have confidence=1.0 (human-confirmed, highest quality).
+   *
+   * @param {string} stage - The stage being retrospected (usually 'FINISHED')
+   * @param {object} retrospectiveData - Three-layer retrospective content
+   * @param {string} [retrospectiveData.prevention] - Prevention layer: what to avoid
+   * @param {string} [retrospectiveData.capability] - Capability layer: what to replicate
+   * @param {string} [retrospectiveData.efficiency] - Efficiency layer: process improvement
+   * @returns {Array} Array of signal processing results
+   */
+  processRetrospective(stage, retrospectiveData) {
+    const { prevention, capability, efficiency } = retrospectiveData || {};
+    const results = [];
+    const SKIP_PATTERNS = ['n/a', '无', '无问题', '没有', 'none', '暂无'];
+
+    const isValid = (text) => {
+      if (!text || text.trim().length < 20) return false;
+      const lower = text.trim().toLowerCase();
+      return !SKIP_PATTERNS.some(p => lower === p || lower.startsWith(p));
+    };
+
+    if (isValid(prevention)) {
+      results.push(this.processSignal({
+        type: EvolutionSignalType.RETROSPECTIVE_PREVENTION,
+        severity: SignalSeverity.HIGH,
+        stage,
+        evidence: prevention,
+        confidence: 1.0,
+        source: 'retrospective',
+      }));
+    }
+
+    if (isValid(capability)) {
+      results.push(this.processSignal({
+        type: EvolutionSignalType.RETROSPECTIVE_CAPABILITY,
+        severity: SignalSeverity.MEDIUM,
+        stage,
+        evidence: capability,
+        confidence: 1.0,
+        source: 'retrospective',
+      }));
+    }
+
+    if (isValid(efficiency)) {
+      results.push(this.processSignal({
+        type: EvolutionSignalType.RETROSPECTIVE_EFFICIENCY,
+        severity: SignalSeverity.MEDIUM,
+        stage,
+        evidence: efficiency,
+        confidence: 1.0,
+        source: 'retrospective',
+      }));
+    }
+
+    this._log(`[EvolutionLoop] processRetrospective: ${results.length} signal(s) processed for stage=${stage}`);
+    return results;
   }
 }
 

@@ -96,7 +96,11 @@ class SocraticChallenger {
     const claims = this._extractClaims(stageName, content, context);
     this._log(`[SocraticChallenger] 📋 Agent claims: ${claims.join(', ') || '(none explicit)'}`);
 
-    let generatedQuestions = generateSocraticQuestions(this, stageName, claims, content, context);
+    const artifactStructure = this._lastArtifactStructure || extractArtifactStructure(content, stageName, this._truncate.bind(this));
+    const detectedBlindSpots = detectBlindSpots(stageName, content, claims, context, artifactStructure, this);
+    this._log(`[SocraticChallenger] 🕳️  Detected ${detectedBlindSpots.length} potential blind spots`);
+
+    let generatedQuestions = generateSocraticQuestions(this, stageName, claims, content, context, detectedBlindSpots);
 
     if (this.llmCall && generatedQuestions.length > 0) {
       this._log(`[SocraticChallenger] 🧠 Rewriting questions dynamically using LLM...`);
@@ -104,10 +108,6 @@ class SocraticChallenger {
     }
 
     this._log(`[SocraticChallenger] ❓ Generated ${generatedQuestions.length} challenge questions`);
-
-    const artifactStructure = this._lastArtifactStructure || extractArtifactStructure(content, stageName, this._truncate.bind(this));
-    const detectedBlindSpots = detectBlindSpots(stageName, content, claims, context, artifactStructure, this);
-    this._log(`[SocraticChallenger] 🕳️  Detected ${detectedBlindSpots.length} potential blind spots`);
 
     const taskFingerprint = inferTaskFingerprint(stageName, content, context);
     const confidenceResult = calculateConfidence(this, content, claims, detectedBlindSpots, { ...context, stageName, taskFingerprint });
@@ -362,7 +362,7 @@ Output ONLY the rewritten questions in Chinese, one per line, numbered (e.g., "1
   }
 
   // Backward-compatible instance method wrappers
-  _generateSocraticQuestions(stageName, claims, content, context = {}) { return generateSocraticQuestions(this, stageName, claims, content, context); }
+  _generateSocraticQuestions(stageName, claims, content, context = {}) { return generateSocraticQuestions(this, stageName, claims, content, context, []); }
   _detectBlindSpots(stageName, content, claims, context) { return detectBlindSpots(stageName, content, claims, context, this._lastArtifactStructure, this); }
   _calculateConfidence(content, claims, blindSpots, context = {}) { return calculateConfidence(this, content, claims, blindSpots, context); }
   _decideChallengeTrigger(params) { return decideChallengeTrigger(params); }

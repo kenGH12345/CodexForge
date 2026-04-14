@@ -344,41 +344,13 @@ class SkillMarketplace {
 
   /**
    * Parses YAML frontmatter from skill content.
+   * Delegates to shared yaml-frontmatter.js to eliminate duplication.
    * @param {string} content
    * @returns {object}
    */
   _parseFrontmatter(content) {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!match) return {};
-
-    const meta = {};
-    const lines = match[1].split('\n');
-
-    for (const line of lines) {
-      const colonIdx = line.indexOf(':');
-      if (colonIdx === -1) continue;
-      const key = line.slice(0, colonIdx).trim();
-      let value = line.slice(colonIdx + 1).trim();
-
-      // Parse arrays
-      if (value.startsWith('[') && value.endsWith(']')) {
-        value = value.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
-      }
-      // Parse booleans
-      else if (value === 'true') value = true;
-      else if (value === 'false') value = false;
-      // Parse numbers
-      else if (/^\d+$/.test(value)) value = Number(value);
-      // Strip quotes
-      else if ((value.startsWith('"') && value.endsWith('"')) ||
-               (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-
-      meta[key] = value;
-    }
-
-    return meta;
+    const { parseFrontmatter } = require('./yaml-frontmatter');
+    return parseFrontmatter(content, { nested: false }).meta;
   }
 
   /**

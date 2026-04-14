@@ -254,7 +254,7 @@ module.exports = {
 
   globalSkills: ['standards', 'troubleshooting', 'bp-coding-best-practices'],
 
-  projectSkills: ['javascript-dev', 'bp-architecture-design'],
+projectSkills: ['javascript-dev', 'bp-architecture-design', 'bp-token-compression'],
 
   // ─── Built-in Skills ─────────────────────────────────────────────────────────
   builtinSkills: [    {

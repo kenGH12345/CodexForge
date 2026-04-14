@@ -354,45 +354,14 @@ class ExpertKnowledgeChannel {
 
   /**
    * Parses YAML frontmatter from content.
+   * Delegates to shared yaml-frontmatter.js to eliminate duplication.
    * @param {string} content
    * @returns {{ meta: object, body: string }}
    */
   _parseFrontmatter(content) {
-    if (!content || !content.startsWith('---')) {
-      return { meta: {}, body: content || '' };
-    }
-    const endIdx = content.indexOf('---', 3);
-    if (endIdx === -1) {
-      return { meta: {}, body: content };
-    }
-
-    const yamlBlock = content.slice(3, endIdx).trim();
-    const meta = {};
-
-    for (const line of yamlBlock.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-
-      const match = trimmed.match(/^(\w[\w_-]*):\s*(.*)$/);
-      if (match) {
-        const key = match[1];
-        const val = match[2].trim();
-
-        if (val.startsWith('[') && val.endsWith(']')) {
-          // Array value
-          const inner = val.slice(1, -1).trim();
-          meta[key] = inner ? inner.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean) : [];
-        } else if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-          meta[key] = val.slice(1, -1);
-        } else if (/^\d+(\.\d+)?$/.test(val)) {
-          meta[key] = Number(val);
-        } else {
-          meta[key] = val;
-        }
-      }
-    }
-
-    return { meta, body: content.slice(endIdx + 3).trim() };
+    const { parseFrontmatter } = require('./yaml-frontmatter');
+    const result = parseFrontmatter(content, { nested: false });
+    return { meta: result.meta, body: result.body };
   }
 
   /**

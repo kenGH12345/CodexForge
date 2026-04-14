@@ -22,6 +22,13 @@ const {
 } = require('./socratic-constants');
 const { extractEntities, generateEntityGroundedQuestions, extractArtifactStructure } = require('./socratic-entity-extractor');
 const { collectRuleDrivenQuestions, buildRuleConfig } = require('./socratic-blind-spot-detector');
+const { SemanticSimilarityEngine } = require('./socratic-relevance-scorer');
+const { DiversityMixer } = require('./socratic-diversity-mixer');
+const { ExplorationQuestionGenerator } = require('./socratic-exploration-generator');
+
+const _sharedSimilarityEngine = new SemanticSimilarityEngine();
+const _sharedDiversityMixer = new DiversityMixer();
+const _sharedExplorationGenerator = new ExplorationQuestionGenerator();
 
 /**
  * Core question generation pipeline.
@@ -32,13 +39,26 @@ const { collectRuleDrivenQuestions, buildRuleConfig } = require('./socratic-blin
  * @param {object} context - Additional context
  * @returns {string[]} Selected and ranked questions
  */
-function generateSocraticQuestions(instance, stageName, claims, content, context = {}) {
+function generateSocraticQuestions(instance, stageName, claims, content, context = {}, blindSpots = []) {
   const stageConfig = STAGE_CHALLENGES[stageName];
   const requirement = _extractRequirementText(instance, context);
   const snippets = _extractStageSnippets(instance, content, stageName);
   const taskFingerprint = inferTaskFingerprint(stageName, content, context);
 
   const candidates = [];
+
+  // Blind-spot-derived questions — each BLIND SPOT spawns a targeted question
+  for (const bs of (blindSpots || []).slice(0, 3)) {
+    const bsText = String(bs || '').replace(/^⚠️\s*\[BLIND SPOT\][^\]]*\]\s*/i, '').replace(/^⚠️\s*\[BLIND SPOT\]\s*/i, '').trim();
+    if (!bsText) continue;
+    const q = `针对盲点"${instance._truncate(bsText, 60)}"，你的 artifact 中有哪些具体证据可以排除这个风险？`;
+    candidates.push({
+      question: q,
+      reasonTag: 'blindspot_derived',
+      source: 'blindspot',
+      priority: 0.97,
+    });
+  }
 
   // P0: Schema-gap questions (highest priority — content anchoring + schema mapping)
   if (!String(content || '').includes('[LIGHTWEIGHT]')) {
@@ -113,8 +133,8 @@ function generateSocraticQuestions(instance, stageName, claims, content, context
 
     for (const probe of relevantProbes.slice(0, 2)) {
       const q = requirement
-        ? `[${stageName}] 针对需求"${instance._truncate(requirement, 50)}"，${probe}`
-        : `[${stageName}] ${probe}`;
+        ? `针对需求"${instance._truncate(requirement, 50)}"，${probe}`
+        : probe;
       candidates.push({
         question: q,
         reasonTag: 'stage_probe',
@@ -159,6 +179,19 @@ function generateSocraticQuestions(instance, stageName, claims, content, context
     });
   }
 
+  // Generate exploratory questions — blind-spot-aware when blindSpots provided
+  const exploratoryQuestions = _sharedExplorationGenerator.generate(content, stageName, requirement, blindSpots);
+  for (const eq of exploratoryQuestions) {
+    candidates.push({
+      question: eq.question,
+      reasonTag: 'exploratory',
+      source: 'exploration',
+      priority: eq.score || 0.65,
+      isExploratory: true,
+      strategy: eq.strategy,
+    });
+  }
+
   const selected = selectAndRerankQuestions(instance, candidates, taskFingerprint, content, context);
   rememberQuestions(instance, selected);
 
@@ -193,9 +226,9 @@ function generateDimensionQuestions(instance, stageName, content, context = {}, 
 
       let question;
       if (snippets.length > 0 && snippets[0].length > 20) {
-        question = `[${dim.name}][${stageName}] 针对 artifact 中的"${instance._truncate(snippets[0], 40)}"——${template}`;
+        question = `针对 artifact 中的"${instance._truncate(snippets[0], 40)}"，${template}`;
       } else {
-        question = `[${dim.name}][${stageName}] ${template}`;
+        question = template;
       }
       questions.push(question);
     }
@@ -227,7 +260,7 @@ function challengeClaimWithLayers(instance, claim, content) {
       .replace('{assumption}', '这个假设')
       .replace('{unexpected_behavior}', '执行了非预期操作');
 
-    questions.push(`[${layerName}] ${question}`);
+    questions.push(question);
   }
 
   return questions.slice(0, 3);
@@ -272,7 +305,7 @@ function generateCrossStageQuestions(instance, stageName, content, context) {
     const claimReferenced = tokens.some(t => contentLower.includes(t));
     if (!claimReferenced) {
       questions.push(
-        `[cross_stage] 前一阶段(${prevStageName})声明"${instance._truncate(prevClaim, 50)}"，` +
+        `前一阶段(${prevStageName})声明"${instance._truncate(prevClaim, 50)}"，` +
         `但当前阶段(${stageName})的 artifact 中未体现。是否需要在此阶段处理？`
       );
     }
@@ -353,7 +386,7 @@ function generateTaskSpecificProbes(taskFingerprint, stageName, content, require
     const alreadyAddressed = keyWords.some(kw => contentLower.includes(kw.toLowerCase()));
     if (!alreadyAddressed) {
       const reqPrefix = requirement ? `针对需求"${_truncate(requirement, 50)}"，` : '';
-      probes.push(`[task:${taskFingerprint}][${stageName}] ${reqPrefix}${probe}`);
+      probes.push(`${reqPrefix}${probe}`);
     }
   }
 
@@ -395,6 +428,18 @@ function selectAndRerankQuestions(instance, candidates, taskFingerprint, content
 
   // Step 4: P0/P1/P2 layered selection with semantic dedup
   const MAX_PER_LAYER = 2;
+  // Use DiversityMixer for balanced selection (85-90% relevant + 10-15% exploratory)
+  const exploratoryScored = scored.filter(i => i.isExploratory === true);
+  const relevantScored = scored.filter(i => i.isExploratory !== true);
+
+  const mixerCandidates = [
+    ...relevantScored.map(i => ({ ...i, isExploratory: false })),
+    ...exploratoryScored.map(i => ({ ...i, isExploratory: true })),
+  ];
+
+  const mixerSelected = _sharedDiversityMixer.select(mixerCandidates, maxQuestions, taskFingerprint);
+
+  // Apply session-level dedup on mixer output
   const selected = [];
 
   const isSimilar = (q) => {
@@ -406,7 +451,13 @@ function selectAndRerankQuestions(instance, candidates, taskFingerprint, content
     return tooSimilarToSelected || tooSimilarToHistory || alreadyAskedInSession;
   };
 
-  // Layer P0: missing_required
+  // Apply dedup to mixer-selected questions first
+  for (const q of mixerSelected) {
+    if (selected.length >= maxQuestions) break;
+    if (!isSimilar(q)) selected.push(q);
+  }
+
+  // Layer P0: missing_required (fallback if mixer didn't fill quota)
   const p0 = scored.filter(i => i.severity === 'missing_required');
   for (const item of p0) {
     if (selected.length >= maxQuestions) break;
@@ -494,7 +545,22 @@ function _scoreQuestionCandidate(instance, candidate, taskFingerprint, content, 
   // E2: Confidence inversion boost
   const confidenceInversionBoost = _detectLowConfidenceSignals(q, content) ? 0.12 : 0;
 
-  return base + evidenceBoost + riskBoost + requirementBoost + noveltyBoost + schemaGapBoost + stagePositionBoost + confidenceInversionBoost;
+  // Factor 8: Semantic similarity boost (TF-IDF based)
+  const contentSample = String(content || '').slice(0, 1000);
+  const semanticResult = _sharedSimilarityEngine.calculate(q, contentSample);
+  const semanticBoost = semanticResult.score > 0.3 ? semanticResult.score * 0.12 : 0;
+
+  // Factor 9: Domain anchoring boost
+  const entities = extractEntities(content, String(context?.stageName || context?.stage || ''));
+  const allEntityTexts = [
+    ...entities.filePaths,
+    ...entities.functionNames,
+    ...entities.decisions.map(d => d.slice(0, 30)),
+  ];
+  const anchoringScore = _sharedSimilarityEngine.calculateAnchoring(q, allEntityTexts);
+  const domainBoost = anchoringScore * 0.08;
+
+  return base + evidenceBoost + riskBoost + requirementBoost + noveltyBoost + schemaGapBoost + stagePositionBoost + confidenceInversionBoost + semanticBoost + domainBoost;
 }
 
 /**

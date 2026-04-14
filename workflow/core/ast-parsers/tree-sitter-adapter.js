@@ -171,28 +171,18 @@ function generateFingerprint(content, ext) {
  */
 function extractSymbolsFromTree(tree, ext, source) {
   const symbols = [];
-  const rootNode = tree.rootNode;
-  
-  // Walk the tree and extract symbols
-  const cursor = rootNode.walk();
-  
-  // Language-specific node type mappings
   const nodeTypes = getNodeTypesForLanguage(ext);
-  
-  do {
-    const node = cursor.currentNode;
+
+  function walk(node, depth) {
+    if (depth > 50) return;
     const symbol = extractSymbolFromNode(node, nodeTypes, source);
-    
-    if (symbol) {
-      symbols.push(symbol);
+    if (symbol) symbols.push(symbol);
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i), depth + 1);
     }
-    
-    // Special handling: descend into certain containers
-    if (shouldDescend(node, nodeTypes)) {
-      if (cursor.gotoFirstChild()) continue;
-    }
-  } while (cursor.gotoNextSibling() || cursor.gotoParent());
-  
+  }
+
+  walk(tree.rootNode, 0);
   return symbols;
 }
 
@@ -248,8 +238,23 @@ function getNodeTypesForLanguage(ext) {
       return {
         ...common,
         functionDeclaration: ['function_item'],
+        classDeclaration: ['struct_item', 'enum_item'],
         implDeclaration: ['impl_item'],
         traitDeclaration: ['trait_item'],
+      };
+    case '.java':
+      return {
+        ...common,
+        functionDeclaration: ['method_declaration', 'constructor_declaration'],
+        classDeclaration: ['class_declaration', 'enum_declaration'],
+        interfaceDeclaration: ['interface_declaration'],
+      };
+    case '.cpp':
+    case '.c':
+      return {
+        ...common,
+        functionDeclaration: ['function_definition'],
+        classDeclaration: ['class_specifier', 'struct_specifier'],
       };
     default:
       return common;
@@ -263,12 +268,15 @@ function shouldDescend(node, types) {
   const descendTypes = [
     ...types.classDeclaration,
     ...types.functionDeclaration,
-    ...types.interfaceDeclaration,
+    ...(types.interfaceDeclaration || []),
+    ...(types.implDeclaration || []),
     'program',
     'source_file',
     'module',
+    'class_body',
+    'declaration_list',
   ];
-  return descendTypes.some(t => node.type.includes(t));
+  return descendTypes.some(t => node.type === t);
 }
 
 /**
@@ -304,11 +312,17 @@ function extractSymbolFromNode(node, types, source) {
  * Extract function symbol details from AST node
  */
 function extractFunctionSymbol(node, lines, kind = 'function') {
-  const nameNode = node.children.find(n => 
+  let nameNode = node.children.find(n => 
     n.type === 'identifier' || 
     n.type === 'property_identifier' ||
     n.type === 'word'
   );
+  if (!nameNode) {
+    const declarator = node.children.find(n => n.type === 'function_declarator');
+    if (declarator) {
+      nameNode = declarator.children.find(n => n.type === 'identifier');
+    }
+  }
   
   if (!nameNode) return null;
   
@@ -494,7 +508,6 @@ function testAvailability() {
   const parser = initializeParser();
   if (!parser) return false;
   
-  // Test with simple JS
   try {
     const jsParser = getLanguageParser('.js');
     if (!jsParser) return false;
@@ -506,11 +519,76 @@ function testAvailability() {
   }
 }
 
+/**
+ * Extract call edges from source using AST.
+ * Returns null when tree-sitter is unavailable (caller should fall back to regex).
+ *
+ * @param {string} content - File source code
+ * @param {string} ext - File extension (e.g. '.js')
+ * @returns {Array<{callee: string, receiver: string|null, method: string|null, type: 'call'|'method'}>|null}
+ */
+function extractCallEdges(content, ext) {
+  const parser = getLanguageParser(ext);
+  if (!parser) return null;
+
+  try {
+    const tree = parser.parse(content);
+    const edges = [];
+    const seen = new Set();
+
+    function walk(node) {
+      if (node.type === 'call_expression') {
+        const fn = node.childForFieldName('function');
+        if (fn) {
+          if (fn.type === 'identifier') {
+            const callee = fn.text;
+            if (!seen.has(callee)) {
+              seen.add(callee);
+              edges.push({ callee, receiver: null, method: null, type: 'call' });
+            }
+          } else if (fn.type === 'member_expression') {
+            const obj = fn.childForFieldName('object');
+            const prop = fn.childForFieldName('property');
+            if (obj && prop) {
+              const key = `${obj.text}.${prop.text}`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                edges.push({ callee: prop.text, receiver: obj.text, method: prop.text, type: 'method' });
+              }
+            }
+          }
+        }
+      } else if (node.type === 'method_invocation') {
+        const nameNode = node.childForFieldName('name');
+        const objNode = node.childForFieldName('object');
+        if (nameNode) {
+          const callee = nameNode.text;
+          const receiver = objNode ? objNode.text : null;
+          const key = receiver ? `${receiver}.${callee}` : callee;
+          if (!seen.has(key)) {
+            seen.add(key);
+            edges.push({ callee, receiver, method: callee, type: receiver ? 'method' : 'call' });
+          }
+        }
+      }
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i));
+      }
+    }
+
+    walk(tree.rootNode);
+    return edges;
+  } catch (err) {
+    return null;
+  }
+}
+
 module.exports = {
   // Core API
   parseFile,
   generateFingerprint,
   extractSymbolsFromTree,
+  extractCallEdges,
   
   // Utilities
   isSupported,

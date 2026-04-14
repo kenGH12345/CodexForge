@@ -2637,6 +2637,46 @@ Replace the binary count with a weighted scoring system:
 
 **Verification**: F1-F7 24/24 ✅, ADR-51 tests 15/15 ✅, zero regression.
 
+## ADR-52: Enrichment Budget Guard — ANALYSE Stage Context Overflow Prevention
+
+**Date**: 2026-04-13
+**Status**: Accepted
+
+**Context**:
+ANALYSE stage's `_runAnalyst()` accumulates enrichment content via direct string concatenation (`enrichedRequirement += ...`) across 5 injection points (WEB_SEARCH, CODE_GRAPH_SEED, ANCHOR_FILES, EXPERIENCE, SESSION_MEMORY). This bypasses the existing `_applyTokenBudget` L2 budget system, causing LLM context overflow when multiple enrichments fire simultaneously.
+
+**Decision**:
+Introduce `EnrichmentBudgetGuard` — a priority-based budget manager that:
+1. Replaces raw string concatenation with structured `append(label, content, priority)` calls
+2. Enforces a 14,000 char total budget across all enrichment blocks
+3. Integrates `SemanticCompressor` for pre-compression of blocks > 3,000 chars
+4. Applies priority-based truncation (low priority first) and dropping when over budget
+5. Provides `getStats()` for observability and `enrichment-stats` IDE Bridge command
+
+**Priority Order** (highest survives longest):
+| Priority | Label | Value |
+|----------|-------|-------|
+| CRITICAL | EXPERIENCE | 80 |
+| CRITICAL | ANCHOR_FILES | 75 |
+| HIGH | CODE_GRAPH_SEED | 60 |
+| HIGH | WEB_SEARCH | 50 |
+| MEDIUM | SESSION_MEMORY | 40 |
+
+**Key Implementation Details**:
+- `??` operator for constructor defaults (avoids `||` falsy-value bug with 0)
+- Phase 1: Truncate low-priority blocks to minBlockSize (200 chars)
+- Phase 2: Drop lowest-priority blocks entirely if still over budget
+- `structured-output` skill (SKILL_ROLE_FILTER) handles output-side compression — guard handles input-side only
+- `setEnrichmentCompressorCheapLlm()` injects LLM call for SemanticCompressor
+
+**Files Changed**:
+- `workflow/core/enrichment-budget-guard.js` — new module (274 lines)
+- `workflow/core/stage-analyst.js` — replaced 5 string concatenations with guard.append()
+- `workflow/tools/ide-workflow-bridge.js` — added `enrichment-stats` bridge command
+- `workflow/tests/enrichment-budget-guard.test.js` — unit tests (19/19 pass)
+
+**Verification**: 19/19 unit tests pass, syntax validation pass, IDE Bridge command functional.
+
 
 
 

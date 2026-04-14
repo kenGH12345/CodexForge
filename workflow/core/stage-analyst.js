@@ -25,6 +25,11 @@ const {
   webSearchHelper,
   formatWebSearchBlock,
 } = require('./orchestrator-stage-helpers');
+const {
+  EnrichmentBudgetGuard,
+  ENRICHMENT_PRIORITIES,
+  setEnrichmentCompressorCheapLlm,
+} = require('./enrichment-budget-guard');
 
 // ─── Prompt A/B outcome recording helper ──────────────────────────────────────
 /**
@@ -172,6 +177,16 @@ async function _runAnalyst(rawRequirement) {
     this.stateMachine.recordRisk('medium', note);
   }
 
+  // ── EnrichmentBudgetGuard: budget + compression guard for ANALYSE stage ──
+  const enrichmentGuard = new EnrichmentBudgetGuard({
+    totalBudgetChars: 14000,
+    enableCompression: true,
+    baseContent: '', // will be set after scope prefix is applied
+  });
+  if (typeof this._rawLlmCall === 'function') {
+    setEnrichmentCompressorCheapLlm(this._rawLlmCall);
+  }
+
   // ── Optimization 4: Technical Feasibility Pre-research ───────────────────
   if (clarResult.riskNotes && clarResult.riskNotes.length > 0) {
     try {
@@ -205,9 +220,12 @@ async function _runAnalyst(rawRequirement) {
             title: 'Technical Feasibility Research',
             guidance: 'The following web search results provide latest technical constraints, API changes, and compatibility info. Use these to enrich the Open Questions and Risk sections of the requirement.',
           });
-          // Optimization B: structured section header for LLM clarity
-          clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n## Context: Technical Feasibility Research\n${feasibilityBlock}`;
-          console.error(`[Orchestrator] 🌐 Tech feasibility: ${searchResult.results.length} result(s) appended to enriched requirement.`);
+          await enrichmentGuard.append(
+            'WEB_SEARCH',
+            `## Context: Technical Feasibility Research\n${feasibilityBlock}`,
+            ENRICHMENT_PRIORITIES.WEB_SEARCH,
+          );
+          console.error(`[Orchestrator] 🌐 Tech feasibility: ${searchResult.results.length} result(s) queued via EnrichmentBudgetGuard.`);
 
           // ── ADR-30 P3: Persist ANALYSE search results to project knowledge base ──
           try {
@@ -260,9 +278,12 @@ async function _runAnalyst(rawRequirement) {
     if (this.codeGraph && typeof this.codeGraph.getModuleSummaryMarkdown === 'function') {
       const moduleSeedInfo = this.codeGraph.getModuleSummaryMarkdown({ maxDirs: 15 });
       if (moduleSeedInfo && moduleSeedInfo.length > 0) {
-        // Optimization B: structured section header for LLM clarity
-        clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n## Context: Codebase Module Structure\n${moduleSeedInfo}`;
-        console.error(`[Orchestrator] 🗺️  Code Graph seed info injected into AnalystAgent (${moduleSeedInfo.length} chars). Module Map will be grounded in real codebase structure.`);
+        await enrichmentGuard.append(
+          'CODE_GRAPH_SEED',
+          `## Context: Codebase Module Structure\n${moduleSeedInfo}`,
+          ENRICHMENT_PRIORITIES.CODE_GRAPH_SEED,
+        );
+        console.error(`[Orchestrator] 🗺️  Code Graph seed info queued via EnrichmentBudgetGuard (${moduleSeedInfo.length} chars).`);
       } else {
         console.error(`[Orchestrator] 🗺️  Code Graph has no module summary (new project or single-directory). Module Map will be generated from scratch.`);
       }
@@ -346,8 +367,12 @@ async function _runAnalyst(rawRequirement) {
 
       if (codeSnippets.length > 0) {
         const codeBlock = `## Context: Anchor Code Files (auto-read from project)\n> The following ${codeSnippets.length} file(s) were automatically read based on references in the user requirement.\n> Use these as concrete evidence for your analysis — reference specific line numbers and function names.\n\n${codeSnippets.join('\n\n')}`;
-        clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n${codeBlock}`;
-        console.error(`[Orchestrator] 📖 ADR-49: ${codeSnippets.length} anchor code file(s) read and injected into AnalystAgent (${codeBlock.length} chars).`);
+        await enrichmentGuard.append(
+          'ANCHOR_FILES',
+          codeBlock,
+          ENRICHMENT_PRIORITIES.ANCHOR_FILES,
+        );
+        console.error(`[Orchestrator] 📖 ADR-49: ${codeSnippets.length} anchor code file(s) queued via EnrichmentBudgetGuard (${codeBlock.length} chars).`);
       } else {
         console.error(`[Orchestrator] 📖 ADR-49: No anchor files found for targets: [${searchTargets.slice(0, 5).join(', ')}]`);
       }
@@ -370,10 +395,13 @@ async function _runAnalyst(rawRequirement) {
       );
       analystInjectedExpIds = expIds || [];
       if (expBlock && expBlock.trim().length > 0) {
-        // Optimization B: structured section header for LLM clarity
-        clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n## Context: Past Experience\n${expBlock}`;
+        await enrichmentGuard.append(
+          'EXPERIENCE',
+          `## Context: Past Experience\n${expBlock}`,
+          ENRICHMENT_PRIORITIES.EXPERIENCE,
+        );
         this.obs.recordExpUsage({ injected: analystInjectedExpIds.length });
-        console.error(`[Orchestrator] 📚 ANALYSE experience injection: ${analystInjectedExpIds.length} experience(s) from ExperienceStore (keyword-scored + LLM-expanded)`);
+        console.error(`[Orchestrator] 📚 ANALYSE experience injection: ${analystInjectedExpIds.length} experience(s) queued via EnrichmentBudgetGuard`);
       }
     }
   } catch (expErr) {
@@ -386,8 +414,12 @@ async function _runAnalyst(rawRequirement) {
     const taskHistory = new TaskHistory();
     const sessionMemoryBlock = taskHistory.getSessionMemoryBlock(3);
     if (sessionMemoryBlock) {
-      clarResult.enrichedRequirement = `${clarResult.enrichedRequirement}\n\n${sessionMemoryBlock}`;
-      console.error(`[Orchestrator] 🧠 Session Memory injected for AnalystAgent (${sessionMemoryBlock.length} chars)`);
+      await enrichmentGuard.append(
+        'SESSION_MEMORY',
+        sessionMemoryBlock,
+        ENRICHMENT_PRIORITIES.SESSION_MEMORY,
+      );
+      console.error(`[Orchestrator] 🧠 Session Memory queued via EnrichmentBudgetGuard (${sessionMemoryBlock.length} chars)`);
     }
   } catch (memErr) {
     if (process.env.DEBUG) {
@@ -414,6 +446,12 @@ async function _runAnalyst(rawRequirement) {
   // Pass pre-assessed complexity to AnalystAgent so buildPrompt() can conditionally
   // trim verbose output format sections for simple tasks.
   this.agents[AgentRole.ANALYST]._preComplexityLevel = preComplexityLevel;
+
+  // ── EnrichmentBudgetGuard: assemble final enriched requirement ──────────
+  // Replace the raw accumulated string with budget-controlled, compressed content.
+  const guardStats = enrichmentGuard.getStats();
+  console.error(`[Orchestrator] 📊 EnrichmentBudgetGuard stats: ${guardStats.blocksCount} blocks, ${guardStats.usedChars}/${guardStats.totalBudgetChars} chars used, compressed=${guardStats.compressedBlocks}, utilization=${(guardStats.utilizationRate * 100).toFixed(1)}%`);
+  clarResult.enrichedRequirement = clarResult.enrichedRequirement + enrichmentGuard.getAssembled();
 
   const outputPath = await this.agents[AgentRole.ANALYST].run(null, clarResult.enrichedRequirement, null, this.handoffLog);
 

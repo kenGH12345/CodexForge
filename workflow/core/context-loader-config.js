@@ -125,6 +125,7 @@ const SKILL_ROLE_FILTER = {
   'requirements-analysis': ['analyst'],
   'git-conventions': ['developer', 'reviewer'],
   'documentation-generation': ['analyst', 'architect', 'developer', 'reviewer'],
+  'javascript-dev': ['architect', 'planner', 'developer', 'reviewer', 'coding-agent'],
 };
 
 // ─── Role → architecture-constraints.md section filtering ─────────────────────
@@ -211,12 +212,15 @@ const ROLE_CONSTRAINT_SECTIONS = {
 // These docs are ALWAYS injected for the given role, regardless of task content.
 
 const ROLE_MANDATORY_DOCS = {
-  analyst:    ['docs/architecture-constraints.md', 'output/spec.md', 'output/project-profile.md'],
+  // analyst/architect/planner: first-time injection of spec + project-profile
+  analyst:    ['docs/architecture-constraints.md', 'output/project-profile.md'],
   architect:  ['docs/architecture-constraints.md', 'docs/decision-log.md', 'output/spec.md', 'output/project-profile.md'],
   planner:    ['docs/architecture-constraints.md', 'output/spec.md', 'output/architecture.md', 'output/project-profile.md'],
-  developer:  ['docs/architecture-constraints.md', 'output/code-graph.md', 'output/spec.md', 'output/project-profile.md'],
-  tester:     ['docs/architecture-constraints.md', 'output/spec.md', 'output/project-profile.md'],
-  reviewer:   ['docs/architecture-constraints.md', 'output/spec.md', 'output/project-profile.md'],
+  // developer/tester/reviewer: spec.md and project-profile.md already injected in earlier stages;
+  // execution-plan.md carries the distilled requirements, avoiding cross-stage duplication.
+  developer:  ['docs/architecture-constraints.md', 'output/code-graph.md', 'output/execution-plan.md'],
+  tester:     ['docs/architecture-constraints.md', 'output/execution-plan.md'],
+  reviewer:   ['docs/architecture-constraints.md', 'output/execution-plan.md'],
   'coding-agent': ['docs/architecture-constraints.md', 'output/code-graph.md', 'output/project-profile.md'],
   'init-agent':   [],
 };

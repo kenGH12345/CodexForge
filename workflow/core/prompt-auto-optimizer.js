@@ -262,6 +262,36 @@ class PromptAutoOptimizer {
     console.log(`[PromptAutoOptimizer] 🧪 A/B recorded: ${winner} wins (${(winRate * 100).toFixed(0)}% win rate, n=${sampleSize})`);
   }
 
+  /**
+   * Records a single feedback entry from a retrospective signal.
+   * Written to agent-feedback-history.jsonl for consumption by analyzeAndOptimize().
+   *
+   * @param {object} params
+   * @param {string} params.stage - Workflow stage (e.g. 'FINISHED')
+   * @param {string} params.evidence - Retrospective content (truncated to 200 chars)
+   * @param {string} params.signalType - EvolutionSignalType value
+   * @param {number} [params.score=0.6] - Quality score (0-1)
+   */
+  recordFeedback(params) {
+    const { stage, evidence, signalType, score = 0.6 } = params;
+    const record = {
+      target: stage || 'UNKNOWN',
+      score,
+      issues: [{ type: 'process_improvement', description: (evidence || '').slice(0, 200) }],
+      timestamp: new Date().toISOString(),
+      metadata: { signalType, source: 'retrospective' },
+    };
+    const historyPath = path.join(this._outputDir, 'agent-feedback-history.jsonl');
+    try {
+      const dir = path.dirname(historyPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.appendFileSync(historyPath, JSON.stringify(record) + '\n', 'utf-8');
+      console.log(`[PromptAutoOptimizer] 📝 Feedback recorded: stage=${stage} signalType=${signalType}`);
+    } catch (e) {
+      console.log(`[PromptAutoOptimizer] ⚠️ recordFeedback failed (non-fatal): ${e.message}`);
+    }
+  }
+
   // ─── Private Analysis Methods ───────────────────────────────────────────────
 
   _analyzeFeedbackPatterns(feedbackHistory) {

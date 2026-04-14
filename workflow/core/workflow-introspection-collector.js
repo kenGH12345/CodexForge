@@ -162,6 +162,9 @@ class WorkflowIntrospectionCollector {
     this._entries.push(entry);
     this._indexModuleEntity(module, context);
 
+    // Bridge to workflow-progress.log (ARCHITECTURE.md D-1)
+    this._bridgeToProgressLog(module, action, context, correlation);
+
     return entry.id;
   }
 
@@ -441,6 +444,105 @@ class WorkflowIntrospectionCollector {
         this._moduleEntityIndex.get(module).add(`${key}:${context[key]}`);
       }
     }
+  }
+
+  /**
+   * Bridge introspection events to workflow-progress.log.
+   * Uses lazy require to avoid circular dependencies.
+   * 
+   * @private
+   */
+  _bridgeToProgressLog(module, action, context, correlation) {
+    try {
+      // Lazy load to avoid circular dependency
+      const ModuleLogFormatter = require('./module-log-formatter');
+      
+      const entry = {
+        module,
+        level: this._inferLogLevel(action),
+        action,
+        summary: this._summarize(module, action, context),
+        sessionId: this._sessionId,
+        stage: this._currentStage,
+      };
+      
+      // Add correlation info if available
+      if (correlation?.traceId) {
+        entry.data = { traceId: correlation.traceId };
+      }
+      
+      // Write to progress log (uses global project root detection)
+      const projectRoot = process.cwd();
+      ModuleLogFormatter.formatAndWrite(projectRoot, entry);
+    } catch (err) {
+      // Silent failure - don't break the main workflow
+      console.error(`[IntrospectionCollector] Bridge to progress log failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Infer log level from action name.
+   * Actions containing 'warn', 'error', 'fail' → WARN
+   * Actions containing 'detail', 'debug', 'trace' → DETAIL
+   * Others → INFO
+   * 
+   * @private
+   * @param {string} action
+   * @returns {string} Log level (INFO|WARN|DETAIL)
+   */
+  _inferLogLevel(action) {
+    if (!action || typeof action !== 'string') {
+      return 'INFO';
+    }
+    
+    const actionLower = action.toLowerCase();
+    
+    if (actionLower.includes('warn') || actionLower.includes('error') || 
+        actionLower.includes('fail') || actionLower.includes('retired')) {
+      return 'WARN';
+    }
+    
+    if (actionLower.includes('detail') || actionLower.includes('debug') || 
+        actionLower.includes('trace') || actionLower.includes('analyzed')) {
+      return 'DETAIL';
+    }
+    
+    return 'INFO';
+  }
+
+  /**
+   * Generate a human-readable summary from module, action, and context.
+   * Keeps summary concise (< 100 chars) for readability.
+   * 
+   * @private
+   * @param {string} module
+   * @param {string} action
+   * @param {object} context
+   * @returns {string}
+   */
+  _summarize(module, action, context) {
+    const parts = [];
+    
+    // Add key context fields
+    const keyFields = ['skillName', 'experienceId', 'promptId', 'findingId', 'ruleId', 'name', 'type'];
+    for (const key of keyFields) {
+      if (context[key]) {
+        parts.push(`${key}=${context[key]}`);
+      }
+    }
+    
+    // Build summary
+    let summary = `${module} ${action}`;
+    if (parts.length > 0) {
+      summary += ` | ${parts.slice(0, 3).join(', ')}`;
+    }
+    
+    // Truncate if too long
+    if (summary.length > 100) {
+      summary = summary.substring(0, 97) + '...';
+    }
+    
+    return summary;
   }
 
   /**

@@ -21,6 +21,37 @@ description: "Requirements analysis methodology skill — 5 Whys, user story map
 
 Requirements are hypotheses, not facts. Every requirement must be traceable to a user need, testable via acceptance criteria, and prioritized by business value — not by who shouted loudest.
 
+## 0. Pre-Analysis: Status / Expectation / Gap (MANDATORY)
+
+> ⚠️ **MANDATORY FIRST STEP** — Before any requirement decomposition, answer these three questions.
+> Skipping this step leads to solving the wrong problem. "Define the problem before solving it."
+
+| Question | What to Answer | Anti-Pattern to Avoid |
+|----------|---------------|----------------------|
+| **Q1: Current Status** (事实) | What is the observable, measurable current state? Use data, not feelings. | "Things are slow" → instead: "API p95 latency = 800ms" |
+| **Q2: Expected State** (可量化目标) | What specific, measurable outcome do we want? | "Make it better" → instead: "API p95 latency < 200ms" |
+| **Q3: Gap** (真正的问题) | What is the delta between Q1 and Q2? This IS the problem to solve. | Jumping to solutions before defining the gap |
+
+**Template**:
+```
+Current Status: [observable fact with data]
+Expected State: [measurable target]
+Gap / Real Problem: [delta = what needs to change]
+```
+
+**Example**:
+```
+Current Status: ANALYSE stage produces requirements without verifying user's real intent first.
+Expected State: ANALYSE stage surfaces the real problem before decomposing requirements.
+Gap / Real Problem: Missing a structured "problem definition" step before requirement elicitation.
+```
+
+**Rules**:
+- Q1 must be a fact, not an opinion. If you can't measure it, describe it with a concrete example.
+- Q2 must be specific enough to know when you've succeeded.
+- Q3 is the real requirement. Everything downstream should trace back to closing this gap.
+- If Q3 is unclear after answering Q1 and Q2, run 5 Whys (Section 1) before proceeding.
+
 ## 1. Root Cause Elicitation: 5 Whys Method
 
 When a user states a requirement, drill down to the real need:
@@ -116,6 +147,7 @@ Requirement ────────├─ Technology: What systems are involved
 
 ## Checklist (ANALYSE stage exit criteria)
 
+- [ ] **[Step 0]** Current Status / Expected State / Gap documented (三问完成)
 - [ ] Every requirement traced to user need (not implementation preference)
 - [ ] INVEST criteria checked; failures flagged and rewritten
 - [ ] MoSCoW priority assigned with justification

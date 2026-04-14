@@ -691,6 +691,63 @@ const CodeGraphQueryMixin = {
       }
     }
   },
+
+  /**
+   * Get topologically relevant symbols starting from anchor files.
+   * BFS traversal of _callEdges (bidirectional) up to `hops` levels.
+   * Useful for injecting minimal but complete context into LLM prompts.
+   *
+   * @param {string[]} anchorFiles - Relative file paths to start from
+   * @param {number} [hops=2] - Max traversal depth
+   * @returns {{ symbols: SymbolEntry[], tokenEstimate: number, byHop: Map<number, SymbolEntry[]> }}
+   */
+  getTopologicalContext(anchorFiles, hops = 2) {
+    const visited = new Set();
+    const byHop = new Map();
+
+    const frontier = [];
+    for (const file of anchorFiles) {
+      for (const sym of this.getFileSymbols(file)) {
+        if (!visited.has(sym.id)) {
+          visited.add(sym.id);
+          frontier.push(sym.id);
+        }
+      }
+    }
+    byHop.set(0, frontier.map(id => this._symbols.get(id)).filter(Boolean));
+
+    // Build reverse index once: callee → callers
+    const reverseEdges = new Map();
+    for (const [callerId, callees] of this._callEdges) {
+      for (const calleeId of callees) {
+        if (!reverseEdges.has(calleeId)) reverseEdges.set(calleeId, []);
+        reverseEdges.get(calleeId).push(callerId);
+      }
+    }
+
+    let current = [...frontier];
+    for (let hop = 1; hop <= hops && current.length > 0; hop++) {
+      const next = [];
+      for (const symId of current) {
+        const outgoing = this._callEdges.get(symId) || [];
+        const incoming = reverseEdges.get(symId) || [];
+        for (const neighborId of [...outgoing, ...incoming]) {
+          if (!visited.has(neighborId)) {
+            visited.add(neighborId);
+            next.push(neighborId);
+          }
+        }
+      }
+      byHop.set(hop, next.map(id => this._symbols.get(id)).filter(Boolean));
+      current = next;
+    }
+
+    const symbols = [...visited].map(id => this._symbols.get(id)).filter(Boolean);
+    const tokenEstimate = symbols.length * 50;
+
+    return { symbols, tokenEstimate, byHop };
+  },
+
 };
 
 module.exports = { CodeGraphQueryMixin, STOP_WORDS };

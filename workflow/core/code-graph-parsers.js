@@ -558,17 +558,30 @@ const CodeGraphParsersMixin = {
     let confirmedCallTokens;
 
     if (content) {
-      // When raw source is available: scan for `identifier(` patterns
       confirmedCallTokens = new Set();
-      const callPattern = /\b(\w+)\s*\(/g;
-      let match;
-      while ((match = callPattern.exec(content)) !== null) {
-        const name = match[1];
-        // Skip language keywords
-        if (['if', 'for', 'while', 'switch', 'catch', 'return', 'throw',
-             'new', 'typeof', 'instanceof', 'function', 'class',
-             'require', 'import'].includes(name)) continue;
-        confirmedCallTokens.add(name);
+
+      // AST path: precise call extraction, avoids false positives from regex
+      let astEdges = null;
+      try {
+        const tsAdapter = require('./ast-parsers/tree-sitter-adapter');
+        astEdges = tsAdapter.extractCallEdges(content, ext);
+      } catch (_) { /* tree-sitter not installed */ }
+
+      if (astEdges) {
+        for (const edge of astEdges) {
+          confirmedCallTokens.add(edge.callee);
+        }
+      } else {
+        // Regex fallback when AST unavailable
+        const callPattern = /\b(\w+)\s*\(/g;
+        let match;
+        while ((match = callPattern.exec(content)) !== null) {
+          const name = match[1];
+          if (['if', 'for', 'while', 'switch', 'catch', 'return', 'throw',
+               'new', 'typeof', 'instanceof', 'function', 'class',
+               'require', 'import'].includes(name)) continue;
+          confirmedCallTokens.add(name);
+        }
       }
     } else if (preExtractedTokens) {
       // Fallback: when only word tokens are available (e.g. incremental build),

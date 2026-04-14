@@ -1037,75 +1037,28 @@ class SkillEvolutionEngine {
 
   /**
    * Parses YAML frontmatter from a skill file content.
-   * Returns an object with the parsed metadata, or null if no frontmatter found.
+   * Delegates to shared yaml-frontmatter.js to eliminate duplication.
    *
    * @param {string} content - Skill file content
    * @returns {{ meta: object, bodyStart: number }|null}
    */
   _parseFrontmatter(content) {
+    const { parseFrontmatter } = require('./yaml-frontmatter');
     if (!content || !content.startsWith('---')) return null;
-    const endIdx = content.indexOf('---', 3);
-    if (endIdx === -1) return null;
-
-    const yamlBlock = content.slice(3, endIdx).trim();
-    const meta = {};
-    let currentKey = null;
-
-    for (const line of yamlBlock.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      // Handle nested keys (e.g. "  keywords: [...]")
-      if (line.startsWith('  ') && currentKey) {
-        const nestedMatch = trimmed.match(/^(\w+):\s*(.*)$/);
-        if (nestedMatch) {
-          if (typeof meta[currentKey] !== 'object' || Array.isArray(meta[currentKey])) {
-            meta[currentKey] = {};
-          }
-          meta[currentKey][nestedMatch[1]] = this._parseYamlValue(nestedMatch[2]);
-        }
-        continue;
-      }
-
-      // Handle top-level keys
-      const match = trimmed.match(/^(\w+):\s*(.*)$/);
-      if (match) {
-        currentKey = match[1];
-        const val = match[2];
-        // Check if next lines are nested (triggers:)
-        if (val === '' || val === undefined) {
-          meta[currentKey] = {};
-        } else {
-          meta[currentKey] = this._parseYamlValue(val);
-        }
-      }
-    }
-
-    return { meta, bodyStart: endIdx + 3 };
+    const result = parseFrontmatter(content);
+    if (!result.bodyStart && Object.keys(result.meta).length === 0) return null;
+    return { meta: result.meta, bodyStart: result.bodyStart };
   }
 
   /**
    * Parses a simple YAML value (string, number, array).
+   * Delegates to shared yaml-frontmatter.js.
    * @param {string} val
    * @returns {*}
    */
   _parseYamlValue(val) {
-    if (!val || val.trim() === '') return '';
-    const trimmed = val.trim();
-    // Array: [item1, item2]
-    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-      const inner = trimmed.slice(1, -1).trim();
-      if (!inner) return [];
-      return inner.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
-    }
-    // Quoted string
-    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-      return trimmed.slice(1, -1);
-    }
-    // Number
-    if (/^\d+$/.test(trimmed)) return Number(trimmed);
-    return trimmed;
+    const { parseYamlValue } = require('./yaml-frontmatter');
+    return parseYamlValue(val);
   }
 
   _loadRegistry() {

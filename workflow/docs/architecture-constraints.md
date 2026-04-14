@@ -226,3 +226,20 @@ The following resources are loaded **once** in `_initWorkflow()` and cached on
    the equivalent lifecycle point.
 4. Record the module in the table above.
 5. Add an `obs.recordXxxResult()` call so the dashboard reflects the result.
+
+## Comment Discipline (P0)
+
+Comments are loaded into every LLM context window — they are **not free**.
+
+**Rules (all mandatory):**
+
+| Rule | Constraint |
+|------|-----------|
+| Comment only "why" | Never comment "what" — code already says what |
+| Max density | 1 comment per 10 LOC |
+| No JSDoc on private/internal functions | Only document exported public API |
+| No section-divider banners | e.g. `// ─── Helpers ───` — use file structure instead |
+| No label-only comments | e.g. `// P0: spec.md removed — ...` — if the code is self-evident, delete the comment |
+| No restatement comments | `const maxRetry = 3; // max retry count` is forbidden |
+
+**Violation = token waste + context pollution.** Any comment that does not explain a non-obvious decision MUST be deleted.

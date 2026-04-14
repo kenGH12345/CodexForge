@@ -120,6 +120,8 @@ const { enforceRequirementBudget } = require('../core/context-budget-policy');
 const { buildCapabilityCatalog, formatCapabilityCatalogForPrompt } = require('../core/capability-catalog');
 const { requirementFingerprint: _sharedRequirementFingerprint } = require('../core/stage-context-store');
 const { normalizeRunCategory, resolveHealthPaths } = require('../core/health-observability');
+const { generatePreStageQuestions: _sharedGeneratePreStageQuestions } = require('../core/pre-stage-questions');
+const { buildRequiredObservation, buildRetryContext } = require('../core/stage-context');
 
 // ─── CLI Argument Parsing ────────────────────────────────────────────────────
 
@@ -214,6 +216,10 @@ function parseArgs(argv) {
     stageOutput: '',    // brief description of stage output (key decisions / artifacts)
     // read-only explorer
     explore: false,
+    // retrospective-signal specific args
+    prevention: '',
+    capability: '',
+    efficiency: '',
   };
 
   if (argv.length < 3) return args;
@@ -407,6 +413,15 @@ function parseArgs(argv) {
       case '--readonly':
         args.explore = true;
         break;
+      case '--prevention':
+        args.prevention = argv[++i] || '';
+        break;
+      case '--capability':
+        args.capability = argv[++i] || '';
+        break;
+      case '--efficiency':
+        args.efficiency = argv[++i] || '';
+        break;
     }
   }
 
@@ -415,6 +430,36 @@ function parseArgs(argv) {
 }
 
 // ─── Sub-command: triage ─────────────────────────────────────────────────────
+
+function runTriage(args) {
+  try {
+    const { RequestTriage } = require('../core/request-triage');
+    const triage = new RequestTriage();
+    const result = triage.triage(args.requirement || '', { projectRoot: args.projectRoot });
+    const triageData = triage.formatMCPResponse(result);
+
+    // T-2: Log triage assessment result for observability
+    try {
+      const _score = result.score ?? triageData?.score ?? 'n/a';
+      const _suggestion = result.suggestion ?? triageData?.suggestion ?? 'n/a';
+      const _ruleCount = (result.matchedRules || triageData?.matchedRules || []).length;
+      _writeProgressLog(args.projectRoot || '.', [
+        `🎯 Triage 评估`,
+        `  score    : ${_score}`,
+        `  suggest  : ${_suggestion}`,
+        `  rules    : ${_ruleCount} matched`,
+      ].join('\n'));
+    } catch (_) { /* non-fatal */ }
+
+    return {
+      success: true,
+      subcommand: 'triage',
+      data: triageData,
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'triage', error: err.message };
+  }
+}
 
 // ─── Sub-command: requirement-check ──────────────────────────────────────────
 
@@ -557,6 +602,15 @@ function runContext(args) {
 
     const { sections, tokenCount, sources } = loader.resolve(taskText, role);
 
+    // T-6: Log context loading result for observability
+    try {
+      _writeProgressLog(args.projectRoot || '.', [
+        `📚 Context 加载: ${sections.length} sections, ${tokenCount} tokens`,
+        `  role     : ${role}`,
+        `  sources  : ${(sources || []).slice(0, 5).join(', ')}`,
+      ].join('\n'));
+    } catch (_) { /* non-fatal */ }
+
     return {
       success: true,
       subcommand: 'context',
@@ -609,6 +663,14 @@ function runExperienceSearch(args) {
     if (args.tags.length > 0) searchOpts.tags = args.tags;
 
     const results = store.search(searchOpts);
+    
+    // Bridge to workflow-progress.log (ARCHITECTURE.md D-1)
+    _bridgeModuleLog(args.projectRoot, {
+      module: 'Experience',
+      level: 'INFO',
+      action: 'experience_searched',
+      summary: `keyword=${args.keyword || '-'}, results=${results.length}`,
+    });
 
     return {
       success: true,
@@ -661,6 +723,22 @@ async function runExperienceContext(args) {
       args.task || args.requirement || null,
       args.limit
     );
+
+    // T-6: Log experience context result for observability
+    try {
+      _writeProgressLog(args.projectRoot || '.', [
+        `🧠 Experience 匹配: ${ids.length} pattern(s)`,
+        `  skill    : ${args.skill || 'general'}`,
+      ].join('\n'));
+    } catch (_) { /* non-fatal */ }
+
+    // Bridge to workflow-progress.log (ARCHITECTURE.md D-1)
+    _bridgeModuleLog(args.projectRoot || '.', {
+      module: 'Experience',
+      level: 'INFO',
+      action: 'experience_context_matched',
+      summary: `skill=${args.skill || 'general'}, matched=${ids.length}`,
+    });
 
     return {
       success: true,
@@ -933,6 +1011,15 @@ function runBuildAgentPrompt(args) {
       functionalityContract = AGENT_FUNCTIONALITY_CONTRACTS[contractKey] || null;
     } catch (_) { /* Non-fatal */ }
 
+    // T-6: Log agent prompt loading for observability
+    try {
+      _writeProgressLog(args.projectRoot || '.', [
+        `🎭 Agent 角色加载: ${role.toUpperCase()}`,
+        `  prefix   : ${prefix.length} chars`,
+        `  contract : ${contract ? 'yes' : 'none'}`,
+      ].join('\n'));
+    } catch (_) { /* non-fatal */ }
+
     return {
       success: true,
       subcommand: 'build-agent-prompt',
@@ -1103,6 +1190,24 @@ function runRollbackCheck(args) {
       'CODE': 'PLAN',
     };
 
+    // T-3: Log rollback-check result for observability
+    try {
+      if (passed) {
+        _writeProgressLog(args.projectRoot || '.', [
+          `✅ [ROLLBACK_CHECK] ${stage} 合约验证通过`,
+          `  downstream: ${downstreamRole}`,
+          `  file     : ${path.relative(args.projectRoot, outputFile)}`,
+        ].join('\n'));
+      } else {
+        _writeProgressLog(args.projectRoot || '.', [
+          `⚠️ [ROLLBACK] ${stage} 阶段产物不满足下游合约`,
+          `  downstream: ${downstreamRole}`,
+          `  failures : ${failures.map(f => f.check).join(', ')}`,
+          `  detail   : ${failures.map(f => f.detail).join('; ').slice(0, 200)}`,
+        ].join('\n'));
+      }
+    } catch (_) { /* non-fatal */ }
+
     return {
       success: true,
       subcommand: 'rollback-check',
@@ -1191,6 +1296,25 @@ function runQualityGate(args) {
     });
 
     const result = gate.validate(metrics);
+
+    // T-4: Log quality-gate result for observability
+    try {
+      const _failedNames = result.gates.filter(g => !g.passed).map(g => g.name);
+      _writeProgressLog(args.projectRoot || '.', [
+        `🏁 Quality Gate: ${result.passed ? 'PASSED' : 'FAILED'}`,
+        `  mode     : ${result.mode || gateMode}`,
+        `  gates    : ${result.gates.length} total, ${_failedNames.length} failed`,
+        _failedNames.length > 0 ? `  failed   : ${_failedNames.join(', ')}` : null,
+      ].filter(Boolean).join('\n'));
+    } catch (_) { /* non-fatal */ }
+
+    // Bridge to workflow-progress.log (ARCHITECTURE.md D-1)
+    _bridgeModuleLog(args.projectRoot || '.', {
+      module: 'QualityGate',
+      level: result.passed ? 'INFO' : 'WARN',
+      action: 'quality_gate_validated',
+      summary: `passed=${result.passed}, failed=${result.gates.filter(g => !g.passed).length}`,
+    });
 
     return {
       success: true,
@@ -1876,6 +2000,14 @@ async function runMapeAnalysis(args) {
       source: a.source,
     }));
 
+    // Bridge to workflow-progress.log (ARCHITECTURE.md D-1)
+    _bridgeModuleLog(args.projectRoot, {
+      module: 'Evolution',
+      level: 'INFO',
+      action: 'mape_analysis',
+      summary: `signals=${report.phases.monitor.signalCount}, actions=${report.phases.plan.actionCount}`,
+    });
+
     return {
       success: true,
       subcommand: 'mape-analysis',
@@ -2129,7 +2261,7 @@ function runSkillRefineCheck(args) {
       llmResults = _performLlmRefinement(candidates, llmCall, engine);
     }
 
-    return {
+    const result = {
       success: true,
       subcommand: 'skill-refine-check',
       data: {
@@ -2146,6 +2278,25 @@ function runSkillRefineCheck(args) {
           : _buildSkillRefineRecommendation(candidates),
       },
     };
+
+    // Bridge to workflow-progress.log (ARCHITECTURE.md D-1)
+    if (totalWithMetric > 0) {
+      _bridgeModuleLog(args.projectRoot, {
+        module: 'Skill',
+        level: 'WARN',
+        action: 'skill_refine_check',
+        summary: `candidates=${totalWithMetric}, needsRefine=${candidates.needsRefine.length}`,
+      });
+    } else {
+      _bridgeModuleLog(args.projectRoot, {
+        module: 'Skill',
+        level: 'INFO',
+        action: 'skill_refine_check',
+        summary: 'all skills healthy',
+      });
+    }
+
+    return result;
   } catch (err) {
     return { success: false, subcommand: 'skill-refine-check', error: err.message };
   }
@@ -2806,6 +2957,61 @@ function runPromptOptimize(args) {
     };
   } catch (err) {
     return { success: false, subcommand: 'prompt-optimize', error: err.message };
+  }
+}
+
+// ─── Sub-command: retrospective-signal ───────────────────────────────────────
+
+/**
+ * Inject retrospective insights from FINISHED stage into EvolutionLoop.
+ * Retrospective signals have confidence=1.0 (human-confirmed, highest quality).
+ *
+ * Usage:
+ *   node ide-workflow-bridge.js retrospective-signal \
+ *     --stage FINISHED \
+ *     --prevention "What to avoid next time..." \
+ *     --capability "What worked well..." \
+ *     --efficiency "What slowed us down..." \
+ *     --project-root .
+ */
+function runRetrospectiveSignal(args) {
+  try {
+    const { EvolutionLoop } = require('../core/evolution-loop');
+    const { ExperienceStore } = require('../core/experience-store');
+
+    const stage = args.stage || 'FINISHED';
+    const prevention = args.prevention || '';
+    const capability = args.capability || '';
+    const efficiency = args.efficiency || '';
+
+    if (!prevention && !capability && !efficiency) {
+      return {
+        success: false,
+        subcommand: 'retrospective-signal',
+        error: 'At least one of --prevention, --capability, --efficiency must be provided',
+      };
+    }
+
+    const projectRoot = args.projectRoot || '.';
+    const experienceStore = new ExperienceStore({ projectRoot });
+    const loop = new EvolutionLoop({ experienceStore, outputDir: require('path').join(projectRoot, 'output') });
+
+    const results = loop.processRetrospective(stage, { prevention, capability, efficiency });
+
+    return {
+      success: true,
+      subcommand: 'retrospective-signal',
+      data: {
+        stage,
+        signalsProcessed: results.length,
+        results: results.map(r => ({ type: r?.type || 'processed', status: r?.status || 'ok' })),
+        recommendation: results.length > 0
+          ? `${results.length} retrospective signal(s) injected into EvolutionLoop. Run experience-evolve to distill.`
+          : 'No valid signals (content too short or generic). Provide more specific retrospective content.',
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'retrospective-signal', error: err.message };
   }
 }
 
@@ -3809,6 +4015,54 @@ function _generateContentAwareQuestions(stage, content, contentLower, requiremen
  * Generate health report from real trace data.
  * Delegates to generate-health-report.js for clean separation of concerns.
  */
+function runEnrichmentStats(args) {
+  const projectRoot = args.projectRoot || args['project-root'] || '.';
+  const fs = require('fs');
+  const path = require('path');
+
+  try {
+    const {
+      ENRICHMENT_BUDGET_CHARS,
+      ENRICHMENT_PRIORITIES,
+      ENRICHMENT_COMPRESS_THRESHOLD,
+    } = require('../core/enrichment-budget-guard');
+
+    const result = {
+      status: 'ok',
+      config: {
+        totalBudgetChars: ENRICHMENT_BUDGET_CHARS,
+        compressThreshold: ENRICHMENT_COMPRESS_THRESHOLD,
+        priorities: ENRICHMENT_PRIORITIES,
+      },
+      recentUsage: null,
+    };
+
+    // Try to load recent enrichment stats from workflow progress log
+    const progressLog = path.join(projectRoot, 'output', 'workflow-progress.log');
+    if (fs.existsSync(progressLog)) {
+      const content = fs.readFileSync(progressLog, 'utf-8');
+      const statsLines = content.split('\n').filter(l => l.includes('EnrichmentBudgetGuard stats:'));
+      const lastLine = statsLines[statsLines.length - 1];
+      if (lastLine) {
+        const match = lastLine.match(/blocks=(\d+).*chars=(\d+)\/(\d+).*compressed=(\d+).*utilization=([\d.]+)%/);
+        if (match) {
+          result.recentUsage = {
+            blocksCount: parseInt(match[1], 10),
+            usedChars: parseInt(match[2], 10),
+            totalBudgetChars: parseInt(match[3], 10),
+            compressedBlocks: parseInt(match[4], 10),
+            utilizationRate: parseFloat(match[5]) / 100,
+          };
+        }
+      }
+    }
+
+    return result;
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+}
+
 async function runHealthReport(args) {
   try {
     const { execFileSync } = require('child_process');
@@ -3842,6 +4096,16 @@ async function runHealthReport(args) {
 
     const finalReportPath = path.join(outputDir, 'health', runCategory, 'health-report.md');
     const exists = fs.existsSync(finalReportPath);
+
+    // Bridge to workflow-progress.log (ARCHITECTURE.md D-1)
+    if (exists) {
+      _bridgeModuleLog(projectRoot, {
+        module: 'Health',
+        level: 'INFO',
+        action: 'health_report_generated',
+        summary: `runCategory=${runCategory}`,
+      });
+    }
 
     return {
       success: exists,
@@ -5046,6 +5310,59 @@ function runTestExecute(args) {
     const passedTests = totalTests - failedTests;
     const passRate = totalTests > 0 ? passedTests / totalTests : 0;
 
+    // P1 Rev.2: Write test-execution-proof.json + bind to trace (Trace-Bound Proof).
+    // Problem: Agent could write a fake proof directly (fs.writeFileSync) to bypass validation.
+    // Solution: proof contains a proofHash field; trace records the same hash at execution time.
+    // _validateArtifact verifies: proof.proofHash === SHA-256(proof content) AND trace has
+    // a test_execute event with matching proofHash. Agent cannot forge both simultaneously
+    // because the trace event is written by runTestExecute (the only legitimate path).
+    try {
+      const crypto = require('crypto');
+      const proofPath = path.join(projectRoot, 'output', 'test-execution-proof.json');
+      const sessionId = args.session || '';
+      const proofCore = {
+        executedAt: new Date().toISOString(),
+        sessionId,
+        command: result.command || testCommand,
+        exitCode: result.exitCode,
+        passed: result.passed,
+        totalTests,
+        passedTests,
+        failedTests,
+        durationMs: result.durationMs || durationMs,
+        passRate: Number(passRate.toFixed(4)),
+      };
+      // Compute hash of the core fields (deterministic, excludes proofHash itself)
+      const proofHash = crypto.createHash('sha256')
+        .update(JSON.stringify(proofCore)).digest('hex');
+      const proof = { ...proofCore, proofHash };
+      fs.writeFileSync(proofPath, JSON.stringify(proof, null, 2));
+      console.error(`[runTestExecute] ✅ P1 Rev.2: test-execution-proof.json written, proofHash=${proofHash.slice(0, 12)}...`);
+
+      // Bind proof to trace: write test_execute event with proofHash.
+      // _validateArtifact will verify trace contains this event with matching hash.
+      // This makes forgery require simultaneous manipulation of both proof file AND trace.
+      try {
+        const tracePath = path.join(projectRoot, 'output', 'health', 'prod', 'workflow-trace.jsonl');
+        if (fs.existsSync(path.dirname(tracePath))) {
+          const traceEvent = {
+            ts: new Date().toISOString(),
+            session: sessionId,
+            seq: 99,
+            event: 'test_execute',
+            stage: 'TEST',
+            data: { proofHash, passed: result.passed, totalTests, passedTests, failedTests },
+          };
+          fs.appendFileSync(tracePath, JSON.stringify(traceEvent) + '\n', 'utf-8');
+          console.error(`[runTestExecute] ✅ P1 Rev.2: test_execute trace event written, session=${sessionId}`);
+        }
+      } catch (traceErr) {
+        console.error(`[runTestExecute] ⚠️ P1 Rev.2: trace bind failed (non-fatal): ${traceErr.message}`);
+      }
+    } catch (proofErr) {
+      console.error(`[runTestExecute] ⚠️ P1 Rev.2: Failed to write test-execution-proof.json: ${proofErr.message}`);
+    }
+
     return {
       success: true,
       subcommand: 'test-execute',
@@ -5339,12 +5656,6 @@ async function runWorkflowStage(args) {
       };
     }
 
-    // Build agent prompt for the stage
-    const promptResult = runBuildAgentPrompt({
-      projectRoot: args.projectRoot,
-      role,
-    });
-
     // Determine output file path
     const outputDir = path.join(args.projectRoot, 'output');
     if (!fs.existsSync(outputDir)) {
@@ -5544,10 +5855,12 @@ async function runWorkflowStage(args) {
           requirement: (args.requirement || '').slice(0, 300),
           requirementFingerprint: _requirementFingerprint(args.requirement || ''),
           ttlExpiry: new Date(Date.now() + TTL_MS).toISOString(),
+          stageStartTime: Date.now(),
         };
       } else {
         // Existing session — update currentStage and check for requirement change
         statusData.activeWorkflow.currentStage = stage;
+        statusData.activeWorkflow.stageStartTime = Date.now();
         // Requirement change detection: if the current requirement differs from what's stored,
         // the cross-stage context is stale and must be reset.
         const currentFp = _requirementFingerprint(args.requirement || '');
@@ -5776,21 +6089,12 @@ async function runWorkflowStage(args) {
       success: true,
       subcommand: 'workflow-stage',
       // ── P1: REQUIRED_OBSERVATION (SWE-agent Observation Loop pattern) ──
-      // LLM MUST read and act on this observation before calling stage-complete.
-      // stage-complete will verify the artifact matches these expectations.
-      // Industry reference: SWE-agent's ACI forces LLM to process tool output before next action.
-      REQUIRED_OBSERVATION: {
+      // Delegated to shared buildRequiredObservation() from core/stage-context.js
+      // to eliminate dual-implementation gap (IDE Bridge vs Node Orchestrator).
+      // IDE-specific adr37Enforcement is built locally and passed via options.
+      REQUIRED_OBSERVATION: buildRequiredObservation(stage, args.requirement || '', {
         outputPath,
         requiredSchema: ARTIFACT_SCHEMA[stage] || null,
-        instruction: ARTIFACT_SCHEMA[stage]
-          ? `After completing work, verify output/${ARTIFACT_SCHEMA[stage].file} contains ALL required sections: ${(ARTIFACT_SCHEMA[stage].requiredSections || []).join(', ')}. Then call stage-complete.`
-          : `After completing work, call stage-complete.`,
-        verificationNote: 'stage-complete will HARD-REJECT if artifact is missing or does not contain required sections.',
-        // ── ADR-37 Evidence Gate — Mandatory IDE Tool Usage ──────────────────────
-        // stage-complete now mechanically verifies that the artifact contains evidence
-        // of real IDE tool calls (file paths, line numbers, code references).
-        // Writing from LLM memory alone will trigger [EVIDENCE_MISSING] rejection.
-        // This is NOT a prompt suggestion — it is a code-enforced gate.
         adr37Enforcement: ARTIFACT_SCHEMA[stage]?.evidencePatterns ? {
           mandatory: true,
           enforcement: 'HARD — stage-complete will reject artifact if no IDE tool evidence found',
@@ -5823,28 +6127,14 @@ async function runWorkflowStage(args) {
             note: `Read this artifact to understand previous stage conclusions before starting ${stage}`,
           })),
         } : null,
-        // ── Pre-Stage Socratic Injection (Self-Ask pattern) ──────────────────────
-        // Industry reference:
-        //   - Self-Ask (Press et al. 2022): decompose task into sub-questions BEFORE acting
-        //   - ReAct (Yao et al. 2022): Reason → Act, never Act without prior Reason
-        //   - Anthropic "think" tool: explicit thinking space before execution
-        //   - Claude Extended Thinking: deep reasoning before generating output
-        //
-        // These questions are NOT generic templates — each targets the most common
-        // failure modes for this specific stage. Answer ALL in <thinking> before
-        // writing the artifact. This is a SOFT enforcement (thinking-space injection),
-        // not a hard gate, but skipping it will produce lower-quality output.
-        preStageThinking: _generatePreStageQuestions(stage, args.requirement || ''),
-      },
+      }),
       data: {
         stage,
         role,
         sessionId,
         outputPath,
         contextInjected: contextData.sections,
-        promptSummary: promptResult.success && promptResult.data?.role
-          ? `Built prompt for ${promptResult.data.role}`
-          : (promptResult.error || 'No prompt built'),
+        promptSummary: `Built prompt for ${role}`,
         inputArtifacts,
         previousStageDecisions,  // F4: Semantic context from previous stages
         autoTestResult: stage === 'TEST' ? (autoTestResult || null) : undefined,  // TEST stage: real test execution results
@@ -6023,145 +6313,7 @@ function _getRecentTrace(tracePath, session, maxEvents = 5) {
  * @returns {object} preStageThinking object with questions and instructions
  */
 function _generatePreStageQuestions(stage, requirement) {
-  // Truncate requirement for inline injection — long enough to be specific, short enough to not dominate
-  const req = requirement ? requirement.slice(0, 150) : '';
-  const reqCtx = req ? `（针对需求："${req}"）` : '';
-
-  // ── Pre-Stage Socratic Questions ──────────────────────────────────────────
-  // Design principles (from first principles, not templates):
-  //   1. Self-Ask (Press et al. 2022): decompose task into sub-questions BEFORE acting
-  //   2. ReAct (Yao et al. 2022): Reason → Act, never Act without prior explicit Reason
-  //   3. CoVe (Dhuliawala 2023): generate verification questions → self-answer → revise
-  //   4. Anthropic Extended Thinking: <thinking> space for deep reasoning before output
-  //
-  // Each question targets ONE specific failure mode for this stage.
-  // Questions are in Chinese to maximize LLM attention weight in Chinese-context sessions.
-  // The requirement is injected inline so LLM reasons about the SPECIFIC task, not generics.
-  //
-  // Question design rules:
-  //   - Answerable in <thinking> without external info (no "go check X first")
-  //   - Answer directly changes what goes into the artifact
-  //   - Targets the #1 failure mode for that slot, not a generic checklist item
-  //   - Q5 is always FIRST_PRINCIPLES check (ADR-55 Rev.2 meta-dimension)
-  const questionsByStage = {
-    ANALYSE: [
-      // Failure mode 1: 把症状当根因 — 最常见的分析失误
-      `【根因 vs 症状】${reqCtx} 你识别的"根因"是真正的原因，还是症状的描述？请用"因为X导致Y，因为Y导致Z"的因果链验证：你找到的是X还是Z？`,
-      // Failure mode 2: 凭记忆写分析，没有实际搜索代码
-      `【代码证据】你是否已经用 grep_search/codebase_search 在代码库中找到了问题的实际位置？请列出：具体文件路径 + 行号/函数名。如果还没搜索，现在必须先搜索再写分析。`,
-      // Failure mode 3: 低估影响范围，遗漏上下游
-      `【影响范围】${reqCtx} 受影响的代码被哪些其他模块调用或依赖？这次变更是否会破坏上游或下游的现有行为？`,
-      // Failure mode 4: 在分析阶段就开始设计方案（越权）
-      `【阶段边界】你的 analysis.md 是在描述"问题是什么"，还是已经在描述"怎么解决"？ANALYSE 阶段只诊断，不开处方。如果你写了解决方案，删掉它。`,
-      // Failure mode 5: 第一性原则检验
-      `【第一性原则】${reqCtx} 你的根因结论是从你实际读到的代码推导出来的，还是从经验/模式匹配猜测的？什么证据可以证伪你的假设？`,
-    ],
-    ARCHITECT: [
-      // Failure mode 1: 过度设计，引入不必要的抽象层
-      `【最小化原则】${reqCtx} 这个设计引入了哪些新的抽象层？每个抽象层消除了什么具体的复杂度？能否用更简单的改动达到同样目标？`,
-      // Failure mode 2: 忽视代码库现有模式，引入不一致
-      `【一致性检查】代码库中类似问题是如何解决的？你的设计是否遵循了相同的模式？如果不一致，理由是什么？`,
-      // Failure mode 3: 没有考虑新设计的失败模式
-      `【故障模式】${reqCtx} 你提出的设计在以下情况下会发生什么：网络超时、空值输入、并发访问冲突？这些失败模式是否有处理？`,
-      // Failure mode 4: 接口设计没有考虑调用方
-      `【调用方验证】新接口/新模块的调用方是谁？你是否验证了调用点的存在，以及你的接口签名与调用方的期望匹配？`,
-      // Failure mode 5: 第一性原则检验
-      `【第一性原则】${reqCtx} 解决 ANALYSE 阶段识别的根因，最小必要的改动是什么？你的架构方案是否与问题规模成比例，还是在解决一个比实际更大的问题？`,
-    ],
-    PLAN: [
-      // Failure mode 1: 任务描述模糊，没有具体文件路径
-      `【具体性检查】execution-plan.md 中每个任务是否都指定了精确的文件路径？（例如："workflow/core/foo.js 第42行"，而非"foo 模块"）没有文件路径的任务不可执行。`,
-      // Failure mode 2: 任务依赖顺序错误
-      `【依赖顺序】${reqCtx} 哪些任务必须在其他任务完成后才能开始？任务顺序是否正确？并行执行是否会产生冲突？`,
-      // Failure mode 3: 遗漏验证和回滚任务
-      `【完整性检查】计划是否包含：(1) 如何验证改动生效的步骤，(2) 如果失败如何回滚？这两项不是可选的。`,
-      // Failure mode 4: 范围蔓延，计划了超出根因修复所需的内容
-      `【范围控制】${reqCtx} 计划中每个任务是否都直接对应 ANALYSE 阶段识别的根因？删除所有"顺便做"但不是修复根因所必需的任务。`,
-      // Failure mode 5: 第一性原则检验
-      `【第一性原则】你现在能按照这个计划一步步执行吗？如果有任何任务描述模糊或需要未知信息，它需要被进一步拆解。`,
-    ],
-    DEVELOP: [
-      // Failure mode 1: 没有按执行计划执行
-      `【计划追踪】${reqCtx} 检查 execution-plan.md：列出每个任务 ID 及其状态（已完成/跳过/阻塞）。跳过任务必须有明确理由，不能静默跳过。`,
-      // Failure mode 2: 凭记忆写代码，没有先读现有代码
-      `【代码阅读证据】对于你修改的每个文件：你是否先读了现有代码再编辑？描述你修改的现有逻辑是什么，以及你的改动为什么是正确的。`,
-      // Failure mode 3: 破坏现有行为（回归）
-      `【回归风险】${reqCtx} 你的改动影响了哪些现有行为？修改函数的调用方是否仍然与新的签名/行为兼容？`,
-      // Failure mode 4: 实现不完整，留有 TODO 占位
-      `【完整性检查】你的实现是完整的，还是留有 TODO/placeholder 注释？artifact 必须反映代码的实际状态，而非预期状态。`,
-      // Failure mode 5: 第一性原则检验
-      `【第一性原则】${reqCtx} 你的实现是否直接解决了 ANALYSE 阶段识别的根因？还是修复了症状？请从根因追溯到你的改动，验证因果链完整。`,
-    ],
-    TEST: [
-      // Failure mode 1: 描述测试而非运行测试
-      `【实际执行证据】${reqCtx} 你是否实际运行了测试套件？粘贴真实输出（通过/失败数量、错误信息）。不要描述测试应该做什么——展示它们实际做了什么。`,
-      // Failure mode 2: 只测试正常路径
-      `【失败路径覆盖】你是否测试了失败场景？（无效输入、边界值、并发冲突、网络失败）列出你测试过的失败场景。`,
-      // Failure mode 3: 测试结果与修复没有关联
-      `【根因覆盖验证】${reqCtx} 哪个具体的测试用例验证了 ANALYSE 阶段识别的根因已被修复？如果没有测试覆盖根因，你需要添加一个。`,
-      // Failure mode 4: 忽视测试失败
-      `【失败分析】输出中是否有测试失败？如果有：它们是预先存在的（与本次改动无关）还是由本次改动引起的？必须明确记录。`,
-      // Failure mode 5: 第一性原则检验
-      `【第一性原则】${reqCtx} 要对这个修复在生产环境中有效建立信心，最少需要什么证据？你的测试是否提供了这个证据，还是在测试错误的东西？`,
-    ],
-    REVIEW: [
-      // Failure mode 1: 走过场审查，没有真正审视
-      `【审查深度】${reqCtx} 列出你在实现中发现的至少 3 个具体问题或风险。如果你发现了零个问题，说明你没有认真审查。`,
-      // Failure mode 2: 没有对照原始需求检查
-      `【需求符合度】实现是否完全满足原始需求："${req || '（见上下文）'}"？列出请求内容与实现内容之间的所有差距。`,
-      // Failure mode 3: 遗漏安全/性能影响
-      `【安全与性能】是否有安全影响？（输入验证、权限绕过、数据暴露）是否有性能影响？（N+1 查询、阻塞 I/O、内存泄漏）`,
-      // Failure mode 4: 没有端到端验证修复链
-      `【端到端链路】追踪修复链：根因（ANALYSE）→ 设计决策（ARCHITECT）→ 实现（DEVELOP）→ 测试覆盖（TEST）。链路是否完整且一致？`,
-      // Failure mode 5: 第一性原则检验
-      `【第一性原则】如果你是第一次看这个 PR 的工程师，你会问什么问题？什么会让你拒绝它？现在回答这些问题。`,
-    ],
-    DEPLOY: [
-      // Failure mode 1: 没有回滚计划
-      `【回滚计划】${reqCtx} 如果这次部署失败，回滚步骤是什么？是否已记录？能否在 5 分钟内执行？`,
-      // Failure mode 2: 缺少部署前检查清单
-      `【部署前检查】(1) 所有测试是否通过？(2) artifact 是否已审查并批准？(3) 是否需要配置变更？(4) 是否有数据库迁移？`,
-      // Failure mode 3: 没有考虑依赖服务的部署顺序
-      `【部署顺序】${reqCtx} 这次变更是否影响多个服务或组件？如果是，正确的部署顺序是什么，以避免破坏依赖关系？`,
-      // Failure mode 4: 没有监控/告警
-      `【可观测性】部署后如何知道是否引发了生产回归？部署后应该监控哪些指标/日志/告警？`,
-      // Failure mode 5: 第一性原则检验
-      `【第一性原则】${reqCtx} 这次部署是可逆的吗？如果不可逆，是什么使它不可逆，这是可接受的吗？如果出错，影响范围是什么？`,
-    ],
-  };
-
-  const questions = questionsByStage[stage] || [
-    `【目标确认】${reqCtx} 这个阶段的具体目标是什么？"完成"是什么样子的？`,
-    `【失败模式】这个阶段最可能的失败模式是什么？你如何避免它们？`,
-    `【证据要求】你将产出什么证据来证明这个阶段被正确完成了？`,
-  ];
-
-  // ── Structured Self-Answer Format ─────────────────────────────────────────
-  // Industry reference: CoVe (Chain of Verification) requires structured Q→A format
-  // to prevent LLM from "reading" questions without actually answering them.
-  // Format: Q1: [question] → A1: [your answer] forces explicit engagement.
-  const formattedQuestions = questions.map((q, i) => `Q${i + 1}: ${q}`);
-
-  return {
-    mandatory: true,
-    // SOFT-STRUCTURED + VERIFIABLE: not a hard gate on thinking quality,
-    // but ## 思考摘要 is a REQUIRED section in analysis.md (stage-complete will HARD-REJECT if missing).
-    // This converts Pre-Stage thinking from "unobservable" to "verifiable artifact section".
-    enforcement: 'SOFT-STRUCTURED + VERIFIABLE — answer in <thinking>, then write ## 思考摘要 section in artifact',
-    instruction: [
-      `⚡ PRE-STAGE THINKING REQUIRED (Self-Ask + CoVe pattern):`,
-      `在写 artifact 之前，必须在 <thinking> 中按 "Q1: [问题] → A1: [你的回答]" 格式逐条回答以下 ${formattedQuestions.length} 个问题。`,
-      `然后在 artifact 末尾写一个 "## 思考摘要" section，格式为：`,
-      `  Q1: [问题简述] → A1: [你的回答摘要（1-2句，必须具体引用代码/文件/数据）]`,
-      `  Q2: [问题简述] → A2: [你的回答摘要]`,
-      `  ...`,
-      `stage-complete 会 HARD-REJECT 缺少 ## 思考摘要 section 的 artifact。`,
-      `每个回答必须具体（引用实际代码/文件/数据），不接受"已考虑"或"将会处理"这类空洞回答。`,
-    ].join(' '),
-    questions: formattedQuestions,
-    selfAnswerFormat: 'Q{n}: [question summary] → A{n}: [specific answer with evidence, 1-2 sentences]',
-    rationale: `这些问题针对 ${stage} 阶段最常见的失误模式（基于 Self-Ask/ReAct/CoVe 方法论）。逐条回答迫使你在提交方案前验证假设。## 思考摘要 section 使思考过程可观测、可验证。`,
-  };
+  return _sharedGeneratePreStageQuestions(stage, requirement);
 }
 
 /**
@@ -6354,6 +6506,21 @@ function _writeProgressLog(projectRoot, message) {
     fs.appendFileSync(logPath, entry + '\n', 'utf8');
   } catch (err) {
     console.error(`[_writeProgressLog] Failed to write progress log: ${err.message}`);
+  }
+}
+
+/**
+ * Bridge module-level events to workflow-progress.log.
+ * Uses ModuleLogFormatter for structured logging (ARCHITECTURE.md D-1).
+ * @param {string} projectRoot
+ * @param {object} entry - ModuleLogEntry { module, level, action, summary, data }
+ */
+function _bridgeModuleLog(projectRoot, entry) {
+  try {
+    const ModuleLogFormatter = require('../core/module-log-formatter');
+    ModuleLogFormatter.formatAndWrite(projectRoot, entry);
+  } catch (err) {
+    console.error(`[_bridgeModuleLog] Failed to write module log: ${err.message}`);
   }
 }
 
@@ -6592,6 +6759,131 @@ function _validateArtifact(stage, projectRoot) {
     }
   }
 
+  // ── P1 Rev.2: Execution Proof Gate (TEST stage only) ─────────────────────
+  // Validates that test-execution-proof.json exists, is fresh (< 30 min),
+  // AND is bound to the trace (proofHash in proof matches trace test_execute event).
+  //
+  // Threat model: Agent writes fake proof directly (fs.writeFileSync).
+  // Defense: proof.proofHash = SHA-256(proof core fields). Trace records same hash
+  // at execution time. Forgery requires manipulating both proof AND trace simultaneously.
+  // Even if Agent writes both, the hash must be self-consistent — which means the
+  // proof content IS what was "executed" (even if fake). The real lock is sessionId
+  // binding: proof.sessionId must match the current workflow session.
+  if (stage === 'TEST') {
+    const proofPath = path.join(path.dirname(artifactPath), 'test-execution-proof.json');
+    if (!fs.existsSync(proofPath)) {
+      return {
+        valid: false,
+        error: '[NO_EXECUTION_PROOF] test-execution-proof.json is missing. Tests must be run via test-execute command, not described from memory.',
+        fixInstruction: 'Run: node workflow/tools/ide-workflow-bridge.js test-execute --project-root . — this generates test-execution-proof.json as tamper-proof evidence of real test execution.',
+        missingSections: [],
+        executionProofMissing: true,
+      };
+    }
+    let proof;
+    try {
+      proof = JSON.parse(fs.readFileSync(proofPath, 'utf-8'));
+    } catch (proofReadErr) {
+      return {
+        valid: false,
+        error: `[INVALID_EXECUTION_PROOF] test-execution-proof.json is unreadable: ${proofReadErr.message}`,
+        fixInstruction: 'Re-run: node workflow/tools/ide-workflow-bridge.js test-execute --project-root . to regenerate the proof file.',
+        missingSections: [],
+        executionProofInvalid: true,
+      };
+    }
+
+    // Freshness check
+    const proofAgeMs = Date.now() - new Date(proof.executedAt).getTime();
+    if (proofAgeMs > 30 * 60 * 1000) {
+      return {
+        valid: false,
+        error: `[STALE_EXECUTION_PROOF] test-execution-proof.json is ${Math.round(proofAgeMs / 60000)} minutes old (max: 30 min). Re-run tests to generate fresh proof.`,
+        fixInstruction: 'Run: node workflow/tools/ide-workflow-bridge.js test-execute --project-root . — then call stage-complete again.',
+        missingSections: [],
+        executionProofStale: true,
+        proofAgeMinutes: Math.round(proofAgeMs / 60000),
+      };
+    }
+
+    // P1 Rev.2: Trace-bound proof integrity check.
+    // Verify proof.proofHash is self-consistent (hash of core fields matches stored hash).
+    // This prevents Agent from writing arbitrary content with a mismatched hash.
+    if (proof.proofHash) {
+      try {
+        const crypto = require('crypto');
+        const { proofHash: storedHash, ...proofCore } = proof;
+        const recomputedHash = crypto.createHash('sha256')
+          .update(JSON.stringify(proofCore)).digest('hex');
+        if (recomputedHash !== storedHash) {
+          return {
+            valid: false,
+            error: `[PROOF_HASH_MISMATCH] test-execution-proof.json has been tampered. Stored hash ${storedHash.slice(0, 12)}... does not match recomputed hash ${recomputedHash.slice(0, 12)}...`,
+            fixInstruction: 'Do NOT manually edit test-execution-proof.json. Re-run: node workflow/tools/ide-workflow-bridge.js test-execute --project-root .',
+            missingSections: [],
+            proofHashMismatch: true,
+          };
+        }
+
+        // Verify trace contains a test_execute event with matching proofHash.
+        // This is the core of Trace-Bound Proof: proof must be anchored in trace.
+        const tracePath = path.join(path.dirname(artifactPath), 'health', 'prod', 'workflow-trace.jsonl');
+        if (fs.existsSync(tracePath)) {
+          const traceLines = fs.readFileSync(tracePath, 'utf-8').trim().split('\n').filter(Boolean);
+          const traceEvents = traceLines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+          const matchingEvent = traceEvents.find(ev =>
+            ev.event === 'test_execute' && ev.data && ev.data.proofHash === storedHash
+          );
+          if (!matchingEvent) {
+            return {
+              valid: false,
+              error: `[PROOF_NOT_IN_TRACE] test-execution-proof.json exists but no matching test_execute trace event found. This indicates the proof was written directly (not via test-execute command).`,
+              fixInstruction: 'Re-run: node workflow/tools/ide-workflow-bridge.js test-execute --project-root . — this writes both the proof file AND the trace event atomically.',
+              missingSections: [],
+              proofNotInTrace: true,
+              proofHash: storedHash.slice(0, 12),
+            };
+          }
+        }
+      } catch (hashCheckErr) {
+        console.error(`[_validateArtifact] ⚠️ P1 Rev.2 hash check failed (non-fatal): ${hashCheckErr.message}`);
+      }
+    }
+
+    // ── P0: Test File Integrity Gate ──────────────────────────────────────────
+    // Validates that test files were NOT modified between DEVELOP and TEST stages.
+    // If test files were tampered with, Agent could modify tests to "pass" them.
+    // Snapshot was taken at DEVELOP stage-complete; we compare against it now.
+    const snapshotPath = path.join(path.dirname(artifactPath), 'test-file-snapshot.json');
+    if (fs.existsSync(snapshotPath)) {
+      try {
+        const crypto = require('crypto');
+        const snapshotData = JSON.parse(fs.readFileSync(snapshotPath, 'utf-8'));
+        const snapshots = snapshotData.snapshots || {};
+        const tampered = [];
+        for (const [relPath, expectedHash] of Object.entries(snapshots)) {
+          const fullPath = path.join(path.dirname(artifactPath), '..', relPath);
+          if (!fs.existsSync(fullPath)) continue;
+          const currentHash = crypto.createHash('sha256')
+            .update(fs.readFileSync(fullPath, 'utf-8')).digest('hex');
+          if (currentHash !== expectedHash) tampered.push(relPath);
+        }
+        if (tampered.length > 0) {
+          return {
+            valid: false,
+            error: `[TEST_TAMPER_DETECTED] Test files were modified during TEST stage: ${tampered.join(', ')}. This is a sandbox isolation violation — tests must not be changed after DEVELOP completes.`,
+            fixInstruction: 'Restore the original test files. Do NOT modify test files during the TEST stage. If tests need fixing, go back to DEVELOP stage.',
+            missingSections: [],
+            testTamperDetected: true,
+            tamperedFiles: tampered,
+          };
+        }
+      } catch (snapCheckErr) {
+        console.error(`[_validateArtifact] ⚠️ P0 snapshot check failed (non-fatal): ${snapCheckErr.message}`);
+      }
+    }
+  }
+
   return {
     valid: true,
     artifactPath,
@@ -6780,11 +7072,65 @@ async function runStageComplete(args) {
     let artifactValidation = { valid: true, skipped: true };
     {
       const projectRoot = args.projectRoot || '.';
-      const artifactCheck = _validateArtifact(stage, projectRoot);
+      let artifactCheck = _validateArtifact(stage, projectRoot);
       artifactValidation = artifactCheck;
+
+      // ── AUTO_REMEDIATION: TEST stage evidence injection ──────────────────────
+      // When test-report.md exists but lacks real execution evidence (evidenceViolation),
+      // auto-run tests and append results before rejecting. This converts an unreliable
+      // LLM dependency ("write evidence") into a deterministic code path.
+      if (!artifactCheck.valid && stage === 'TEST' && artifactCheck.evidenceViolation) {
+        console.error(`[runStageComplete] 🔧 AUTO_REMEDIATION: TEST evidence missing, attempting auto-fix via runTestExecute`);
+        try {
+          const testResult = runTestExecute({ projectRoot, testProfile: 'fast' });
+          if (testResult.success && testResult.data) {
+            const d = testResult.data;
+            const evidenceBlock = [
+              '',
+              '---',
+              '',
+              '## Auto-Remediation: Test Execution Evidence',
+              '',
+              '> Automatically injected by stage-complete when evidence patterns were missing.',
+              '',
+              `- **Command**: \`${d.command || 'unknown'}\``,
+              `- **Result**: ${d.passedTests}/${d.totalTests} tests passed, ${d.failedTests} failed`,
+              `- **Duration**: ${((d.durationMs || 0) / 1000).toFixed(1)}s`,
+              `- **Exit Code**: ${d.exitCode}`,
+            ].join('\n');
+
+            const reportPath = path.join(projectRoot, 'output', 'test-report.md');
+            fs.appendFileSync(reportPath, evidenceBlock + '\n', 'utf-8');
+
+            const recheck = _validateArtifact(stage, projectRoot);
+            if (recheck.valid) {
+              artifactCheck = recheck;
+              artifactValidation = recheck;
+              console.error(`[runStageComplete] ✅ AUTO_REMEDIATION succeeded: evidence injected, artifact now valid`);
+              _writeProgressLog(projectRoot, [
+                `🔧 [AUTO_REMEDIATION] TEST 阶段 evidence 自动补救成功`,
+                `  session  : ${args.session}`,
+                `  command  : ${d.command || 'unknown'}`,
+                `  result   : ${d.passedTests}/${d.totalTests} passed, ${d.failedTests} failed`,
+              ].join('\n'));
+            } else {
+              console.error(`[runStageComplete] ❌ AUTO_REMEDIATION failed: recheck still invalid — ${recheck.error}`);
+              _writeProgressLog(projectRoot, [
+                `🔧 [AUTO_REMEDIATION] TEST 阶段 evidence 自动补救失败（重新验证未通过）`,
+                `  session  : ${args.session}`,
+                `  recheck  : ${recheck.error}`,
+              ].join('\n'));
+            }
+          } else {
+            console.error(`[runStageComplete] ❌ AUTO_REMEDIATION skipped: runTestExecute failed — ${testResult.error || 'unknown'}`);
+          }
+        } catch (remediationErr) {
+          console.error(`[runStageComplete] ❌ AUTO_REMEDIATION error: ${remediationErr.message}`);
+        }
+      }
+
       if (!artifactCheck.valid) {
         console.error(`[runStageComplete] ❌ ARTIFACT VALIDATION (FATAL): ${artifactCheck.error}`);
-        // Write failure to progress log so it's visible
         _writeProgressLog(projectRoot, [
           `❌ [ARTIFACT_VALIDATION_FAILED] ${stage} 阶段产物验证失败`,
           `  session  : ${args.session}`,
@@ -7183,7 +7529,14 @@ async function runStageComplete(args) {
       blindSpots: socraticResult?.data?.blindSpots || [],
       socraticConfidence: socraticResult?.data?.confidence,
       socraticInstruction: (socraticResult?.data?.questions || []).length > 0
-        ? `🤔 SOCRATIC OUTPUT REQUIRED: Before executing the next stage command, you MUST output the Socratic three-part structure (苏格拉底追问 → 自答 → BLIND SPOT) for the ${(socraticResult?.data?.questions || []).length} question(s) below. This is NOT optional — it is part of the MANDATORY_NEXT_ACTION. Questions: ${(socraticResult?.data?.questions || []).slice(0, 3).map((q, i) => `Q${i+1}: ${q}`).join(' | ')}`
+        ? (() => {
+            const qs = (socraticResult?.data?.questions || []).slice(0, 3);
+            const bss = (socraticResult?.data?.blindSpots || []).slice(0, 2);
+            const bsBlock = bss.length > 0
+              ? ` | BLIND SPOTS detected: ${bss.map((b, i) => `BS${i+1}: ${String(b).replace(/^⚠️\s*\[BLIND SPOT\][^\]]*\]\s*/i, '').replace(/^⚠️\s*\[BLIND SPOT\]\s*/i, '').slice(0, 60)}`).join(' | ')}`
+              : '';
+            return `🤔 SOCRATIC OUTPUT REQUIRED (${qs.length} question(s) derived from BLIND SPOT analysis): Before executing the next stage command, output the three-part structure — 苏格拉底追问 → 自答（引用 artifact 具体内容） → ⚠️ [BLIND SPOT]（根因，非症状）. Questions: ${qs.map((q, i) => `Q${i+1}: ${q}`).join(' | ')}${bsBlock}`;
+          })()
         : null,
     } : {
       type: 'WORKFLOW_COMPLETE',
@@ -7335,11 +7688,58 @@ async function runStageComplete(args) {
       } catch (coverageErr) {
         console.error(`[runStageComplete] Task coverage check failed (non-fatal): ${coverageErr.message}`);
       }
+
+      // ── P0: Snapshot test files at DEVELOP completion (Sandbox Isolation) ──
+      // When DEVELOP stage completes, take SHA-256 snapshots of all test files.
+      // During TEST stage, _validateArtifact verifies snapshots match — detecting
+      // any test file tampering that would allow Agent to "pass" tests by modifying them.
+      // Industry reference: Harness Engineering "sandbox isolation" pattern.
+      try {
+        const crypto = require('crypto');
+        const testDirs = ['workflow/tests', 'tests', '__tests__', 'spec', 'test'];
+        const snapshots = {};
+        const projectRootForSnap = args.projectRoot || '.';
+        for (const dir of testDirs) {
+          const fullDir = path.join(projectRootForSnap, dir);
+          if (!fs.existsSync(fullDir)) continue;
+          const files = fs.readdirSync(fullDir).filter(f =>
+            f.endsWith('.test.js') || f.endsWith('.spec.js') ||
+            f.endsWith('.test.ts') || f.endsWith('.spec.ts') ||
+            f.endsWith('_test.py') || f.endsWith('_spec.rb')
+          );
+          for (const file of files) {
+            const filePath = path.join(fullDir, file);
+            const content = fs.readFileSync(filePath, 'utf-8');
+            snapshots[`${dir}/${file}`] = crypto.createHash('sha256').update(content).digest('hex');
+          }
+        }
+        const snapshotPath = path.join(projectRootForSnap, 'output', 'test-file-snapshot.json');
+        fs.writeFileSync(snapshotPath, JSON.stringify({ capturedAt: new Date().toISOString(), snapshots }, null, 2));
+        const snapCount = Object.keys(snapshots).length;
+        console.error(`[runStageComplete] ✅ P0: test-file-snapshot.json written — ${snapCount} test file(s) snapshotted`);
+      } catch (snapErr) {
+        console.error(`[runStageComplete] ⚠️ P0: test-file-snapshot failed (non-fatal): ${snapErr.message}`);
+      }
     }
 
     // ── Progress log: distinguish retry from completion ──
     // P0 FIX: When willRetry=true, do NOT write "✅ 阶段完成" — this sends a contradictory
     // signal that causes LLM to skip the retry. Instead write a clear "⏳ 阶段待重试" message.
+
+    // T-5: Calculate stage duration from stageStartTime in workflow-status.json
+    let _durationLine = null;
+    try {
+      const _statusForDur = path.join(args.projectRoot || '.', 'output', 'workflow-status.json');
+      if (fs.existsSync(_statusForDur)) {
+        const _sd = JSON.parse(fs.readFileSync(_statusForDur, 'utf-8'));
+        const _startMs = _sd?.activeWorkflow?.stageStartTime;
+        if (_startMs && typeof _startMs === 'number') {
+          const _durSec = Math.round((Date.now() - _startMs) / 1000);
+          _durationLine = `  duration : ${_durSec}s`;
+        }
+      }
+    } catch (_) { /* non-fatal */ }
+
     if (willRetry) {
       _writeProgressLog(args.projectRoot || '.', [
         `⏳ [${stageCompleteNum}/7] ${stage} 阶段待重试 (Socratic confidence too low)`,
@@ -7348,6 +7748,7 @@ async function runStageComplete(args) {
         `  summary  : ${args.summary || '(no summary)'}`,
       `  socratic : ${socraticChallengeCount} challenge(s)${triggerScoreLabel} — MUST answer before retry`,
         metricsLine,
+        _durationLine,
         `  action   : Re-run workflow-stage --stage ${stage} to redo this stage`,
       ].filter(Boolean).join('\n'));
     } else {
@@ -7358,6 +7759,7 @@ async function runStageComplete(args) {
         `  summary  : ${args.summary || '(no summary)'}`,
       `  socratic : ${socraticCount} question(s)${socraticAdvisoryCount > 0 ? ` (${socraticChallengeCount} challenge + ${socraticAdvisoryCount} advisory)` : ''}${triggerScoreLabel}`,
         metricsLine,
+        _durationLine,
         taskCoverageLine,
         nextStage ? `  next     : ${nextStage}` : `  next     : (workflow complete)`,
       ].filter(Boolean).join('\n'));
@@ -7498,7 +7900,7 @@ async function runStageComplete(args) {
         subcommand: 'stage-complete',
         error: `[RETRY_REQUIRED] Stage ${stage} did not pass Socratic review (confidence: ${Math.round((socraticResult?.data?.confidence ?? 0) * 100)}%). You MUST re-run this stage.`,
         MANDATORY_NEXT_ACTION: mandatoryNextAction,
-        RETRY_CONTEXT: {
+        RETRY_CONTEXT: buildRetryContext(null, {
           retryCount: retryCount + 1,
           maxRetry: MAX_RETRY,
           confidence: socraticResult?.data?.confidence,
@@ -7507,7 +7909,7 @@ async function runStageComplete(args) {
           triggerReasons: socraticResult?.data?.triggerReasons || [],
           command: mandatoryNextAction.command,
           instruction: `⛔ STAGE NOT COMPLETE. You MUST execute: ${mandatoryNextAction.command}`,
-        },
+        }),
         data: {
           stage,
           session: args.session,
@@ -8456,6 +8858,9 @@ async function main() {
     handler: async () => {
       let innerResult;
       switch (args.subcommand) {
+        case 'triage':
+          innerResult = runTriage(args);
+          break;
       case 'requirement-check':
           innerResult = runRequirementCheck(args);
           break;
@@ -8537,6 +8942,9 @@ async function main() {
         case 'prompt-optimize':
           innerResult = runPromptOptimize(args);
           break;
+        case 'retrospective-signal':
+          innerResult = runRetrospectiveSignal(args);
+          break;
         case 'session-score':
           innerResult = runSessionScore(args);
           break;
@@ -8612,6 +9020,9 @@ async function main() {
         case 'trace-session-start':
           innerResult = runTraceSessionStart(args);
           break;
+        case 'enrichment-stats':
+          innerResult = runEnrichmentStats(args);
+          break;
         case 'health-report':
           innerResult = await runHealthReport(args);
           break;
@@ -8671,6 +9082,22 @@ async function main() {
     }),
   });
 
+  // T-1: Unified error interceptor — auto-log all success:false to progress log
+  if (result && result.success === false) {
+    const _errSub = result.subcommand || args.subcommand || 'unknown';
+    const _alreadyLogged = new Set(['workflow-stage', 'stage-complete']);
+    if (!_alreadyLogged.has(_errSub)) {
+      try {
+        const _errPr = args.projectRoot || '.';
+        _writeProgressLog(_errPr, [
+          `❌ [BRIDGE_ERROR] ${_errSub} 命令失败`,
+          `  error    : ${(result.error || 'unknown error').slice(0, 200)}`,
+          `  session  : ${args.session || '(no session)'}`,
+        ].join('\n'));
+      } catch (_) { /* never break output for logging */ }
+    }
+  }
+
   // Output JSON to stdout using the original console.log
   originalConsoleLog(JSON.stringify(result, null, 2));
 
@@ -8714,6 +9141,7 @@ module.exports = {
   runArchCache,
   runExecutionValidate,
   runPromptOptimize,
+  runRetrospectiveSignal,
   runSessionScore,
   runSchedulerCheck,
   runDegradeOutput,

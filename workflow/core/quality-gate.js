@@ -232,25 +232,45 @@ class QualityGate {
       });
     }
 
-    // Gate 6: File size compliance (architecture-constraints.md)
+    // Gate 6: File size compliance — advisory (legacy/stock files)
+    // Scans ALL files but does NOT affect overall passed/failed.
+    // Violations are recorded for visibility in progress log.
     if (metrics.projectRoot) {
-      const violations = QualityGate._checkFileSizeCompliance(metrics.projectRoot);
-      const fileSizePassed = violations.length === 0;
+      const allViolations = QualityGate._checkFileSizeCompliance(metrics.projectRoot);
+      const fileSizePassed = allViolations.length === 0;
       gates.push({
         name: 'fileSizeCompliance',
         passed: fileSizePassed,
-        actual: fileSizePassed ? '0 violations' : `${violations.length} file(s) over limit`,
+        advisory: true,
+        actual: fileSizePassed ? '0 violations' : `${allViolations.length} file(s) over limit`,
         threshold: '0 violations',
         message: fileSizePassed
           ? 'All files within architecture line-count limits'
-          : `File size violations: ${violations.map(v => `${v.file} (${v.lines}/${v.limit})`).join(', ')}`,
+          : `File size violations (advisory): ${allViolations.map(v => `${v.file} (${v.lines}/${v.limit})`).join(', ')}`,
       });
+
+      // Gate 6b: File size compliance — strict (modified files only)
+      // Only runs when metrics.modifiedFiles is provided (non-empty array).
+      // Modified files that exceed limits cause a HARD FAIL.
+      if (Array.isArray(metrics.modifiedFiles) && metrics.modifiedFiles.length > 0) {
+        const modifiedViolations = QualityGate._checkFileSizeCompliance(metrics.projectRoot, metrics.modifiedFiles);
+        const modifiedPassed = modifiedViolations.length === 0;
+        gates.push({
+          name: 'fileSizeCompliance_modified',
+          passed: modifiedPassed,
+          actual: modifiedPassed ? '0 violations' : `${modifiedViolations.length} modified file(s) over limit`,
+          threshold: '0 violations',
+          message: modifiedPassed
+            ? 'All modified files within architecture line-count limits'
+            : `Modified file size violations: ${modifiedViolations.map(v => `${v.file} (${v.lines}/${v.limit})`).join(', ')}`,
+        });
+      }
     }
 
     // ─── EvoSkill: Diagnostic Mode Handling ─────────────────────────────────────
     // In diagnostic mode: record metrics but don't propagate to skill evolution
 
-    const failedGates = gates.filter(gt => !gt.passed);
+    const failedGates = gates.filter(gt => !gt.passed && !gt.advisory);
 
     if (this._gateMode === GATE_CONFIG_MODE.DIAGNOSTIC_ONLY) {
       // Record diagnostic entry
@@ -621,9 +641,10 @@ Keep total output under 500 characters. Be specific and actionable.`;
    *   - commands/commands-*.js: 500 lines
    *
    * @param {string} projectRoot — Project root directory
+   * @param {string[]|null} [filterFiles=null] — When provided, only check these files (paths like 'workflow/core/foo.js')
    * @returns {Array<{ file: string, lines: number, limit: number }>}
    */
-  static _checkFileSizeCompliance(projectRoot) {
+  static _checkFileSizeCompliance(projectRoot, filterFiles = null) {
     const workflowDir = path.join(projectRoot, 'workflow');
     if (!fs.existsSync(workflowDir)) return [];
 
@@ -636,6 +657,28 @@ Keep total output under 500 characters. Be specific and actionable.`;
     ];
 
     const violations = [];
+
+    // When filterFiles is provided, skip directory scanning and check only specified files
+    if (filterFiles && filterFiles.length > 0) {
+      const filterSet = new Set(filterFiles.map(f => f.replace(/\\/g, '/')));
+      for (const filePath of filterSet) {
+        const relPath = filePath.startsWith('workflow/') ? filePath.slice('workflow/'.length) : filePath;
+        for (const rule of FILE_SIZE_RULES) {
+          if (rule.pattern.test(relPath)) {
+            const fullPath = path.join(workflowDir, relPath);
+            try {
+              const content = fs.readFileSync(fullPath, 'utf-8');
+              const lineCount = content.split('\n').length;
+              if (lineCount > rule.limit) {
+                violations.push({ file: `workflow/${relPath}`, lines: lineCount, limit: rule.limit });
+              }
+            } catch (_) { /* non-fatal: file may not exist or not readable */ }
+            break;
+          }
+        }
+      }
+      return violations;
+    }
 
     const scanDir = (dir, relBase) => {
       let entries;

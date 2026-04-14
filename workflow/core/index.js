@@ -22,6 +22,11 @@ module.exports = {
   ...require('./context-loader'),
   ...require('./arch-knowledge-cache'),
   
+  // Self-Evolution Enhancement (Intent Tracking + Session Cache)
+  ...require('./intent-tracker'),
+  ...require('./session-error-cache'),
+  ...require('./evolution-loop-intent-mixin'),
+  
   // Orchestration
   ...require('./memory-manager'),
   

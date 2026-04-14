@@ -360,6 +360,9 @@ class Observability {
   /** Record the code graph build result. */
   recordCodeGraphResult({ symbolCount = 0, fileCount = 0, edgeCount = 0 } = {}) {
     this._codeGraphResult = { symbolCount, fileCount, edgeCount };
+    
+    // Bridge to workflow-progress.log (ARCHITECTURE.md D-1)
+    this._bridgeCodeGraphToProgressLog({ symbolCount, fileCount, edgeCount });
   }
 
   /**
@@ -397,6 +400,9 @@ class Observability {
         stageLabel: stageResult.stageLabel ?? null,
       });
     }
+
+    // Bridge to workflow-progress.log (ARCHITECTURE.md D-1)
+    this._bridgeExpUsageToProgressLog({ injected, hits, matchedExpIds, stageResult });
   }
 
   /**
@@ -416,6 +422,9 @@ class Observability {
         (this._skillInjectedCounts.get(normalised) || 0) + 1
       );
     }
+    
+    // Bridge to workflow-progress.log (ARCHITECTURE.md D-1)
+    this._bridgeSkillUsageToProgressLog(skillNames);
   }
 
   /**
@@ -738,6 +747,90 @@ class Observability {
     } catch (err) {
       console.warn(`[Observability] ⚠️  Failed to flush prompt traces: ${err.message}`);
       return 0;
+    }
+  }
+
+  // ─── Bridge to Progress Log (ARCHITECTURE.md D-1) ──────────────────────
+
+  /**
+   * Bridge experience usage events to workflow-progress.log.
+   * @private
+   */
+  _bridgeExpUsageToProgressLog({ injected, hits, matchedExpIds, stageResult }) {
+    try {
+      const ModuleLogFormatter = require('./module-log-formatter');
+      
+      // Infer log level from hit rate
+      const hitRate = injected > 0 ? hits / injected : 0;
+      const level = hitRate < 0.3 && injected > 0 ? 'WARN' : 'INFO';
+      
+      const entry = {
+        module: 'Experience',
+        level,
+        action: 'experience_usage_update',
+        summary: `injected=${injected}, hits=${hits}, hitRate=${(hitRate * 100).toFixed(1)}%`,
+      };
+      
+      if (matchedExpIds.length > 0) {
+        entry.data = { expIds: matchedExpIds.slice(0, 5) };
+      }
+      
+      const projectRoot = process.cwd();
+      ModuleLogFormatter.formatAndWrite(projectRoot, entry);
+    } catch (err) {
+      console.error(`[Observability] Bridge to progress log failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Bridge code graph events to workflow-progress.log.
+   * @private
+   */
+  _bridgeCodeGraphToProgressLog({ symbolCount, fileCount, edgeCount }) {
+    try {
+      const ModuleLogFormatter = require('./module-log-formatter');
+      
+      const entry = {
+        module: 'CodeGraph',
+        level: 'INFO',
+        action: 'codegraph_result',
+        summary: `symbols=${symbolCount}, files=${fileCount}, edges=${edgeCount}`,
+      };
+      
+      const projectRoot = process.cwd();
+      ModuleLogFormatter.formatAndWrite(projectRoot, entry);
+    } catch (err) {
+      console.error(`[Observability] Bridge to progress log failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Bridge skill usage events to workflow-progress.log.
+   * @private
+   */
+  _bridgeSkillUsageToProgressLog(skillNames) {
+    try {
+      const ModuleLogFormatter = require('./module-log-formatter');
+      
+      const normalisedSkills = (skillNames || [])
+        .map(name => name.replace(/\.md$/, '').replace(/\s*\(.*\)$/, ''))
+        .filter(Boolean);
+      
+      const entry = {
+        module: 'Skill',
+        level: 'INFO',
+        action: 'skill_injected',
+        summary: `skills=${normalisedSkills.length}`,
+      };
+      
+      if (normalisedSkills.length > 0) {
+        entry.data = { skills: normalisedSkills.slice(0, 5) };
+      }
+      
+      const projectRoot = process.cwd();
+      ModuleLogFormatter.formatAndWrite(projectRoot, entry);
+    } catch (err) {
+      console.error(`[Observability] Bridge to progress log failed: ${err.message}`);
     }
   }
 

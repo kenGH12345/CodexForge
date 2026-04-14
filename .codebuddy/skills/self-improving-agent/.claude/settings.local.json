@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(rm *)",
+      "Bash(rmdir *)",
+      "Bash(shred *)",
+      "Bash(dd *)",
+      "Bash(sudo rm *)",
+      "Bash(git clean -f*)"
+    ],
+    "allow": [
+      "Bash(*)",
+      "WebFetch(domain:*)"
+    ]
+  }
+}
