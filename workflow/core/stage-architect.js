@@ -239,6 +239,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
       const result = await buildAgentPrompt('reviewer', prompt, [], {
         projectRoot: this.projectRoot,
         riskProfile: reviewRiskProfile,
+        stage: 'ARCHITECT',  // T-U2: dynamic budget signal for reviewer sub-call
       });
       if (result && result.prompt) {
         optimisedPrompt = result.prompt;

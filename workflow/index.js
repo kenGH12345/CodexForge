@@ -585,6 +585,19 @@ this.projectId = projectId;
       }
     } catch (_) { /* non-fatal */ }
 
+    // ── Cheap LLM for Experience context block compression (P1-3) ─────────
+    // Replaces raw.slice(0, 6000) in getContextBlockWithIds with semantic
+    // compression. Expected per-stage token savings: 1.5-2.4k tokens when
+    // experience block exceeds 6000 chars. Falls back to heuristic + original
+    // truncation on any failure.
+    try {
+      const { setExperienceCompressorCheapLlm } = require('./core/experience-query');
+      const expCheapLlm = this.llmRouter?.getTierConfig()?.fast || null;
+      if (typeof setExperienceCompressorCheapLlm === 'function' && expCheapLlm) {
+        setExperienceCompressorCheapLlm(expCheapLlm);
+      }
+    } catch (_) { /* non-fatal */ }
+
     // ── Cheap LLM for ContextLoader ADR Digest ───────────────────────────
     // Enables LLM semantic relevance scoring and concise summarisation for
     // ADR entries injected into every prompt. Replaces keyword-count heuristic
@@ -831,7 +844,17 @@ this.projectId = projectId;
         // and can only use cached LLM results. Non-fatal: falls back to heuristic.
         await preloadAdrDigest(prompt, { projectRoot: this._projectRoot });
 
-        const result = buildAgentPrompt(role, prompt);
+        // T-U2 (orchestrator upstream integration): forward stage signal for
+        // T-2 dynamic budget sizing. role -> stage mapping mirrors bridge's
+        // stageToRole (runWorkflowStage, line ~6085). score intentionally not
+        // passed here — orchestrator has no reliable triage-score in scope at
+        // call time; the dynamic budget gracefully falls back to NORMAL.
+        const _roleToStage = {
+          analyst: 'ANALYSE', architect: 'ARCHITECT', planner: 'PLAN',
+          developer: 'CODE',  tester: 'TEST',          reviewer: 'ARCHITECT',
+        };
+        const _buildOpts = _roleToStage[role] ? { stage: _roleToStage[role] } : {};
+        const result = buildAgentPrompt(role, prompt, [], _buildOpts);
         
         // Defensive: Handle undefined/null result from buildAgentPrompt
         if (!result || typeof result !== 'object') {
