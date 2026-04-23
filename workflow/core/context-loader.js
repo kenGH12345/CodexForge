@@ -75,6 +75,9 @@ class ContextLoader {
    * @param {object}   [options.skillKeywords]   - Extra keyword→skill mappings from config
    * @param {string[]} [options.alwaysLoadSkills]- Skills to always inject regardless of keywords
    * @param {object}   [options.orchestrator]    - Orchestrator instance for lazy enrichment
+   * @param {string}   [options.modelTier]       - T-2: override LLM model tier (medium/large/mega); default auto-detect
+   * @param {string}   [options.defaultStage]    - T-2: default /wf stage for budget sizing when resolve() omits it
+   * @param {number}   [options.defaultScore]    - T-2: default task triage score (0-100) for importance multiplier
    */
   constructor({
     workflowRoot    = PATHS.SKILLS_DIR ? path.dirname(PATHS.SKILLS_DIR) : __dirname,
@@ -90,6 +93,9 @@ class ContextLoader {
     expertChannel   = null,  // EKIC: ExpertKnowledgeChannel instance for expert knowledge injection
     riskProfile     = null,  // P1.5: diff risk profile (security/performance/interface)
     experienceStore = null,  // ADR-55: Prevention Rule injection (MemGPT retrieval pattern)
+    modelTier       = null,  // T-2: LLM tier hint; null = auto-detect via getModelCapability()
+    defaultStage    = null,  // T-2: fallback stage for budget sizing
+    defaultScore    = null,  // T-2: fallback task importance score
   } = {}) {
     this._workflowRoot     = workflowRoot;
     this._projectRoot      = projectRoot || null;
@@ -168,6 +174,56 @@ class ContextLoader {
     this._admissionMatrix = null;
     /** @type {number} Token cap below which skills are demoted to low priority */
     this._demoteTokenCap = 0;
+
+    // T-2: dynamic token-budget parameters. When resolve() is called without
+    // per-call stage/score, these defaults are consulted. If all are null, the
+    // loader falls back to the static MAX_INJECT_TOKENS — preserving legacy behaviour.
+    this._modelTier     = modelTier || null;
+    this._defaultStage  = defaultStage || null;
+    this._defaultScore  = (typeof defaultScore === 'number' && Number.isFinite(defaultScore))
+      ? defaultScore : null;
+  }
+
+  /**
+   * T-2: resolves the effective injection budget for a resolve() call.
+   * Consults context-decision-signals when stage/score/modelTier hints are present;
+   * otherwise returns the legacy MAX_INJECT_TOKENS constant for backwards compatibility.
+   * Return value is always capped below by MAX_INJECT_TOKENS (legacy floor) so
+   * existing tier-reservation math stays valid — budgets can only grow, never shrink.
+   *
+   * @param {{stage?:string, score?:number, modelTier?:string}} [opts]
+   * @returns {number} effective token budget
+   * @private
+   */
+  _resolveBudget(opts = {}) {
+    const stage      = opts.stage      || this._defaultStage;
+    const score      = (typeof opts.score === 'number') ? opts.score : this._defaultScore;
+    const modelTier  = opts.modelTier  || this._modelTier;
+
+    // Legacy path: no signals provided, return static constant.
+    if (!stage && score === null && !modelTier) return MAX_INJECT_TOKENS;
+
+    try {
+      const { resolveInjectBudget } = require('./context-decision-signals');
+      const signals = {};
+      if (stage) signals.stage = stage;
+      if (score !== null && score !== undefined) signals.taskScore = score;
+      if (modelTier) signals.modelTier = modelTier;
+      const resolved = resolveInjectBudget(signals);
+      // D13: resolveInjectBudget returns `.final` in character units.
+      // MAX_INJECT_TOKENS is token-based; divide by 3.5 (mixed EN/ZH heuristic).
+      const CHARS_PER_TOKEN = 3.5;
+      const budgetTokens = (resolved && typeof resolved.final === 'number')
+        ? Math.round(resolved.final / CHARS_PER_TOKEN)
+        : MAX_INJECT_TOKENS;
+      // Never let dynamic sizing shrink the budget below legacy floor —
+      // existing tier reservation percentages assume at least MAX_INJECT_TOKENS.
+      return Math.max(budgetTokens, MAX_INJECT_TOKENS);
+    } catch (err) {
+      // Module missing or signal failure → safe fallback.
+      if (process.env.WF_DEBUG) console.error(`[ContextLoader] _resolveBudget fell back: ${err.message}`);
+      return MAX_INJECT_TOKENS;
+    }
   }
 
   /**
@@ -272,7 +328,11 @@ class ContextLoader {
    *   tokenCount – total estimated tokens of all sections
    *   sources    – list of file names that were loaded (for logging)
    */
-  async resolve(taskText, role) {
+  async resolve(taskText, role, opts = {}) {
+    // T-2: resolve effective budget from caller hints (stage/score/modelTier)
+    // or instance defaults, with safe fallback to MAX_INJECT_TOKENS.
+    const effectiveBudget = this._resolveBudget(opts);
+
     // P2: Set progressive loading context before loading skills
     // Extract task keywords for progressive skill disclosure
     const taskKeywords = taskText
@@ -286,7 +346,7 @@ class ContextLoader {
 
     const sections = [];
     const sources  = [];
-    let   budget   = MAX_INJECT_TOKENS;
+    let   budget   = effectiveBudget;
 
     // P1-5 fix: Reserve minimum budget for higher-priority tiers.
     // This ensures that even if Level 1-2 skills are large, there's always
@@ -294,10 +354,10 @@ class ContextLoader {
     // amounts are soft caps — if a tier doesn't use its reservation, the
     // surplus is available for subsequent tiers.
     const TIER_RESERVATIONS = {
-      MANDATORY_DOCS: Math.floor(MAX_INJECT_TOKENS * 0.35),  // 35% for role-mandatory docs
-      GLOBAL_SKILLS:  Math.floor(MAX_INJECT_TOKENS * 0.20),  // 20% for global skills
-      PROJECT_SKILLS: Math.floor(MAX_INJECT_TOKENS * 0.20),  // 20% for project skills
-      TASK_SKILLS:    Math.floor(MAX_INJECT_TOKENS * 0.25),  // 25% for task-matched skills
+      MANDATORY_DOCS: Math.floor(effectiveBudget * 0.35),  // 35% for role-mandatory docs
+      GLOBAL_SKILLS:  Math.floor(effectiveBudget * 0.20),  // 20% for global skills
+      PROJECT_SKILLS: Math.floor(effectiveBudget * 0.20),  // 20% for project skills
+      TASK_SKILLS:    Math.floor(effectiveBudget * 0.25),  // 25% for task-matched skills
     };
     // Remaining budget after mandatory docs + global + project = reserved for task skills
     const taskSkillReserve = TIER_RESERVATIONS.TASK_SKILLS;
@@ -461,7 +521,7 @@ class ContextLoader {
     }
 
     // Direction 3: Store computed static layers in cache for next call
-    this._storeStaticLayersCache(role, sections, sources, MAX_INJECT_TOKENS - budget);
+    this._storeStaticLayersCache(role, sections, sources, effectiveBudget - budget);
 
     } // end of cache-miss block
 
@@ -484,7 +544,7 @@ class ContextLoader {
     // P1-5 fix: ensure task skills get at least `taskSkillReserve` tokens.
     // If upper tiers consumed heavily, restore budget to at least the reserve.
     if (budget < taskSkillReserve) {
-      budget = Math.min(taskSkillReserve, MAX_INJECT_TOKENS);
+      budget = Math.min(taskSkillReserve, effectiveBudget);
     }
     const matchedSkills = this._matchSkills(taskText, role);
     const admitted = [];
@@ -566,7 +626,7 @@ class ContextLoader {
       }
     }
 
-    const tokenCount = MAX_INJECT_TOKENS - budget;
+    const tokenCount = effectiveBudget - budget;
     if (sources.length > 0) {
       console.log(`[ContextLoader] Injected ${sources.length} context doc(s) (~${tokenCount} tokens): ${sources.join(', ')}`);
     }

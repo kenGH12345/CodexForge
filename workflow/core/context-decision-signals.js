@@ -20,9 +20,10 @@
 'use strict';
 
 const DEFAULT_TIERS = {
-  small:  { maxInject: 2800,  contextWindow: 32000,   description: 'GPT-3.5 class / local 7B' },
-  medium: { maxInject: 8000,  contextWindow: 128000,  description: 'GPT-4 class / Claude Haiku' },
-  large:  { maxInject: 24000, contextWindow: 1000000, description: 'Claude Sonnet / GPT-4o / Gemini 1.5' },
+  small:  { maxInject: 2800,  contextWindow: 32000,    description: 'GPT-3.5 class / local 7B' },
+  medium: { maxInject: 8000,  contextWindow: 128000,   description: 'GPT-4 class / Claude Haiku' },
+  large:  { maxInject: 24000, contextWindow: 1000000,  description: 'Claude Sonnet / GPT-4o / Gemini 1.5' },
+  mega:   { maxInject: 64000, contextWindow: 2000000,  description: 'Claude Opus 4+ / Gemini 2 Pro / frontier 2M-context models' },
 };
 
 const DEFAULT_TIER = 'medium';
@@ -66,9 +67,12 @@ function getModelTier() {
 /**
  * Returns { tier, maxInject, contextWindow, description } for the active model.
  * maxInject can be overridden per-tier via config.llm.maxInject.<tier>.
+ * D14: accepts optional tierOverride to force a specific tier (used by T-2 / testing).
  */
-function getModelCapability() {
-  const tier = getModelTier();
+function getModelCapability(tierOverride) {
+  const tier = (tierOverride && DEFAULT_TIERS[String(tierOverride).toLowerCase()])
+    ? String(tierOverride).toLowerCase()
+    : getModelTier();
   const base = DEFAULT_TIERS[tier] || DEFAULT_TIERS[DEFAULT_TIER];
 
   const cfg = _loadConfigSafe();
@@ -82,7 +86,7 @@ function getModelCapability() {
     maxInject: override || base.maxInject,
     contextWindow: base.contextWindow,
     description: base.description,
-    source: override ? 'config-override' : 'default-tier',
+    source: override ? 'config-override' : (tierOverride ? 'tier-override' : 'default-tier'),
   };
 }
 
@@ -147,7 +151,7 @@ function getTaskImportance(triageScore) {
  * @returns {object} { tier, maxInject, stageMultiplier, taskBoost, final, signals }
  */
 function resolveInjectBudget(opts = {}) {
-  const capability = getModelCapability();
+  const capability = getModelCapability(opts.modelTier || null);
   const stageSignal = getStageSignal(opts.stage || null);
   const taskImportance = getTaskImportance(opts.taskScore);
 
