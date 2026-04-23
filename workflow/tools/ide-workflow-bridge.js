@@ -359,6 +359,16 @@ function parseArgs(argv) {
       case '--task':
         args.task = argv[++i] || '';
         break;
+      // T-U: dynamic-budget signals for `context` command (T-2 integration)
+      case '--model-tier':
+      case '--modelTier':
+        args.modelTier = argv[++i] || '';
+        break;
+      case '--score':
+      case '--task-score':
+      case '--taskScore':
+        args.score = argv[++i] || '';
+        break;
       case '--keyword':
       case '-k':
         args.keyword = argv[++i] || '';
@@ -743,7 +753,16 @@ async function runContext(args) {
       experienceStore: _bridgeExperienceStore,  // ADR-55
     });
 
-    const { sections, tokenCount, sources } = await loader.resolve(taskText, role);
+    // T-U: forward dynamic-budget signals per-call. args.stage is always set
+    // for the `context` command; score/modelTier are optional CLI hints.
+    const resolveOpts = {};
+    if (args.stage)     resolveOpts.stage     = args.stage.toUpperCase();
+    if (args.score !== undefined && args.score !== null && !isNaN(Number(args.score))) {
+      resolveOpts.score = Number(args.score);
+    }
+    if (args.modelTier) resolveOpts.modelTier = args.modelTier;
+
+    const { sections, tokenCount, sources } = await loader.resolve(taskText, role, resolveOpts);
 
     // T-6: Log context loading result for observability
     try {
@@ -6137,7 +6156,10 @@ async function runWorkflowStage(args) {
 
     if (!_ctxCacheHit) {
     try {
-      const { sections, tokenCount, sources } = loader.resolve(taskText, role);
+      // D16: missing `await` caused destructuring a Promise, yielding undefined fields.
+      // T-U: forward stage signal for T-2 dynamic budget sizing.
+      const resolveOpts = stage ? { stage } : {};
+      const { sections, tokenCount, sources } = await loader.resolve(taskText, role, resolveOpts);
       contextData = {
         sections: (sections || []).map((s, i) => ({
           index: i,

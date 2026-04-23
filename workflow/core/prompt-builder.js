@@ -791,6 +791,9 @@ async function preloadAdrDigest(taskText, options = {}) {
  * @param {string[]} [options.patterns] - Explicit patterns to use (overrides role defaults)
  * @param {object} [options.patternParams] - Pattern-specific parameters
  * @param {boolean} [options.trackMetrics=true] - Whether to log timing metrics
+ * @param {string} [options.stage] - T-U: /wf stage hint for dynamic inject-budget sizing (ANALYSE|ARCHITECT|PLAN|CODE|TEST)
+ * @param {number} [options.score] - T-U: task triage score 0-100 for importance multiplier
+ * @param {string} [options.modelTier] - T-U: LLM tier override (small|medium|large|mega); default auto-detect
  * @returns {Promise<{ prompt: string, meta: PromptMeta }>}
  */
 async function buildAgentPrompt(role, dynamicInput, contextFiles = [], options = {}) {
@@ -939,7 +942,17 @@ async function _loadAutoInjectedSections(role, dynamicInput, options) {
     riskProfile:      options && options.riskProfile ? options.riskProfile : null, // P1.5: diff risk driven skill packs
   };
   const loader = _getOrCreateLoader(loaderOptions);
-  const { sections: autoSections, sources: autoSources } = await loader.resolve(expandedInput, role);
+
+  // T-U (Phase 1 upstream integration): forward dynamic-budget hints per-call.
+  // Intentionally NOT added to loaderOptions / cache key — stage/score vary between
+  // calls, placing them in the key would force a loader rebuild (loses CodeGraph &
+  // embedding warm-up). Per-call opts give us dynamic sizing with stable caching.
+  const resolveOpts = {};
+  if (options && typeof options.stage === 'string')     resolveOpts.stage     = options.stage;
+  if (options && typeof options.score === 'number')     resolveOpts.score     = options.score;
+  if (options && typeof options.modelTier === 'string') resolveOpts.modelTier = options.modelTier;
+
+  const { sections: autoSections, sources: autoSources } = await loader.resolve(expandedInput, role, resolveOpts);
 
   const injectedSkillNames = (autoSources || [])
     .filter(s => s.endsWith('.md') && !s.includes('decision-log') && !s.includes('architecture-constraints') && !s.includes('code-graph'))
