@@ -351,10 +351,10 @@ const DEFAULT_SKIP_RULES = {
 /**
  * Stages that can NEVER be skipped, regardless of any configuration.
  * ANALYSE provides the complexity assessment and enriched requirement.
- * CODE and TEST are core delivery stages — skipping them would produce
- * incomplete or unverified output.
+ * CODE and TEST are core delivery stages for full tasks, but CAN be skipped
+ * by intent-based rules for non-code tasks.
  */
-const NEVER_SKIP_STAGES = new Set(['ANALYSE', 'CODE', 'TEST']);
+const NEVER_SKIP_STAGES = new Set(['ANALYSE']);
 
 // ─── StageSmartSkip Class ───────────────────────────────────────────────────
 

@@ -424,6 +424,18 @@ const ROLLBACK_CACHE_KEYS = {
   [WorkflowState.TEST]:      ['Code', WorkflowState.CODE, 'TestReport'],
 };
 
+function getRollbackScenarioSummary() {
+  return {
+    stageSubtasks: Object.fromEntries(
+      Object.entries(STAGE_SUBTASKS).map(([stage, subtasks]) => [stage, [...subtasks]])
+    ),
+    rollbackTargets: { ...ROLLBACK_TARGET },
+    cacheKeys: Object.fromEntries(
+      Object.entries(ROLLBACK_CACHE_KEYS).map(([stage, keys]) => [stage, [...keys]])
+    ),
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // P1-1: IdempotencyJournal — Prevent duplicate LLM calls on retry
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -678,4 +690,4 @@ class SagaContext {
   }
 }
 
-module.exports = { RollbackCoordinator, STAGE_SUBTASKS, IdempotencyJournal, SagaContext, analysePlanAmendStrategy };
+module.exports = { RollbackCoordinator, STAGE_SUBTASKS, IdempotencyJournal, SagaContext, analysePlanAmendStrategy, getRollbackScenarioSummary };

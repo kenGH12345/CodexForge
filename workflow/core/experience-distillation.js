@@ -753,6 +753,245 @@ const ExperienceDistillationMixin = {
   },
 
   /**
+   * INDUCE Stage: Pattern recognition and clustering for reflection signals.
+   * Called by ReflectionCycle to identify patterns across signals of the same dimension.
+   *
+   * Algorithm:
+   *   1. MinHash LSH for fast similarity candidate generation
+   *   2. Jaccard similarity for pairwise candidate validation
+   *   3. Greedy single-linkage clustering
+   *   4. Optional LLM semantic clustering if cheapLlmCall available and signals >= threshold
+   *
+   * @param {object[]} entries - Reflection signals to cluster
+   * @param {string} dimension - Signal dimension (performance, quality, blindspot, cognitive, user)
+   * @param {object} [options]
+   * @param {number} [options.similarityThreshold=0.65] - Min similarity for clustering
+   * @param {number} [options.minClusterSize=2] - Min signals in a cluster
+   * @param {number} [options.llmTriggerThreshold=3] - Min signals to trigger LLM clustering
+   * @returns {Promise<{patterns: Array<{id, dimension, summary, signals, confidence}>, conflicts: Array, coverage: string}>}
+   */
+  async inducePatterns(entries, dimension, { similarityThreshold = 0.65, minClusterSize = 2, llmTriggerThreshold = 3 } = {}) {
+    if (!entries || entries.length < minClusterSize) {
+      return { patterns: [], conflicts: [], coverage: 'partial' };
+    }
+
+    const patterns = [];
+    const conflicts = [];
+
+    // Step 1: MinHash LSH for fast candidate generation
+    const lsh = new MinHashLSH({ numHashes: 16, numBands: 4 });
+    const signatures = new Map();
+
+    for (let i = 0; i < entries.length; i++) {
+      const text = `${entries[i].title || ''} ${entries[i].content || ''}`.slice(0, 500);
+      const sig = computeMinHashSignature(text, 16);
+      signatures.set(i, sig);
+      lsh.insert(String(i), sig);
+    }
+
+    // Step 2: Build clusters using adjacency list
+    const visited = new Set();
+    const adjList = new Map();
+
+    for (let i = 0; i < entries.length; i++) {
+      const sigI = signatures.get(i);
+      const candidates = lsh.query(sigI);
+
+      for (const jStr of candidates) {
+        const j = Number(jStr);
+        if (j <= i) continue;
+
+        // Compute full Jaccard similarity
+        const titleSim = _bigramJaccard(
+          entries[i].title || '',
+          entries[j].title || ''
+        );
+
+        if (titleSim >= similarityThreshold) {
+          if (!adjList.has(i)) adjList.set(i, new Set());
+          if (!adjList.has(j)) adjList.set(j, new Set());
+          adjList.get(i).add(j);
+          adjList.get(j).add(i);
+        }
+      }
+    }
+
+    // Step 3: Greedy clustering
+    for (let i = 0; i < entries.length; i++) {
+      if (visited.has(i)) continue;
+
+      const neighbors = adjList.get(i);
+      if (!neighbors || neighbors.size === 0) continue;
+
+      const cluster = [i];
+      visited.add(i);
+
+      const queue = Array.from(neighbors);
+      for (const j of queue) {
+        if (visited.has(j)) continue;
+        cluster.push(j);
+        visited.add(j);
+
+        const jNeighbors = adjList.get(j);
+        if (jNeighbors) {
+          for (const k of jNeighbors) {
+            if (!visited.has(k)) queue.push(k);
+          }
+        }
+      }
+
+      if (cluster.length >= minClusterSize) {
+        let summary;
+
+        // Step 4: Optional LLM semantic summarization
+        if (entries.length >= llmTriggerThreshold && this.cheapLlmCall) {
+          try {
+            summary = await this._llmPatternSummarize(
+              cluster.map(idx => entries[idx]),
+              dimension
+            );
+          } catch {
+            summary = this._ruleBasedSummary(cluster.map(idx => entries[idx]));
+          }
+        } else {
+          summary = this._ruleBasedSummary(cluster.map(idx => entries[idx]));
+        }
+
+        patterns.push({
+          id: `pattern-${dimension}-${i}-${Date.now()}`,
+          dimension,
+          summary,
+          signals: cluster.map(idx => entries[idx].id || `sig-${idx}`),
+          confidence: cluster.length / entries.length,
+          signalCount: cluster.length
+        });
+      }
+    }
+
+    // Detect conflicts: check for contradictory advice within the same dimension
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        const conflict = this._detectSignalConflict(entries[i], entries[j]);
+        if (conflict.isConflict) {
+          conflicts.push({
+            type: 'contradiction',
+            between: [entries[i].id || i, entries[j].id || j],
+            reason: conflict.reason
+          });
+        }
+      }
+    }
+
+    return {
+      patterns,
+      conflicts,
+      coverage: patterns.length > 0 ? 'full' : 'partial'
+    };
+  },
+
+  /**
+   * Helper: LLM-based pattern summarization
+   * @private
+   */
+  async _llmPatternSummarize(signals, dimension) {
+    if (!this.cheapLlmCall || signals.length < 2) {
+      return this._ruleBasedSummary(signals);
+    }
+
+    const signalTexts = signals.map((s, i) =>
+      `${i + 1}. ${s.title || s.content || JSON.stringify(s)}`.slice(0, 200)
+    ).join('\n');
+
+    const prompt = `Summarize the following ${signals.length} similar ${dimension} signals into a single pattern description. Be concise (under 100 chars).
+
+Signals:
+${signalTexts}
+
+Pattern summary:`;
+
+    const result = await this.cheapLlmCall(prompt);
+    return (result || '').trim().slice(0, 100) || this._ruleBasedSummary(signals);
+  },
+
+  /**
+   * Helper: Rule-based pattern summarization
+   * @private
+   */
+  _ruleBasedSummary(signals) {
+    if (signals.length === 0) return '';
+    if (signals.length === 1) {
+      return (signals[0].title || signals[0].content || 'single signal').slice(0, 100);
+    }
+
+    // Find common prefix across titles
+    const titles = signals.map(s => s.title || s.content || '').filter(Boolean);
+    if (titles.length === 0) return `Cluster of ${signals.length} signals`;
+
+    let prefix = titles[0];
+    for (let i = 1; i < titles.length; i++) {
+      while (!titles[i].startsWith(prefix)) {
+        prefix = prefix.slice(0, -1);
+        if (prefix === '') break;
+      }
+      if (prefix === '') break;
+    }
+
+    if (prefix.length >= 10) return prefix.slice(0, 100);
+
+    // Fallback: keyword extraction from common words
+    const wordFreq = new Map();
+    for (const title of titles) {
+      const words = title.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+      for (const word of words) {
+        wordFreq.set(word, (wordFreq.get(word) || 0) + 1);
+      }
+    }
+
+    const commonWords = Array.from(wordFreq.entries())
+      .filter(([, count]) => count >= signals.length * 0.5)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([word]) => word);
+
+    if (commonWords.length > 0) {
+      return `${commonWords.join(' ')} (${signals.length} signals)`.slice(0, 100);
+    }
+
+    return `Cluster of ${signals.length} similar signals`;
+  },
+
+  /**
+   * Helper: Detect conflicts between two signals
+   * @private
+   */
+  _detectSignalConflict(s1, s2) {
+    const CONTRADICTION_PAIRS = [
+      ['always', 'never'],
+      ['must', 'must not'],
+      ['should', 'should not'],
+      ['enable', 'disable'],
+      ['increase', 'decrease'],
+      ['add', 'remove'],
+      ['more', 'less']
+    ];
+
+    const c1 = (s1.content || s1.title || '').toLowerCase();
+    const c2 = (s2.content || s2.title || '').toLowerCase();
+
+    for (const [pos, neg] of CONTRADICTION_PAIRS) {
+      if ((c1.includes(pos) && c2.includes(neg)) ||
+          (c1.includes(neg) && c2.includes(pos))) {
+        return {
+          isConflict: true,
+          reason: `Contradictory advice: "${pos}" vs "${neg}"`
+        };
+      }
+    }
+
+    return { isConflict: false, reason: '' };
+  },
+
+  /**
    * Automatically runs distillation if experience count exceeds capacity * threshold.
    * Called on load when the store has accumulated many entries.
    *

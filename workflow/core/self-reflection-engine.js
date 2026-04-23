@@ -412,6 +412,38 @@ class SelfReflectionEngine {
   // ─── Persistence ──────────────────────────────────────────────────────────
 
   /** Writes reflections to disk. */
+  async runReflectionCycle(signals, options = {}) {
+    try {
+      const { ReflectionCycle } = require('./reflection-cycle');
+      const cycle = new ReflectionCycle({
+        sessionId: this._sessionId,
+        projectRoot: this._projectRoot,
+        maxRounds: options.maxRounds || 3,
+        convergenceThreshold: options.convergenceThreshold || 0.7,
+      });
+
+      const result = await cycle.runCycle(signals, options);
+
+      if (result.actions?.length > 0) {
+        for (const action of result.actions) {
+          this.recordIssue({
+            type: action.isRuleChange ? 'rule-change' : 'reflection-action',
+            severity: action.priority?.toLowerCase() || 'medium',
+            title: action.target || 'Reflection cycle action',
+            description: action.rationale || action.proposed || '',
+            source: 'reflection-cycle',
+            rootCause: action.rationale,
+            suggestedFix: action.proposed,
+          });
+        }
+      }
+
+      return result;
+    } catch (err) {
+      return { error: err.message, round: 0, converged: false, actions: [], insights: [], unresolvedComplaints: [] };
+    }
+  }
+
   flush() {
     this._save();
   }

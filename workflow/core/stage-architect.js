@@ -21,6 +21,7 @@ const { QualityGate } = require('./quality-gate');
 const { translateMdFile } = require('./i18n-translator');
 const { runEvoMapFeedback, recordSelfReport, runStageMetricsGate } = require('./stage-runner-utils');
 const { _recordPromptABOutcome } = require('./stage-analyst');
+const { assessArchitectureGovernance } = require('./execution-validator-integration');
 const {
   buildArchitectUpstreamCtx,
   buildArchitectContextBlock,
@@ -529,6 +530,26 @@ throw new Error(`[_runArchitect] CodeReviewAgent (architecture mode) failed: ${a
     moduleSplit:    !!_moduleSplitMeta,
     moduleCount:    _moduleSplitMeta?.moduleCount ?? 0,
   });
+
+  let architectureGovernance = null;
+  try {
+    architectureGovernance = assessArchitectureGovernance({
+      projectRoot: this._projectRoot || path.resolve(__dirname, '..', '..'),
+      architecturePath: outputPath,
+      reviewResult: archReviewResult,
+      artifactContent: fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : '',
+    });
+  } catch (govErr) {
+    console.warn(`[Orchestrator] ⚠️ Architecture governance assessment failed (non-fatal): ${govErr.message}`);
+  }
+
+  if (architectureGovernance && this.stageCtx) {
+    const existingArch = this.stageCtx.get(WorkflowState.ARCHITECT) || {};
+    this.stageCtx.set(WorkflowState.ARCHITECT, {
+      ...existingArch,
+      governance: architectureGovernance,
+    });
+  }
 
   translateMdFile(outputPath, this._rawLlmCall).catch(() => {});
 

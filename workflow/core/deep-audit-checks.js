@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { assessArchitectureGovernance } = require('./execution-validator-integration');
 
 // ─── Helper Functions ─────────────────────────────────────────────────────────
 
@@ -507,6 +508,43 @@ function createDimensionChecks({ addFinding, log, orch, outputDir, AuditSeverity
     log(label, 'Checking architecture compliance...');
 
     try {
+      const governance = assessArchitectureGovernance({
+        projectRoot: path.resolve(__dirname, '..', '..'),
+      });
+
+      if (governance.exists && governance.fitnessGates && !governance.fitnessGates.passed) {
+        addFinding({
+          severity: AuditSeverity.HIGH,
+          category: label,
+          title: 'Architecture governance fitness gates failed',
+          description: governance.fitnessGates.failedChecks.map((check) => check.message).join(' '),
+          suggestion: 'Update architecture.md to close checklist gaps, complete contracts, and cover required runtime scenarios.',
+          locations: [{ file: 'output/architecture.md' }],
+        });
+      }
+
+      if (governance.exists && governance.scenarioHarness?.summary && !governance.scenarioHarness.summary.meetsMinimumCoverage) {
+        addFinding({
+          severity: AuditSeverity.MEDIUM,
+          category: label,
+          title: 'Architecture scenario coverage is below minimum runtime risk threshold',
+          description: `Scenario harness covers ${governance.scenarioHarness.summary.categoriesCovered.length} category(ies); at least 2 are required.`,
+          suggestion: 'Expand the Scenario Coverage section to cover projection drift, rollback boundary, and recovery path cases.',
+          locations: [{ file: 'output/architecture.md' }],
+        });
+      }
+
+      if (governance.exists && governance.degradation?.active) {
+        addFinding({
+          severity: AuditSeverity.LOW,
+          category: label,
+          title: 'Architecture governance running in reduced coverage mode',
+          description: governance.degradation.warnings.join(' '),
+          suggestion: 'Restore missing context artifacts such as project-profile.md to recover full governance coverage.',
+          locations: [{ file: 'output/architecture.md' }],
+        });
+      }
+
       // 5a. Dual-path unification
       const indexPath = path.join(__dirname, '..', 'index.js');
       if (fs.existsSync(indexPath)) {

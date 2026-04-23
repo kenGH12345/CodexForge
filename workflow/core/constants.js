@@ -161,6 +161,38 @@ const PROJECT_SCALE = {
   MONOREPO_FILE_THRESHOLD: 500,
 };
 
+// Adaptive stage-budget multiplier config (C6).
+// Why: Static STAGE_BUDGET_MULTIPLIERS penalise simple tasks with oversized
+// budgets and starve complex tasks. Scores come from RequestTriage (0-100).
+// TIGHTENING_STAGES tighten further on simple tasks; SKIP_STAGES opt out
+// entirely because their budgets are already minimal.
+const ADAPTIVE_MULTIPLIER = {
+  SEGMENTS: [
+    { maxScore: 25, factor: 0.7,  name: 'simple' },
+    { maxScore: 50, factor: 1.0,  name: 'medium' },
+    { maxScore: 75, factor: 1.10, name: 'complex' },
+    { maxScore: 100, factor: 1.20, name: 'very_complex' },
+  ],
+  TIGHTENING_STAGES: new Set(['ANALYSE', 'PLAN']),
+  SKIP_STAGES: new Set(['ENTROPY', 'CI']),
+  UPPER_CAP_RATIO: 1.2,
+};
+
+// Conversation compaction thresholds (C1).
+// Why: Long histories dominate token budget in multi-stage runs. We trigger
+// compaction by message count OR cumulative chars, whichever first. MAX_PER_SESSION
+// prevents runaway LLM calls; COOLDOWN avoids compacting twice in rapid succession.
+const COMPACTION = {
+  TRIGGER_MESSAGES: 10,
+  TRIGGER_CHARS: 80000,
+  COOLDOWN_MESSAGES: 3,
+  MAX_PER_SESSION: 3,
+  TARGET_RATIO: 0.3,
+  PRESERVE_LAST_N: 3,
+  AUDIT_PATH: 'output/conversation-compaction-audit.jsonl',
+  ENV_FLAG: 'WF_ENABLE_CONVERSATION_COMPACTION',
+};
+
 // ─── Hook Event Names ─────────────────────────────────────────────────────────
 
 const HOOK_EVENTS = {
@@ -243,6 +275,8 @@ module.exports = {
   LLM,
   EXPERIENCE,
   PROJECT_SCALE,
+  ADAPTIVE_MULTIPLIER,
+  COMPACTION,
   HOOK_EVENTS,
   // ADR-RUNTIME-OUTPUT: Runtime output directory helpers (IoC)
   getDefaultOutputDir,

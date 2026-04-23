@@ -81,7 +81,7 @@ async function packageRegistryHelper(orch, depList, opts = {}) {
     if (!orch.services || !orch.services.has('mcpRegistry')) return null;
     const registry = orch.services.resolve('mcpRegistry');
     let adapter;
-    try { adapter = registry.get('package-registry'); } catch (_) { return null; }
+try { adapter = registry.get('package-registry'); } catch (e) { console.warn('[McpAdapterHelpers] registry.get(package-registry) failed:', e.message); return null; }
     if (!adapter) return null;
 
     if (!depList || depList.length === 0) {
@@ -145,7 +145,7 @@ async function securityCVEHelper(orch, depList, opts = {}) {
     if (!orch.services || !orch.services.has('mcpRegistry')) return null;
     const registry = orch.services.resolve('mcpRegistry');
     let adapter;
-    try { adapter = registry.get('security-cve'); } catch (_) { return null; }
+try { adapter = registry.get('security-cve'); } catch (e) { console.warn('[McpAdapterHelpers] registry.get(security-cve) failed:', e.message); return null; }
     if (!adapter) return null;
 
     if (!depList || depList.length === 0) {
@@ -229,7 +229,7 @@ async function ciStatusHelper(orch, opts = {}) {
     if (!orch.services || !orch.services.has('mcpRegistry')) return null;
     const registry = orch.services.resolve('mcpRegistry');
     let adapter;
-    try { adapter = registry.get('ci-status'); } catch (_) { return null; }
+try { adapter = registry.get('ci-status'); } catch (e) { console.warn('[McpAdapterHelpers] registry.get(ci-status) failed:', e.message); return null; }
     if (!adapter || !adapter.isConnected) return null;
 
     console.log(`[Orchestrator] \uD83D\uDD04 ${label}: fetching CI pipeline status...`);
@@ -257,7 +257,7 @@ async function licenseComplianceHelper(orch, opts = {}) {
     if (!orch.services || !orch.services.has('mcpRegistry')) return null;
     const registry = orch.services.resolve('mcpRegistry');
     let adapter;
-    try { adapter = registry.get('license-compliance'); } catch (_) { return null; }
+try { adapter = registry.get('license-compliance'); } catch (e) { console.warn('[McpAdapterHelpers] registry.get(license-compliance) failed:', e.message); return null; }
     if (!adapter || !adapter.isConnected) return null;
 
     console.log(`[Orchestrator] \uD83D\uDCDC ${label}: checking license compliance...`);
@@ -287,7 +287,7 @@ async function docGenHelper(orch, opts = {}) {
     if (!orch.services || !orch.services.has('mcpRegistry')) return null;
     const registry = orch.services.resolve('mcpRegistry');
     let adapter;
-    try { adapter = registry.get('doc-gen'); } catch (_) { return null; }
+try { adapter = registry.get('doc-gen'); } catch (e) { console.warn('[McpAdapterHelpers] registry.get(doc-gen) failed:', e.message); return null; }
     if (!adapter || !adapter.isConnected) return null;
 
     console.log(`[Orchestrator] \uD83D\uDCDA ${label}: scanning for undocumented exports...`);
@@ -315,7 +315,7 @@ async function llmCostRouterHelper(orch, opts = {}) {
     if (!orch.services || !orch.services.has('mcpRegistry')) return null;
     const registry = orch.services.resolve('mcpRegistry');
     let adapter;
-    try { adapter = registry.get('llm-cost-router'); } catch (_) { return null; }
+try { adapter = registry.get('llm-cost-router'); } catch (e) { console.warn('[McpAdapterHelpers] registry.get(llm-cost-router) failed:', e.message); return null; }
     if (!adapter || !adapter.isConnected) return null;
 
     const summary = adapter.getCostSummary();
@@ -340,7 +340,7 @@ async function figmaDesignHelper(orch, opts = {}) {
     if (!orch.services || !orch.services.has('mcpRegistry')) return null;
     const registry = orch.services.resolve('mcpRegistry');
     let adapter;
-    try { adapter = registry.get('figma-design'); } catch (_) { return null; }
+try { adapter = registry.get('figma-design'); } catch (e) { console.warn('[McpAdapterHelpers] registry.get(figma-design) failed:', e.message); return null; }
     if (!adapter || !adapter.isConnected) return null;
 
     console.log(`[Orchestrator] 🎨 ${label}: extracting design specification from Figma...`);
@@ -371,7 +371,7 @@ async function testInfraHelper(orch, opts = {}) {
     if (!orch.services || !orch.services.has('mcpRegistry')) return null;
     const registry = orch.services.resolve('mcpRegistry');
     let adapter;
-    try { adapter = registry.get('test-infra'); } catch (_) { return null; }
+try { adapter = registry.get('test-infra'); } catch (e) { console.warn('[McpAdapterHelpers] registry.get(test-infra) failed:', e.message); return null; }
     if (!adapter || !adapter.isConnected) return null;
 
     console.log(`[Orchestrator] \uD83E\uDDEA ${label}: analyzing test infrastructure...`);
@@ -404,7 +404,7 @@ async function codeQualityHelper(orch, opts = {}) {
     if (!orch.services || !orch.services.has('mcpRegistry')) return null;
     const registry = orch.services.resolve('mcpRegistry');
     let adapter;
-    try { adapter = registry.get('code-quality'); } catch (_) { return null; }
+try { adapter = registry.get('code-quality'); } catch (e) { console.warn('[McpAdapterHelpers] registry.get(code-quality) failed:', e.message); return null; }
     if (!adapter) return null;
 
     console.log(`[Orchestrator] 📊 ${label}: running code quality analysis...`);

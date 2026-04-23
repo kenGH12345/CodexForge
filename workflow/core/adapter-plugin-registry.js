@@ -299,7 +299,7 @@ function createBuiltinPlugins() {
         if (!orch.services || !orch.services.has('mcpRegistry')) return '';
         const registry = orch.services.resolve('mcpRegistry');
         let wsAdapter;
-        try { wsAdapter = registry.get('websearch'); } catch (_) { return ''; }
+        try { wsAdapter = registry.get('websearch'); } catch (e) { console.warn('[AdapterPluginRegistry] registry.get(websearch) failed:', e.message); return ''; }
         if (!wsAdapter) return '';
         const reqText = orch._currentRequirement || '';
         if (reqText.length <= 10) return '';

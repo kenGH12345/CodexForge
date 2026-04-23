@@ -41,6 +41,9 @@ const readline = require('readline');
 const path = require('path');
 const fs = require('fs');
 
+// Handlers extracted in Step 2 refactoring
+const { createAllHandlers } = require('./mcp/handlers');
+
 // ─── MCP Protocol Constants ─────────────────────────────────────────────────
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
@@ -621,11 +624,18 @@ class MCPServer {
     // Build tool handler routing map from registry (eliminates switch/case)
     this._toolHandlerMap = new Map(TOOL_REGISTRY.map(t => [t.name, t.handler]));
 
+    // ─── Step 2 Refactoring: Mix in extracted handlers ──────────────────────────
+    // Handlers are extracted to mcp/handlers/ for modularity
+    this._externalHandlers = createAllHandlers(this);
+
     // Dev-time consistency check: ensure every registered tool has a handler method
+    // (Either internal or from external handlers)
     if (process.env.NODE_ENV !== 'production') {
       for (const tool of TOOL_REGISTRY) {
-        if (typeof this[tool.handler] !== 'function') {
-          throw new Error(`[TOOL_REGISTRY] Handler "${tool.handler}" for tool "${tool.name}" not found on MCPServer`);
+        const hasInternal = typeof this[tool.handler] === 'function';
+        const hasExternal = typeof this._externalHandlers[tool.handler] === 'function';
+        if (!hasInternal && !hasExternal) {
+          throw new Error(`[TOOL_REGISTRY] Handler "${tool.handler}" for tool "${tool.name}" not found`);
         }
       }
     }
@@ -785,7 +795,10 @@ class MCPServer {
       const { name, arguments: args } = params;
       const handlerName = this._toolHandlerMap.get(name);
       if (!handlerName) throw new Error(`Unknown tool: ${name}`);
-      return this[handlerName](args);
+      // Step 2 Refactoring: Prefer external handlers, fallback to internal
+      const handler = this._externalHandlers[handlerName] || this[handlerName];
+      if (!handler) throw new Error(`Handler "${handlerName}" not found for tool "${name}"`);
+      return handler.call(this, args);
     });
 
     // ── Ping ──────────────────────────────────────────────────────────────

@@ -91,7 +91,7 @@ function _generateDirectoryTree(root, ignoreDirs) {
   function walk(dir, prefix, depth) {
     if (depth > 2) return;
     let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { console.warn('[TechProfiles] readdirSync failed for', dir, ':', e.message); return; }
 
     const dirs  = entries.filter(e => e.isDirectory() && !ignore.has(e.name) && !e.name.startsWith('.'));
     const files = entries.filter(e => !e.isDirectory() && !e.name.startsWith('.'));
@@ -550,7 +550,7 @@ function detectTechStack(projectRoot) {
   function walkCount(dir, depth) {
     if (depth > 3) return;
     let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { console.warn('[TechProfiles] readdirSync failed for', dir, ':', e.message); return; }
     for (const e of entries) {
       if (ignoreFallback.includes(e.name) || e.name.startsWith('.')) continue;
       if (e.isDirectory()) { walkCount(path.join(dir, e.name), depth + 1); }

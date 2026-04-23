@@ -222,10 +222,10 @@ async function _promptHumanReview(filePath, message) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      try { rl.close(); } catch (_) {}
+      try { rl.close(); } catch (e) { console.warn('[HookSystem] rl.close() failed:', e.message); }
       // N34 fix: rl.close() does not pause process.stdin, which keeps the event loop
       // alive and prevents Node.js from exiting naturally. Explicitly pause stdin here.
-      try { process.stdin.pause(); } catch (_) {}
+      try { process.stdin.pause(); } catch (e) { console.warn('[HookSystem] stdin.pause() failed:', e.message); }
       if (approved) {
         console.log(`[Hook] ✅ Human approved. Continuing workflow...`);
         resolve();

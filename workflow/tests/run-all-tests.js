@@ -36,6 +36,7 @@ const TEST_SUITES = {
       'workflow/core/experience-router-lite.test.js',
       'workflow/core/skill-enrichment.test.js',
       'workflow/core/orchestrator-suite.test.js',
+      'workflow/core/runtime/__tests__/resume-engine.test.cjs',
     ],
   },
   integration: {
@@ -201,6 +202,7 @@ for (const { file, type } of testsToRun) {
   const CUSTOM_FORMAT_FILES = [
     'integration-framework-fusion.test.js',
     'integration-agent-fusion.test.js',
+    'resume-engine.test.js',
   ];
   const isCustomFormat = CUSTOM_FORMAT_FILES.some(f => file.endsWith(f));
 
@@ -331,7 +333,7 @@ if (results.failed.length > 0) {
       console.log(`   Subtests: ${color('green', fail.passCount + ' pass')}, ${color('red', fail.failCount + ' fail')}`);
     }
 
-    if (fail.failures.length > 0) {
+    if (fail.failures && fail.failures.length > 0) {
       console.log(`   Failures:`);
       for (const f of fail.failures.slice(0, 5)) { // Show first 5
         console.log(`     • ${f}`);

@@ -13,6 +13,7 @@
 const {
   ELEVEN_DIMENSIONS,
   STAGE_CHALLENGES,
+  getStageDimensionChecks,
 } = require('./socratic-constants');
 
 /**
@@ -26,44 +27,98 @@ const {
  * @returns {string[]} Detected blind spots (max 5)
  */
 function detectBlindSpots(stageName, content, claims, context, artifactStructure, instance) {
-  const blindSpots = [];
+  const entries = [];
   const contentLower = String(content || '').toLowerCase();
+  const taskFingerprint = instance && instance._inferTaskFingerprint ? instance._inferTaskFingerprint(stageName, content, context) : 'general';
 
-  // 1. Dimension-level blind spots
-  const dimensionBlindSpots = detectDimensionBlindSpots(stageName, contentLower);
-  blindSpots.push(...dimensionBlindSpots);
+  // 1. Dimension-level blind spots → dimension-gap
+  const dimensionBlindSpots = detectDimensionBlindSpots(stageName, contentLower, taskFingerprint);
+  for (const msg of dimensionBlindSpots) {
+    const dimMatch = msg.match(/\[([A-Z_]+)\]/);
+    entries.push({ evidence: msg, dimension: dimMatch ? dimMatch[1] : 'CLARITY', type: 'dimension-gap', stage: stageName });
+  }
 
-  // 2. Schema-gap blind spots (from artifact structure analysis)
+  // 2. Schema-gap blind spots → schema-gap
   if (artifactStructure && artifactStructure.schemaGaps) {
     for (const gap of artifactStructure.schemaGaps) {
       if (gap.severity === 'missing_required') {
-        blindSpots.push(`⚠️ [BLIND SPOT] 缺少必需 section "${gap.section}" — 后续阶段将缺乏关键输入`);
+        entries.push({ evidence: `⚠️ [BLIND SPOT] 缺少必需 section "${gap.section}" — 后续阶段将缺乏关键输入`, dimension: 'BREADTH', type: 'schema-gap', stage: stageName });
       }
     }
   }
 
-  // 3. Claim-without-evidence blind spots
+  // 3. Claim-without-evidence blind spots → claim-without-evidence
   for (const claim of (claims || []).slice(0, 4)) {
     if (!_hasEvidenceNearClaim(String(claim), contentLower)) {
-      blindSpots.push(`⚠️ [BLIND SPOT] 声明"${_truncate(claim, 50)}"缺乏支撑证据`);
+      entries.push({ evidence: `⚠️ [BLIND SPOT] 声明"${_truncate(claim, 50)}"缺乏支撑证据`, dimension: 'EVIDENCE', type: 'claim-without-evidence', stage: stageName });
     }
   }
 
-  // 4. Stage-specific blind spots
+  // 4. Stage-specific blind spots → stage-specific
   const stageBS = _detectStageSpecificBlindSpots(stageName, contentLower);
-  blindSpots.push(...stageBS);
+  for (const msg of stageBS) {
+    const dim = _inferDimensionFromEvidence(msg);
+    entries.push({ evidence: msg, dimension: dim, type: 'stage-specific', stage: stageName });
+  }
 
-  // Deduplicate and cap at 5
-  const unique = [...new Set(blindSpots)];
+  // 5. Rule-driven questions → rule-driven
+  const { questions } = collectRuleDrivenQuestions(stageName, content, context, artifactStructure);
+  for (const q of questions) {
+    const dim = _inferDimensionFromEvidence(q);
+    entries.push({ evidence: q, dimension: dim, type: 'rule-driven', stage: stageName });
+  }
+
+  // Deduplicate by evidence text, cap at 5
+  const seen = new Set();
+  const unique = entries.filter(e => {
+    const key = e.evidence.trim().toLowerCase();
+    if (seen.has(key) || !key) return false;
+    seen.add(key);
+    return true;
+  });
+
+  for (const entry of unique) {
+    _applySpecificityFilter(entry);
+  }
+
   return unique.slice(0, 5);
+}
+
+function _applySpecificityFilter(entry) {
+  const ev = entry.evidence;
+  const hasSpecificRef = /[\/\\][\w.-]+|:\d+|第\s*\d+\s*[行章节段步]|[Ll]ine\s*\d+|\.md\b|\.js\b|\.ts\b|function\s+\w+|class\s+\w+|`[^`]+`/.test(ev);
+  const isGenericDimMissing = /^(相关性|完整性|一致性|可维护性|安全性|可靠性|可扩展性).*(维度|方面|层面).*(缺失|薄弱|不足|缺乏)/.test(ev);
+  const isGenericQuestion = /^(边界条件|异常处理|错误处理|性能|安全|测试).*(有没有|是否|能不能)/.test(ev) && !hasSpecificRef;
+
+  if (isGenericDimMissing || isGenericQuestion) {
+    entry.severity = 'LOW';
+    entry._specificityFiltered = true;
+  }
+}
+
+function _inferDimensionFromEvidence(evidence) {
+  const s = String(evidence || '');
+  if (/\b边界|边界条件|edge.?case|boundary/i.test(s)) return 'BOUNDARY';
+  if (/\b证据|支撑|evidence|proof/i.test(s)) return 'EVIDENCE';
+  if (/\b逻辑|矛盾|logic|contradict/i.test(s)) return 'LOGIC';
+  if (/\b深度|细节|depth|detail/i.test(s)) return 'DEPTH';
+  if (/\b精确|量化|precision|quantif/i.test(s)) return 'PRECISION';
+  if (/\b清晰|模糊|clarit|ambiguous/i.test(s)) return 'CLARITY';
+  if (/\b权衡|备选|trade.?off|alternative/i.test(s)) return 'RELEVANCE';
+  if (/\b影响范围|breadth|scope/i.test(s)) return 'BREADTH';
+  if (/\b数据|data|metric/i.test(s)) return 'DATA';
+  if (/\b收益|roi|cost.?benefit|投入产出/i.test(s)) return 'ROI_ASSESSMENT';
+  if (/\b第一性|first.?principle|fundamental/i.test(s)) return 'FIRST_PRINCIPLES';
+  const dimMatch = s.match(/\[([A-Z_]+)\]/);
+  return dimMatch ? dimMatch[1] : 'CLARITY';
 }
 
 /**
  * Detect blind spots for each of the 11 dimensions.
  */
-function detectDimensionBlindSpots(stageName, contentLower) {
+function detectDimensionBlindSpots(stageName, contentLower, taskFingerprint = 'general') {
   const blindSpots = [];
-  const stageDimChecks = _getStageDimensionChecks(stageName);
+  const stageDimChecks = getStageDimensionChecks(stageName, taskFingerprint);
 
   for (const [dimKey, dim] of Object.entries(ELEVEN_DIMENSIONS)) {
     const checks = dim.checks || [];
@@ -151,18 +206,6 @@ function _detectStageSpecificBlindSpots(stageName, contentLower) {
   }
 
   return spots;
-}
-
-function _getStageDimensionChecks(stageName) {
-  const checks = {
-    ANALYSE: { RELEVANCE: 2, DEPTH: 2, FIRST_PRINCIPLES: 2, EVIDENCE: 2, ROI_ASSESSMENT: 2 },
-    ARCHITECT: { BREADTH: 2, LOGIC: 2, BOUNDARY: 2, INDUSTRY_COMPARISON: 1, ROI_ASSESSMENT: 2 },
-    PLAN: { PRECISION: 2, LOGIC: 1, DATA: 1, ROI_ASSESSMENT: 1 },
-    CODE: { BOUNDARY: 2, EVIDENCE: 2, CLARITY: 1 },
-    DEVELOP: { BOUNDARY: 2, EVIDENCE: 2, CLARITY: 1 },
-    TEST: { EVIDENCE: 2, BOUNDARY: 2, DATA: 1 },
-  };
-  return checks[stageName] || {};
 }
 
 function _expandCheckSignals(check) {

@@ -18,6 +18,8 @@ const { WorkflowState, STATE_ORDER, createManifest, createHistoryEntry } = requi
 const { PATHS, HOOK_EVENTS } = require('./constants');
 const { fileLockManager } = require('./file-lock-manager');
 const { migrateManifest, CURRENT_VERSION } = require('./manifest-migration');
+const { FileStateStore } = require('./runtime/file-state-store');
+const { SESSION_STATUS, STAGE_STATUS } = require('./runtime/types');
 
 class StateMachine {
   /**
@@ -33,21 +35,32 @@ class StateMachine {
     this.projectId = projectId;
     this.hookEmitter = hookEmitter;
     this.manifest = null;
-    // P1-b: use custom state order if provided, otherwise use the default
     this._stateOrder = opts.stateOrder || STATE_ORDER;
-    // P2-b: instance-level manifest path. When provided, the StateMachine
-    // reads/writes manifest.json from this path instead of the global PATHS.MANIFEST.
-    // This enables multiple Orchestrator instances to run in parallel without
     this._manifestPath = opts.manifestPath || PATHS.MANIFEST;
 
-    // P0 fix: Transition mutex – prevents concurrent transition/rollback/jumpTo
-    // calls from corrupting the manifest. In a single Node.js process, async
-    // operations can interleave if two callers await transition() simultaneously.
     this._transitionLock = null;
-    // P0-1 fix: FIFO wait queue replaces the old busy-wait polling loop.
-    // Each waiter pushes { caller, resolve } and is unblocked in order
-    // when _releaseTransitionLock() shifts the next entry.
     this._lockWaitQueue = [];
+
+    this._useRuntimeState = opts.useRuntimeState !== false;
+    this._stateManager = opts.stateManager || null;
+    this._sessionId = null;
+
+    if (this._useRuntimeState && !this._stateManager) {
+      this._stateManager = this._createDefaultStateManager();
+      if (!this._stateManager) {
+        this._useRuntimeState = false;
+      }
+    }
+  }
+
+  _createDefaultStateManager() {
+    try {
+      const runtimeDir = path.join(path.dirname(this._manifestPath), 'runtime');
+      return new FileStateStore({ runtimeDir });
+    } catch (err) {
+      console.error(`[StateMachine] ⚠️ Failed to create FileStateStore, falling back to manifest: ${err.message}`);
+      return null;
+    }
   }
 
   // ─── Initialisation  }
@@ -60,20 +73,28 @@ class StateMachine {
    * Otherwise creates a fresh manifest and starts from INIT.
    */
   async init() {
+    if (this._useRuntimeState && this._stateManager) {
+      try {
+        const result = await this._initWithStateManager();
+        return result;
+      } catch (err) {
+        console.error(`[StateMachine] ⚠️ StateManager init failed, falling back to manifest: ${err.message}`);
+        this._useRuntimeState = false;
+        this._stateManager = null;
+      }
+    }
+    return this._initWithManifest();
+  }
+
+  async _initWithManifest() {
     if (fs.existsSync(this._manifestPath)) {
       this.manifest = this._readManifest();
-      // Validate that the restored currentState is a legitimate state in _stateOrder.
-      // If the manifest is corrupted (e.g. currentState is undefined/null/invalid),
-      // reset to INIT and start fresh rather than propagating a bad state that will
-      // cause "Cannot transition: already in terminal state undefined" downstream.
       const restoredState = this.manifest.currentState;
       if (!restoredState || !this._stateOrder.includes(restoredState)) {
         console.warn(`[StateMachine] ⚠️  Invalid currentState "${restoredState}" in manifest. Resetting to ${WorkflowState.INIT}.`);
         this.manifest.currentState = WorkflowState.INIT;
         this._writeManifest();
       } else if (restoredState === WorkflowState.FINISHED) {
-        // Previous run completed successfully. Reset to INIT for a fresh run
-        // instead of resuming from FINISHED (which would immediately fail on transition).
         console.log(`[StateMachine] Previous run completed (FINISHED). Resetting to ${WorkflowState.INIT} for new run.`);
         this.manifest = createManifest(this.projectId);
         this._writeManifest();
@@ -84,6 +105,55 @@ class StateMachine {
       this.manifest = createManifest(this.projectId);
       this._writeManifest();
       console.log(`[StateMachine] New workflow started. State: ${WorkflowState.INIT}`);
+    }
+    return this.manifest.currentState;
+  }
+
+  async _initWithStateManager() {
+    let session = this._stateManager.loadSession(this.projectId);
+    if (!session) {
+      session = this._stateManager.createSession({
+        requirement: '',
+        requirementFingerprint: '',
+        mode: 'orchestrator',
+        initialStage: WorkflowState.INIT,
+      });
+      this._sessionId = session.sessionId;
+      try {
+        this._stateManager.beginStage({ sessionId: this._sessionId, stage: WorkflowState.INIT });
+      } catch (err) {
+        console.error(`[StateMachine] ⚠️ StateManager beginStage(INIT) error: ${err.message}`);
+      }
+      this.manifest = this._sessionToManifest(session);
+      this._writeManifest();
+      console.log(`[StateMachine] New workflow started via StateManager. State: ${WorkflowState.INIT}`);
+    } else {
+      this._sessionId = session.sessionId;
+      const restoredState = session.currentStage;
+      if (!restoredState || !this._stateOrder.includes(restoredState)) {
+        console.warn(`[StateMachine] ⚠️  Invalid currentStage "${restoredState}" in session. Resetting to ${WorkflowState.INIT}.`);
+        session.currentStage = WorkflowState.INIT;
+        session.status = SESSION_STATUS.CREATED;
+        this._stateManager.saveSession(session);
+      } else if (restoredState === WorkflowState.FINISHED) {
+        console.log(`[StateMachine] Previous run completed (FINISHED). Resetting to ${WorkflowState.INIT} for new run.`);
+        session = this._stateManager.createSession({
+          requirement: '',
+          requirementFingerprint: '',
+          mode: 'orchestrator',
+          initialStage: WorkflowState.INIT,
+        });
+        this._sessionId = session.sessionId;
+        try {
+          this._stateManager.beginStage({ sessionId: this._sessionId, stage: WorkflowState.INIT });
+        } catch (err) {
+          console.error(`[StateMachine] ⚠️ StateManager beginStage(INIT) error on reset: ${err.message}`);
+        }
+      } else {
+        console.log(`[StateMachine] Resuming from state: ${session.currentStage}`);
+      }
+      this.manifest = this._sessionToManifest(session);
+      this._writeManifest();
     }
     return this.manifest.currentState;
   }
@@ -153,22 +223,29 @@ class StateMachine {
       throw new Error(`[StateMachine] Cannot transition: already in terminal state "${fromState}"`);
     }
 
-    // P1 fix: Precondition validation before state transition
     const preconditionError = this._validatePrecondition(fromState, toState, artifactPath);
     if (preconditionError) {
       throw new Error(`[StateMachine] Precondition failed for ${fromState} → ${toState}: ${preconditionError}`);
     }
 
-    // Emit before-transition hook
     await this.hookEmitter(HOOK_EVENTS.BEFORE_STATE_TRANSITION, { fromState, toState, artifactPath });
 
-    // Update manifest
+    if (this._useRuntimeState && this._stateManager && this._sessionId) {
+      try {
+        if (fromState) {
+          this._stateManager.completeStage({ sessionId: this._sessionId, stage: fromState, outputRefs: artifactPath ? [{ path: artifactPath }] : [] });
+        }
+        this._stateManager.beginStage({ sessionId: this._sessionId, stage: toState });
+      } catch (err) {
+        console.error(`[StateMachine] ⚠️ StateManager stage lifecycle error: ${err.message}`);
+      }
+    }
+
     const entry = createHistoryEntry(fromState, toState, artifactPath, note);
     this.manifest.history.push(entry);
     this.manifest.currentState = toState;
     this.manifest.updatedAt = new Date().toISOString();
 
-    // Record artifact path
     if (artifactPath) {
       this._recordArtifact(toState, artifactPath);
     }
@@ -177,10 +254,8 @@ class StateMachine {
 
     console.log(`[StateMachine] Transition: ${fromState} → ${toState}${artifactPath ? ` (artifact: ${artifactPath})` : ''}`);
 
-    // Emit after-transition hook
     await this.hookEmitter(HOOK_EVENTS.AFTER_STATE_TRANSITION, { fromState, toState, artifactPath, manifest: this.manifest });
 
-    // Emit completion hook
     if (toState === WorkflowState.FINISHED) {
       await this.hookEmitter(HOOK_EVENTS.WORKFLOW_COMPLETE, { manifest: this.manifest });
     }
@@ -210,6 +285,14 @@ class StateMachine {
       console.warn(`[StateMachine] ⏪ Rollback: ${fromState} → ${toState}${reason ? ` (reason: ${reason})` : ''}`);
 
       await this.hookEmitter(HOOK_EVENTS.BEFORE_STATE_TRANSITION, { fromState, toState, rollback: true, reason });
+
+      if (this._useRuntimeState && this._stateManager && this._sessionId) {
+        try {
+          this._stateManager.markRollback({ sessionId: this._sessionId, stage: fromState, rollbackInfo: { reason, fromState, toState } });
+        } catch (err) {
+          console.error(`[StateMachine] ⚠️ StateManager markRollback error: ${err.message}`);
+        }
+      }
 
       const entry = createHistoryEntry(fromState, toState, null, `[ROLLBACK] ${reason}`);
       this.manifest.history.push(entry);
@@ -269,6 +352,17 @@ class StateMachine {
     console.warn(`[StateMachine] ${direction} Jump: ${fromState} → ${targetState}${reason ? ` (reason: ${reason})` : ''}`);
 
     await this.hookEmitter(HOOK_EVENTS.BEFORE_STATE_TRANSITION, { fromState, toState: targetState, jump: true, reason });
+
+    if (this._useRuntimeState && this._stateManager && this._sessionId) {
+      try {
+        if (fromState && fromState !== WorkflowState.INIT) {
+          this._stateManager.failStage({ sessionId: this._sessionId, stage: fromState, error: { name: 'JumpAbandon', message: `Jumped to ${targetState}: ${reason}` } });
+        }
+        this._stateManager.beginStage({ sessionId: this._sessionId, stage: targetState });
+      } catch (err) {
+        console.error(`[StateMachine] ⚠️ StateManager jump lifecycle error: ${err.message}`);
+      }
+    }
 
     const entry = createHistoryEntry(fromState, targetState, null, `[JUMP] ${reason}`);
     this.manifest.history.push(entry);
@@ -726,14 +820,9 @@ class StateMachine {
   }
 
   _writeManifest() {
-    // Ensure output directory exists
     const dir = path.dirname(this._manifestPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-    // P0 fix: Verify optimistic lock before writing.
-    // If another process modified manifest.json since our last read, reject the write
-    // to prevent silent data loss. This integrates file-lock-manager.js into the
-    // StateMachine's manifest persistence layer.
     if (fs.existsSync(this._manifestPath)) {
       const currentContent = fs.readFileSync(this._manifestPath, 'utf-8');
       const lockCheck = fileLockManager.verifyVersion(
@@ -741,23 +830,19 @@ class StateMachine {
       );
       if (!lockCheck.valid) {
         console.warn(`[StateMachine] ⚠️ Manifest conflict detected: ${lockCheck.reason}. Proceeding with write (last-writer-wins).`);
-        // Log the conflict but proceed – in single-process mode this is extremely
-        // rare and usually means an external tool edited the file. We still write
-        // to avoid blocking the workflow, but the conflict is recorded for debugging.
       }
     }
 
-    // N33 fix: atomic write – write to a temp file first, then rename.
-    // If the process crashes mid-write, the original manifest.json is untouched
-    // and the next resume will still find a valid JSON file.
     const newContent = JSON.stringify(this.manifest, null, 2);
     const tmpPath = this._manifestPath + '.tmp';
     fs.writeFileSync(tmpPath, newContent, 'utf-8');
     fs.renameSync(tmpPath, this._manifestPath);
 
-    // Update the version stamp to reflect the new content so that subsequent
-    // writes within the same session use the correct baseline.
     fileLockManager.releaseVersion(this._manifestPath, newContent, `sm-${this.projectId}`);
+
+    if (this._useRuntimeState && this._stateManager && this._sessionId) {
+      this._syncManifestToStateManager();
+    }
   }
 
   /**
@@ -776,6 +861,50 @@ class StateMachine {
     const key = stateToKey[state];
     if (key) {
       this.manifest.artifacts[key] = artifactPath;
+    }
+  }
+
+  _sessionToManifest(session) {
+    const artifacts = {};
+    if (session.stages) {
+      for (const [stage, run] of Object.entries(session.stages)) {
+        const key = { ANALYSE: 'requirementMd', ARCHITECT: 'architectureMd', CODE: 'codeDiff', TEST: 'testReportMd' }[stage];
+        if (key && run.outputRefs && run.outputRefs.length > 0) {
+          artifacts[key] = run.outputRefs[0].path || run.outputRefs[0];
+        }
+      }
+    }
+    const history = [];
+    if (session.stages) {
+      for (const [stage, run] of Object.entries(session.stages)) {
+        if (run.startedAt) {
+          history.push({ fromState: null, toState: stage, timestamp: run.startedAt, artifactPath: null, note: '' });
+        }
+      }
+    }
+    return {
+      version: '1.0.0',
+      projectId: this.projectId,
+      currentState: session.currentStage || WorkflowState.INIT,
+      createdAt: session.startedAt,
+      updatedAt: session.updatedAt,
+      history,
+      artifacts: { requirementMd: null, architectureMd: null, codeDiff: null, executionPlanMd: null, testReportMd: null, ...artifacts },
+      risks: [],
+      meta: { sessionId: session.sessionId, runtimeMode: session.mode },
+    };
+  }
+
+  _syncManifestToStateManager() {
+    try {
+      let session = this._stateManager.loadSession(this._sessionId);
+      if (!session) return;
+      session.currentStage = this.manifest.currentState;
+      session.status = this.manifest.currentState === WorkflowState.FINISHED ? SESSION_STATUS.COMPLETED : SESSION_STATUS.RUNNING;
+      session.updatedAt = this.manifest.updatedAt;
+      this._stateManager.saveSession(session);
+    } catch (err) {
+      console.error(`[StateMachine] ⚠️ StateManager sync failed: ${err.message}`);
     }
   }
 }

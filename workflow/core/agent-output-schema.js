@@ -49,15 +49,18 @@ const ANALYST_SCHEMA = {
  */
 const ARCHITECT_SCHEMA = {
   role: 'architect',
-  version: '1.2',
+  version: '1.3',
   fields: {
-    modules:      { type: 'array',  description: 'Module/component definitions',    required: true },
-    techStack:    { type: 'object', description: 'Technology stack choices',         required: true },
-    decisions:    { type: 'array',  description: 'Architecture decision records',    required: true },
-    apis:         { type: 'array',  description: 'API endpoint definitions',         required: false },
-    dataModels:   { type: 'array',  description: 'Data model definitions',           required: false },
-    keyDecisions: { type: 'array',  description: 'Summary of key decisions (text)',  required: false },
-    adrLinkage:   { type: 'object', description: 'Lightweight requirement-to-decision mapping: { links: [{ reqId, adrId, decisionRef }] }', required: true },
+    modules:             { type: 'array',  description: 'Module/component definitions',    required: true },
+    techStack:           { type: 'object', description: 'Technology stack choices',         required: true },
+    decisions:           { type: 'array',  description: 'Architecture decision records',    required: true },
+    apis:                { type: 'array',  description: 'API endpoint definitions',         required: false },
+    dataModels:          { type: 'array',  description: 'Data model definitions',           required: false },
+    keyDecisions:        { type: 'array',  description: 'Summary of key decisions (text)',  required: false },
+    adrLinkage:          { type: 'object', description: 'Lightweight requirement-to-decision mapping: { links: [{ reqId, adrId, decisionRef }] }', required: true },
+    failureModes:        { type: 'array',  description: 'Failure mode definitions: [{ id, component, failureType, impact, detection, recovery, severity }]', required: false },
+    migrationSafetyCase: { type: 'object', description: 'Migration safety evidence: { rollbackStrategy, compatibilityConstraints, driftDetection, sourceOfTruth, exitCriteria }', required: false },
+    scorecard:           { type: 'object', description: 'Architecture scorecard summary from buildArchitectureScorecard(): { totalScore, coverageScore, dimensions, gapSummary }', required: false },
   },
 };
 

@@ -35,6 +35,8 @@
 const fs   = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { JsonlEventStore } = require('./runtime/jsonl-event-store');
+const { RuntimeEventStore } = require('./runtime/runtime-event-store');
 
 // ─── Event Categories ───────────────────────────────────────────────────────
 
@@ -84,6 +86,7 @@ const EVENT_CATEGORY_MAP = {
   experience_recorded:        EventCategory.EXPERIENCE,
   skill_evolved:              EventCategory.EXPERIENCE,
   skill_auto_created:         EventCategory.EXPERIENCE,
+  skill_discovery_complete:   EventCategory.EXPERIENCE,
   complaint_filed:            EventCategory.COMPLAINT,
   complaint_resolved:         EventCategory.COMPLAINT,
   ci_pipeline_started:        EventCategory.CI,
@@ -107,6 +110,18 @@ const EVENT_CATEGORY_MAP = {
   human_review_required:      EventCategory.LIFECYCLE,
   negotiate_request:          EventCategory.NEGOTIATION,
   negotiate_response:         EventCategory.NEGOTIATION,
+  write_around_review_complete: EventCategory.LIFECYCLE,
+  write_around_review_blocked:  EventCategory.ERROR,
+  write_around_review_warning:  EventCategory.LIFECYCLE,
+  tool_execution_started:    EventCategory.AGENT,
+  tool_execution_completed:  EventCategory.AGENT,
+  tool_execution_failed:     EventCategory.ERROR,
+  tool_before_execution:     EventCategory.AGENT,
+  tool_after_execution:      EventCategory.AGENT,
+  output_truncated:          EventCategory.LLM,
+  output_continuation:       EventCategory.LLM,
+  agent_self_report_found:   EventCategory.SYSTEM,
+  agent_self_report_missing: EventCategory.SYSTEM,
 };
 
 // ─── EventJournal ───────────────────────────────────────────────────────────
@@ -120,6 +135,7 @@ class EventJournal {
    * @param {boolean} [opts.enabled=true] - Set false to create a no-op journal
    * @param {number} [opts.flushIntervalMs=5000] - Batch flush interval in ms
    * @param {number} [opts.maxBufferSize=50]     - Max events before force-flush
+   * @param {object} [opts.runtimeEventStore] - RuntimeEventStore for unified schema delegation
    */
   constructor(opts = {}) {
     this._enabled = opts.enabled !== false;
@@ -127,6 +143,12 @@ class EventJournal {
     this._outputDir = opts.outputDir || path.join(__dirname, '..', 'output');
     this._flushIntervalMs = opts.flushIntervalMs || 5000;
     this._maxBufferSize = opts.maxBufferSize || 50;
+
+    if (opts.runtimeEventStore) {
+      this._runtimeEventStore = opts.runtimeEventStore;
+    } else {
+      this._runtimeEventStore = this._createDefaultEventStore();
+    }
 
     // Monotonically increasing sequence number for event ordering
     this._seq = 0;
@@ -168,6 +190,20 @@ class EventJournal {
         journalPath: this._journalPath,
         startedAt: new Date().toISOString(),
       });
+    }
+  }
+
+  _createDefaultEventStore() {
+    try {
+      const eventsDir = path.join(this._outputDir, 'runtime', 'events');
+      const backingStore = new JsonlEventStore({ eventsDir });
+      return new RuntimeEventStore({
+        backingStore,
+        sessionId: this._sessionId,
+      });
+    } catch (err) {
+      console.error(`[EventJournal] ⚠️ Failed to create RuntimeEventStore: ${err.message}`);
+      return null;
     }
   }
 
@@ -235,6 +271,49 @@ class EventJournal {
    * @returns {Array<object>} Matching events (newest first)
    */
   query(filter = {}) {
+    if (this._runtimeEventStore) {
+      try {
+        const queryInput = {
+          sessionId: this._sessionId,
+          kind: filter.event,
+          stage: filter.stage,
+          limit: 1000,
+        };
+        let results = this._runtimeEventStore.query(queryInput);
+
+        if (filter.category) {
+          results = results.filter(ev => {
+            const cat = (ev.payload && ev.payload._category) || '';
+            return cat === filter.category;
+          });
+        }
+        if (filter.since) {
+          results = results.filter(ev => new Date(ev.ts).getTime() >= filter.since);
+        }
+        if (filter.until) {
+          results = results.filter(ev => new Date(ev.ts).getTime() <= filter.until);
+        }
+
+        const limit = filter.limit || 100;
+        return results.reverse().slice(0, limit).map(ev => {
+          const payload = ev.payload || {};
+          const { _category, ...data } = payload;
+          return {
+            seq: ev.seq,
+            ts: new Date(ev.ts).getTime(),
+            iso: ev.ts,
+            event: ev.kind,
+            category: _category || filter.category,
+            stage: ev.stage,
+            sessionId: ev.sessionId,
+            data,
+          };
+        });
+      } catch (err) {
+        console.warn(`[EventJournal] ⚠️ RuntimeEventStore query failed, falling back to local: ${err.message}`);
+      }
+    }
+
     const events = this._readAllEvents();
     const limit = filter.limit || 100;
 
@@ -318,20 +397,25 @@ class EventJournal {
   async close() {
     if (!this._enabled) return;
 
-    // Record journal-end event
     this._appendInternal('journal_end', EventCategory.SYSTEM, {
       sessionId: this._sessionId,
       totalEvents: this._stats.totalEvents,
       endedAt: new Date().toISOString(),
     });
 
-    // Final flush
     this._flush();
 
-    // Stop timer
     if (this._flushTimer) {
       clearInterval(this._flushTimer);
       this._flushTimer = null;
+    }
+
+    if (this._runtimeEventStore && typeof this._runtimeEventStore.close === 'function') {
+      try {
+        this._runtimeEventStore.close();
+      } catch (err) {
+        console.warn(`[EventJournal] ⚠️ RuntimeEventStore close failed: ${err.message}`);
+      }
     }
 
     console.log(`[EventJournal] 📖 Closed. ${this._stats.totalEvents} events written to ${path.basename(this._journalPath)}`);
@@ -379,7 +463,24 @@ class EventJournal {
       for (const cb of this._subscribers) {
         try {
           cb(entry);
-        } catch (_) { /* subscriber errors must not affect journal */ }
+        } catch (err) {
+          console.error(`[EventJournal] Subscriber callback failed: ${err?.message || err}`);
+        }
+      }
+    }
+
+    // Delegate to RuntimeEventStore for unified schema
+    if (this._runtimeEventStore) {
+      try {
+        this._runtimeEventStore.append({
+          sessionId: this._sessionId,
+          kind: eventType,
+          category,
+          stage: meta.stage || this._currentStage || null,
+          payload: { ...data, _category: category },
+        });
+      } catch (err) {
+        console.error(`[EventJournal] RuntimeEventStore.append failed: ${err?.message || err}`);
       }
     }
 
@@ -491,7 +592,9 @@ class EventJournal {
         for (const line of lines) {
           try {
             events.push(JSON.parse(line));
-          } catch (_) { /* skip malformed lines */ }
+          } catch (err) {
+            console.warn(`[EventJournal] Skipping malformed line: ${err?.message || err}`);
+          }
         }
       } catch (err) {
         console.warn(`[EventJournal] ⚠️ Failed to read journal: ${err.message}`);
@@ -569,7 +672,10 @@ function loadJournal(journalPath, filter = {}) {
     .filter(l => l.trim())
     .map(line => {
       try { return JSON.parse(line); }
-      catch (_) { return null; }
+      catch (err) {
+        console.warn(`[EventJournal] Failed to parse line: ${err?.message || err}`);
+        return null;
+      }
     })
     .filter(Boolean);
 

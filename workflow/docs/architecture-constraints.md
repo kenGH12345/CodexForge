@@ -243,3 +243,65 @@ Comments are loaded into every LLM context window — they are **not free**.
 | No restatement comments | `const maxRetry = 3; // max retry count` is forbidden |
 
 **Violation = token waste + context pollution.** Any comment that does not explain a non-obvious decision MUST be deleted.
+
+## Production-First Principle (P0)
+
+> **Rule**: Every feature, primitive, or infrastructure module MUST be wired into
+> a real production call path within the same delivery window it lands, or it
+> MUST NOT be merged. "Written but never called" code is zero value and negative
+> cost (maintenance + review + audit overhead).
+
+**Background**: In the P0 Phase 1 → Phase 2 split (April 2026), the `ConversationCompactor`
+and `getAdaptiveMultiplier` primitives shipped as Phase 1 but sat with 0% production
+reach for a full Phase gap. The theoretical token savings were 0% during that gap.
+This constraint exists so that gap never happens by accident again.
+
+**Enforced "Production Integration" criteria (ALL THREE must hold):**
+
+| # | Criterion | How verified |
+|---|-----------|--------------|
+| 1 | **Require-reachable** | The module is `require(...)`'d by at least one file outside `tests/` and outside its own folder |
+| 2 | **Observability event present** | The module emits at least one event/log recorded in `output/observability-*.json` OR `workflow-progress.log` during a real `/wf` run |
+| 3 | **End-to-end integration test** | At least one file in `tests/integration/` or `tests/e2e/` imports the module AND exercises its public API |
+
+A module passing only 1 or 2 of the above is classified as an **Isolation Module**
+(孤岛模块) and MUST be either integrated or removed within the next delivery window.
+
+**Scope (what this rule applies to):**
+
+| ✅ In Scope | ❌ Out of Scope |
+|-----------|----------------|
+| Product features (commands, bridge endpoints, workflow stages) | Experimental modules tagged `@production-exempt: experimental` |
+| Shared infrastructure (context builders, token budget, compaction) | Test fixtures and test helpers |
+| Observability & audit modules (must have a consumer of the data) | Pure type definitions / constants files |
+| New `core/*.js` and `tools/*.js` modules | Reserved for future placeholder interfaces (`@production-exempt: reserved`, max 30 days) |
+
+**Exemption mechanism:**
+
+A module may declare itself exempt with a top-of-file JSDoc tag:
+
+```js
+/**
+ * @production-exempt experimental — PoC for XYZ, target merge date: 2026-05-15
+ */
+```
+
+Allowed tags: `experimental` (no deadline), `reserved` (≤30 days), `test-helper`.
+Any other value = scanner reports as isolation module.
+
+**Automated detection:**
+
+The `production-readiness-scanner.js` tool scans the codebase and emits
+`output/isolation-modules-inventory.md`. Scheduled to run weekly via
+`workflow.config.js → scheduler`. The Bridge command
+`production-readiness-check` runs it on demand.
+
+**Enforcement level:**
+
+| Phase | Action |
+|-------|--------|
+| Development | Scanner output is advisory (scan and surface, do not block) |
+| Code Review | Reviewer MUST check the scanner output before approving |
+| Weekly Maintenance | Isolation modules older than 2 weeks raise a HIGH-severity item in `health-report.md` |
+
+**See also:** [ADR-56 Production-First Principle](./adr-56-production-first-principle.md)

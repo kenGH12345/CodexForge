@@ -25,11 +25,13 @@ const {
   webSearchHelper,
   formatWebSearchBlock,
 } = require('./orchestrator-stage-helpers');
+const { validateAnalysisQuality } = require('./analysis-quality-gate');
 const {
   EnrichmentBudgetGuard,
   ENRICHMENT_PRIORITIES,
   setEnrichmentCompressorCheapLlm,
 } = require('./enrichment-budget-guard');
+const { getStandardTools } = require('./agent-tools');
 
 // ─── Prompt A/B outcome recording helper ──────────────────────────────────────
 /**
@@ -177,6 +179,11 @@ async function _runAnalyst(rawRequirement) {
     this.stateMachine.recordRisk('medium', note);
   }
 
+  // ── Optimization 1: Dynamic Tool Calling ──────────────────────────────────
+  // Enable ReAct loop for AnalystAgent to explore codebase dynamically
+  this.agents[AgentRole.ANALYST].tools = getStandardTools(this);
+  console.error(`[Orchestrator] 🛠️  Dynamic Tool Calling enabled for ANALYST stage.`);
+
   // ── EnrichmentBudgetGuard: budget + compression guard for ANALYSE stage ──
   const enrichmentGuard = new EnrichmentBudgetGuard({
     totalBudgetChars: 14000,
@@ -271,114 +278,112 @@ async function _runAnalyst(rawRequirement) {
   }
 
   // ── P0-1: Inject Code Graph seed information for Module Map generation ────
-  // Instead of letting the LLM guess module boundaries from scratch, we provide
-  // the real directory-level structure from the Code Graph. This gives the
-  // AnalystAgent concrete, grounded data to base its Functional Module Map on.
-  try {
-    if (this.codeGraph && typeof this.codeGraph.getModuleSummaryMarkdown === 'function') {
-      const moduleSeedInfo = this.codeGraph.getModuleSummaryMarkdown({ maxDirs: 15 });
-      if (moduleSeedInfo && moduleSeedInfo.length > 0) {
-        await enrichmentGuard.append(
-          'CODE_GRAPH_SEED',
-          `## Context: Codebase Module Structure\n${moduleSeedInfo}`,
-          ENRICHMENT_PRIORITIES.CODE_GRAPH_SEED,
-        );
-        console.error(`[Orchestrator] 🗺️  Code Graph seed info queued via EnrichmentBudgetGuard (${moduleSeedInfo.length} chars).`);
-      } else {
-        console.error(`[Orchestrator] 🗺️  Code Graph has no module summary (new project or single-directory). Module Map will be generated from scratch.`);
+  // Skipped when Tool Calling is enabled, as the Agent can explore the codebase itself.
+  if (!this.agents[AgentRole.ANALYST].tools || this.agents[AgentRole.ANALYST].tools.length === 0) {
+    try {
+      if (this.codeGraph && typeof this.codeGraph.getModuleSummaryMarkdown === 'function') {
+        const moduleSeedInfo = this.codeGraph.getModuleSummaryMarkdown({ maxDirs: 15 });
+        if (moduleSeedInfo && moduleSeedInfo.length > 0) {
+          await enrichmentGuard.append(
+            'CODE_GRAPH_SEED',
+            `## Context: Codebase Module Structure\n${moduleSeedInfo}`,
+            ENRICHMENT_PRIORITIES.CODE_GRAPH_SEED,
+          );
+          console.error(`[Orchestrator] 🗺️  Code Graph seed info queued via EnrichmentBudgetGuard (${moduleSeedInfo.length} chars).`);
+        } else {
+          console.error(`[Orchestrator] 🗺️  Code Graph has no module summary (new project or single-directory). Module Map will be generated from scratch.`);
+        }
       }
+    } catch (seedErr) {
+      console.warn(`[Orchestrator] ⚠️  Code Graph seed injection failed (non-fatal): ${seedErr.message}`);
     }
-  } catch (seedErr) {
-    console.warn(`[Orchestrator] ⚠️  Code Graph seed injection failed (non-fatal): ${seedErr.message}`);
   }
 
   // ── ADR-49 P1: Anchor-Driven Code Reading ─────────────────────────────────
-  // BLIND SPOT fix: AnalystAgent previously relied only on CodeGraph summaries,
-  // never reading actual source code. Now we extract anchor files and entity names
-  // from the user requirement, read the key files (up to 5), and inject their
-  // content into the AnalystAgent context. This gives the LLM concrete code
-  // evidence to base its analysis on — similar to Claude Code's Explore phase.
-  try {
-    const { extractAnchorFiles } = require('../agents/analyst-agent');
-    const { anchorFiles, anchorNames } = extractAnchorFiles(rawRequirement || '');
+  // Skipped when Tool Calling is enabled, as the Agent can read files itself.
+  if (!this.agents[AgentRole.ANALYST].tools || this.agents[AgentRole.ANALYST].tools.length === 0) {
+    try {
+      const { extractAnchorFiles } = require('../agents/analyst-agent');
+      const { anchorFiles, anchorNames } = extractAnchorFiles(rawRequirement || '');
 
-    // Also extract CamelCase entity names for broader search
-    const entityPattern = /\b([A-Z][a-zA-Z0-9]{2,}(?:[A-Z][a-z]+)+)\b/g;
-    const entities = [];
-    const entitySeen = new Set();
-    let entityMatch;
-    while ((entityMatch = entityPattern.exec(rawRequirement || '')) !== null) {
-      if (!entitySeen.has(entityMatch[1])) {
-        entitySeen.add(entityMatch[1]);
-        entities.push(entityMatch[1]);
-      }
-    }
-
-    const searchTargets = [...anchorFiles.slice(0, 3), ...entities.slice(0, 5)];
-    if (searchTargets.length > 0) {
-      const codeSnippets = [];
-      const maxFiles = 5;
-      const maxCharsPerFile = 2000;
-      let filesRead = 0;
-
-      for (const target of searchTargets) {
-        if (filesRead >= maxFiles) break;
-
-        // Try to find the file in the project
-        const projectRoot = this._projectRoot || this.projectRoot || '.';
-        const targetPath = path.resolve(projectRoot, target);
-
-        // Direct file read if it looks like a file path
-        if (target.includes('/') || target.includes('\\') || /\.\w{1,5}$/.test(target)) {
-          try {
-            if (fs.existsSync(targetPath)) {
-              const content = fs.readFileSync(targetPath, 'utf-8');
-              const truncated = content.length > maxCharsPerFile
-                ? content.slice(0, maxCharsPerFile) + '\n... (truncated)'
-                : content;
-              codeSnippets.push(`### File: \`${target}\` (${content.length} chars)\n\`\`\`\n${truncated}\n\`\`\``);
-              filesRead++;
-              continue;
-            }
-          } catch (_) { /* fall through to search */ }
+      // Also extract CamelCase entity names for broader search
+      const entityPattern = /\b([A-Z][a-zA-Z0-9]{2,}(?:[A-Z][a-z]+)+)\b/g;
+      const entities = [];
+      const entitySeen = new Set();
+      let entityMatch;
+      while ((entityMatch = entityPattern.exec(rawRequirement || '')) !== null) {
+        if (!entitySeen.has(entityMatch[1])) {
+          entitySeen.add(entityMatch[1]);
+          entities.push(entityMatch[1]);
         }
+      }
 
-        // Search via CodeGraph if available
-        if (this.codeGraph && typeof this.codeGraph.searchSymbol === 'function') {
-          try {
-            const results = this.codeGraph.searchSymbol(target, { maxResults: 2 });
-            if (results && results.length > 0) {
-              for (const result of results.slice(0, 1)) {
-                if (filesRead >= maxFiles) break;
-                const filePath = result.file || result.path;
-                if (filePath && fs.existsSync(filePath)) {
-                  const content = fs.readFileSync(filePath, 'utf-8');
-                  const truncated = content.length > maxCharsPerFile
-                    ? content.slice(0, maxCharsPerFile) + '\n... (truncated)'
-                    : content;
-                  codeSnippets.push(`### File: \`${filePath}\` (found via CodeGraph search for "${target}")\n\`\`\`\n${truncated}\n\`\`\``);
-                  filesRead++;
+      const searchTargets = [...anchorFiles.slice(0, 3), ...entities.slice(0, 5)];
+      if (searchTargets.length > 0) {
+        const codeSnippets = [];
+        const maxFiles = 5;
+        const maxCharsPerFile = 2000;
+        let filesRead = 0;
+
+        for (const target of searchTargets) {
+          if (filesRead >= maxFiles) break;
+
+          // Try to find the file in the project
+          const projectRoot = this._projectRoot || this.projectRoot || '.';
+          const targetPath = path.resolve(projectRoot, target);
+
+          // Direct file read if it looks like a file path
+          if (target.includes('/') || target.includes('\\') || /\.\w{1,5}$/.test(target)) {
+            try {
+              if (fs.existsSync(targetPath)) {
+                const content = fs.readFileSync(targetPath, 'utf-8');
+                const truncated = content.length > maxCharsPerFile
+                  ? content.slice(0, maxCharsPerFile) + '\n... (truncated)'
+                  : content;
+                codeSnippets.push(`### File: \`${target}\` (${content.length} chars)\n\`\`\`\n${truncated}\n\`\`\``);
+                filesRead++;
+                continue;
+              }
+            } catch (_) { /* fall through to search */ }
+          }
+
+          // Search via CodeGraph if available
+          if (this.codeGraph && typeof this.codeGraph.searchSymbol === 'function') {
+            try {
+              const results = this.codeGraph.searchSymbol(target, { maxResults: 2 });
+              if (results && results.length > 0) {
+                for (const result of results.slice(0, 1)) {
+                  if (filesRead >= maxFiles) break;
+                  const filePath = result.file || result.path;
+                  if (filePath && fs.existsSync(filePath)) {
+                    const content = fs.readFileSync(filePath, 'utf-8');
+                    const truncated = content.length > maxCharsPerFile
+                      ? content.slice(0, maxCharsPerFile) + '\n... (truncated)'
+                      : content;
+                    codeSnippets.push(`### File: \`${filePath}\` (found via CodeGraph search for "${target}")\n\`\`\`\n${truncated}\n\`\`\``);
+                    filesRead++;
+                  }
                 }
               }
-            }
-          } catch (_) { /* non-fatal */ }
+            } catch (_) { /* non-fatal */ }
+          }
+        }
+
+        if (codeSnippets.length > 0) {
+          const codeBlock = `## Context: Anchor Code Files (auto-read from project)\n> The following ${codeSnippets.length} file(s) were automatically read based on references in the user requirement.\n> Use these as concrete evidence for your analysis — reference specific line numbers and function names.\n\n${codeSnippets.join('\n\n')}`;
+          await enrichmentGuard.append(
+            'ANCHOR_FILES',
+            codeBlock,
+            ENRICHMENT_PRIORITIES.ANCHOR_FILES,
+          );
+          console.error(`[Orchestrator] 📖 ADR-49: ${codeSnippets.length} anchor code file(s) queued via EnrichmentBudgetGuard (${codeBlock.length} chars).`);
+        } else {
+          console.error(`[Orchestrator] 📖 ADR-49: No anchor files found for targets: [${searchTargets.slice(0, 5).join(', ')}]`);
         }
       }
-
-      if (codeSnippets.length > 0) {
-        const codeBlock = `## Context: Anchor Code Files (auto-read from project)\n> The following ${codeSnippets.length} file(s) were automatically read based on references in the user requirement.\n> Use these as concrete evidence for your analysis — reference specific line numbers and function names.\n\n${codeSnippets.join('\n\n')}`;
-        await enrichmentGuard.append(
-          'ANCHOR_FILES',
-          codeBlock,
-          ENRICHMENT_PRIORITIES.ANCHOR_FILES,
-        );
-        console.error(`[Orchestrator] 📖 ADR-49: ${codeSnippets.length} anchor code file(s) queued via EnrichmentBudgetGuard (${codeBlock.length} chars).`);
-      } else {
-        console.error(`[Orchestrator] 📖 ADR-49: No anchor files found for targets: [${searchTargets.slice(0, 5).join(', ')}]`);
-      }
+    } catch (anchorReadErr) {
+      console.warn(`[Orchestrator] ⚠️  ADR-49 anchor code reading failed (non-fatal): ${anchorReadErr.message}`);
     }
-  } catch (anchorReadErr) {
-    console.warn(`[Orchestrator] ⚠️  ADR-49 anchor code reading failed (non-fatal): ${anchorReadErr.message}`);
   }
 
   // ── P1 fix: Inject Experience for ANALYSE stage (was completely missing) ───
@@ -496,6 +501,44 @@ async function _runAnalyst(rawRequirement) {
  */
 async function _finalizeAnalyst(outputPath, clarResult, analystInjectedExpIds) {
   const analyseCtx = await storeAnalyseContext(this, outputPath, clarResult);
+
+  // ── L1 Quality Gate: validate ANALYSE output structural completeness ──
+  let qualityGateResult = null;
+  try {
+    let analyseContent = '';
+    if (outputPath && fs.existsSync(outputPath)) {
+      analyseContent = fs.readFileSync(outputPath, 'utf-8');
+    }
+    qualityGateResult = validateAnalysisQuality(analyseContent);
+    if (this.stageCtx) {
+      const existingAnalyse = this.stageCtx.get('ANALYSE') || {};
+      this.stageCtx.set('ANALYSE', {
+        ...existingAnalyse,
+        meta: {
+          ...(existingAnalyse.meta || {}),
+          qualityGate: {
+            score: qualityGateResult.score,
+            passed: qualityGateResult.passed,
+            failedChecks: qualityGateResult.failedChecks.map(c => c.id),
+            criticalFailed: qualityGateResult.criticalFailed.map(c => c.id),
+          },
+        },
+      });
+    }
+    if (!qualityGateResult.passed) {
+      const riskLabels = qualityGateResult.criticalFailed.length > 0
+        ? qualityGateResult.criticalFailed.map(c => c.name).join(', ')
+        : qualityGateResult.highFailed.map(c => c.name).join(', ');
+      console.error(`[Orchestrator] ⚠️  ANALYSE Quality Gate: score=${qualityGateResult.score}/100 — gaps: ${riskLabels}`);
+      if (this.stateMachine && typeof this.stateMachine.recordRisk === 'function') {
+        this.stateMachine.recordRisk('medium', `[ANALYSE] Quality gate score ${qualityGateResult.score}/100 — missing: ${riskLabels}`);
+      }
+    } else {
+      console.error(`[Orchestrator] ✅ ANALYSE Quality Gate: score=${qualityGateResult.score}/100 PASSED`);
+    }
+  } catch (qgErr) {
+    console.warn(`[Orchestrator] ⚠️  ANALYSE quality gate check failed (non-fatal): ${qgErr.message}`);
+  }
 
   // ── P0 traceability: build requirement → acceptance criteria matrix artifact ──
   let traceabilityMeta = null;

@@ -635,6 +635,48 @@ function evaluateAnswerQuality(questionText, answerText, options = {}) {
   };
 }
 
+/**
+ * 获取指定阶段和任务类型的维度权重配置
+ * @param {string} stageName - 当前阶段名称 (如 'ANALYSE')
+ * @param {string} [taskFingerprint='general'] - 任务类型指纹 (如 'bugfix', 'performance')
+ * @returns {Object} 维度权重映射表
+ */
+function getStageDimensionChecks(stageName, taskFingerprint = 'general') {
+  const baseChecks = {
+    ANALYSE: { RELEVANCE: 2, DEPTH: 2, FIRST_PRINCIPLES: 2, EVIDENCE: 2, ROI_ASSESSMENT: 2 },
+    ARCHITECT: { BREADTH: 2, LOGIC: 2, BOUNDARY: 2, INDUSTRY_COMPARISON: 1, ROI_ASSESSMENT: 2 },
+    PLAN: { PRECISION: 2, LOGIC: 1, DATA: 1, ROI_ASSESSMENT: 1 },
+    CODE: { BOUNDARY: 2, EVIDENCE: 2, CLARITY: 1 },
+    DEVELOP: { BOUNDARY: 2, EVIDENCE: 2, CLARITY: 1 },
+    TEST: { EVIDENCE: 2, BOUNDARY: 2, DATA: 1 },
+  };
+
+  const checks = { ...(baseChecks[stageName] || {}) };
+
+  // 动态叠加基于任务类型的权重
+  if (taskFingerprint === 'performance') {
+    checks.DATA = (checks.DATA || 0) + 1;
+    checks.PRECISION = (checks.PRECISION || 0) + 1;
+  } else if (taskFingerprint === 'security') {
+    checks.BOUNDARY = (checks.BOUNDARY || 0) + 1;
+    checks.LOGIC = (checks.LOGIC || 0) + 1;
+  } else if (taskFingerprint === 'bugfix') {
+    checks.DEPTH = (checks.DEPTH || 0) + 1;
+    checks.EVIDENCE = (checks.EVIDENCE || 0) + 1;
+  } else if (taskFingerprint === 'test') {
+    checks.BOUNDARY = (checks.BOUNDARY || 0) + 1;
+    checks.DATA = (checks.DATA || 0) + 1;
+  } else if (taskFingerprint === 'feature') {
+    checks.BREADTH = (checks.BREADTH || 0) + 1;
+    checks.BOUNDARY = (checks.BOUNDARY || 0) + 1;
+  } else if (taskFingerprint === 'refactor') {
+    checks.LOGIC = (checks.LOGIC || 0) + 1;
+    checks.EVIDENCE = (checks.EVIDENCE || 0) + 1;
+  }
+
+  return checks;
+}
+
 // ─── Module Exports ───────────────────────────────────────────────────────────
 
 module.exports = {
@@ -651,4 +693,5 @@ module.exports = {
   QUALITY_CHECK_PATTERNS,
   ANSWER_QUALITY_CONFIG,
   evaluateAnswerQuality,
+  getStageDimensionChecks,
 };

@@ -654,6 +654,7 @@ Keep total output under 500 characters. Be specific and actionable.`;
       { pattern: /^agents\/[^/]+\.js$/,       limit: 300 },
       { pattern: /^commands\/command-router\.js$/, limit: 100 },
       { pattern: /^commands\/commands-[^/]+\.js$/, limit: 500 },
+      { pattern: /^tools\/[^/]+\.js$/,        limit: 800 },
     ];
 
     const violations = [];
@@ -682,7 +683,7 @@ Keep total output under 500 characters. Be specific and actionable.`;
 
     const scanDir = (dir, relBase) => {
       let entries;
-      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { console.warn('[QualityGate] readdirSync failed for', dir, ':', e.message); return; }
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
         const relPath = path.join(relBase, entry.name).replace(/\\/g, '/');

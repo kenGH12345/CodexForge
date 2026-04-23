@@ -63,6 +63,7 @@ const { IssuePatternStep }      = require('./issue-pattern-step');
 const { EvolutionPipelineStep } = require('./evolution-pipeline-step');
 const { ObsFlushStep }          = require('./obs-flush-step');
 const { SelfReflectionStep }    = require('./self-reflection-step');
+const { ReflectionCycleStep }  = require('./reflection-cycle-step');
 const { PromptTraceStep }       = require('./prompt-trace-step');
 const { SummaryPrintsStep }     = require('./summary-prints-step');
 const { SkillLifecycleStep }    = require('./skill-lifecycle-step');
@@ -115,6 +116,7 @@ function createTeardownPipeline() {
     // Phase 3: Metrics Flush & Validation (priority 30-36)
     .register(new ObsFlushStep())
     .register(new SelfReflectionStep())
+    .register(new ReflectionCycleStep())
     .register(new PromptTraceStep())
     .register(new SummaryPrintsStep())
 

@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## [1.1.0] - 2026-04-17
+
+### ✨ Features
+- **Runtime Layer: StateManager + EventStore architecture** — Full CQRS-style state management with event sourcing
+  - `FileStateStore` (IStateManager): typed, versioned, atomic-write session state
+  - `JsonlEventStore` + `RuntimeEventStore` (IEventStore): durable append-only event log with enrichment
+  - `RuntimeProjector`: compat projection to legacy manifest/workflow-status formats
+  - `contract-validator`: interface contract validation for StateManager and EventStore
+  - `StateMachine` facade: delegates to FileStateStore when `useRuntimeState=true` (default)
+  - `EventJournal` adapter: dual-write to old JSONL + new RuntimeEventStore
+  - Bridge dual-write: ide-workflow-bridge.js writes both legacy files and runtime layer
+  - 140 tests passing across 4 test suites (E2E + Facade + EventJournal + EventStore)
+
+### 🏗️ Architecture
+- ADR-XX: Event-first write protocol — events written before state for crash recovery
+- Session lifecycle: CREATED → RUNNING → COMPLETED/FAILED/ABORTED
+- Stage tracking: PENDING → RUNNING → COMPLETED/FAILED/SKIPPED per stage
+- Task tracking: beginTask/completeTask/failTask within stages
+- Checkpoint/recovery: saveCheckpoint + loadRecovery for crash resilience
+- Schema version 2.0 with EVENT_CATEGORY (LIFECYCLE/GUARD/TRACE/RECOVERY/SYSTEM)
+
+### 📝 Documentation
+- `workflow/core/runtime/README.md` — API reference
+- `workflow/core/runtime/MIGRATION.md` — Legacy → Runtime migration guide
+- `workflow/core/runtime/TROUBLESHOOTING.md` — Common issues and fixes
+
 ## [1.0.0] - 2026-04-02
 
 ### ✨ Features

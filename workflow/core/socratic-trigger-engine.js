@@ -96,8 +96,8 @@ function decideChallengeTrigger(params) {
 
   // ── High risk stage + low confidence ───────────────────────────────────
   const taskRiskProfile = Array.isArray(taskFingerprint?.riskProfile) ? taskFingerprint.riskProfile : [];
-  const hasHighRiskProfile = taskRiskProfile.some(r => ['security', 'latency', 'rollback', 'compatibility'].includes(r));
-  if (isHighRiskStage && hasHighRiskProfile && lowConfidence) {
+  const hasRiskProfileForStage = taskRiskProfile.some(r => ['security', 'latency', 'rollback', 'compatibility'].includes(r));
+  if (isHighRiskStage && hasRiskProfileForStage && lowConfidence) {
     reasons.push('high_risk_stage_low_confidence');
   }
 
@@ -137,7 +137,20 @@ function decideChallengeTrigger(params) {
   const stageBonus = STAGE_POSITION_WEIGHTS[String(stageName || '').toUpperCase()] || 0;
   triggerScore += stageBonus;
 
-  const TRIGGER_THRESHOLD = 0.40;
+  // ── Dynamic Threshold Calculation ──────────────────────────────────────
+  let TRIGGER_THRESHOLD = 0.40; // Default strict threshold
+  
+  const triageScore = Number(context?.triageScore);
+  const hasHighRiskProfile = taskRiskProfile.some(r => ['security', 'latency', 'rollback', 'compatibility', 'auth', 'database'].includes(r));
+  
+  if (!hasHighRiskProfile && !Number.isNaN(triageScore)) {
+    if (triageScore < 40) {
+      TRIGGER_THRESHOLD = 0.65; // Low risk, low complexity -> relax threshold
+    } else if (triageScore < 70) {
+      TRIGGER_THRESHOLD = 0.50; // Medium risk/complexity -> moderate threshold
+    }
+  }
+
   const shouldChallenge = triggerScore >= TRIGGER_THRESHOLD;
 
   return {
@@ -151,14 +164,17 @@ function decideChallengeTrigger(params) {
 
 /**
  * Build P2 revision protocol when challenge is triggered.
+ * [T-004] Upgraded to cove-self-refine-v2 with effect tracking integration.
+ * When effectRecord.deltaOverall < 0.05, adds reChallengeInstructions
+ * targeting remaining blind spots (CoVe-lite verification loop).
  * @param {string} stageName - Current stage
- * @param {object} params - { questions, blindSpots, triggerReasons, context }
- * @returns {{ name: string, verificationQuestions: string[], steps: string[], evidenceChecks: string[], rewriteInstructions: string[], promptHint: string }|null}
+ * @param {object} params - { questions, blindSpots, triggerReasons, context, effectRecord }
+ * @returns {{ name: string, verificationQuestions: string[], steps: string[], evidenceChecks: string[], rewriteInstructions: string[], reChallengeInstructions?: object, promptHint: string }|null}
  */
 function buildP2RevisionProtocol(stageName, params) {
   if (!params) return null;
 
-  const { questions = [], blindSpots = [], triggerReasons = [], context = {} } = params;
+  const { questions = [], blindSpots = [], triggerReasons = [], context = {}, effectRecord = null } = params;
 
   if (questions.length === 0 && blindSpots.length === 0) return null;
 
@@ -179,7 +195,20 @@ function buildP2RevisionProtocol(stageName, params) {
     '输出末尾追加"Revision Notes"说明回答了哪些验证问题与具体改动。',
   ];
 
-  const protocolName = 'cove-self-refine-lite';
+  // [T-004] CoVe-lite verification loop: low effect delta triggers re-challenge
+  let reChallengeInstructions = null;
+  if (effectRecord && typeof effectRecord.deltaOverall === 'number' && effectRecord.deltaOverall < 0.05) {
+    reChallengeInstructions = {
+      trigger: 'low_effect_delta',
+      deltaOverall: effectRecord.deltaOverall,
+      remainingBlindSpots: effectRecord.blindSpotsAfter || [],
+      instruction: `追问效果不足（信心度仅提升 ${(effectRecord.deltaOverall * 100).toFixed(1)}%），请针对以下未消除盲点补充验证：${(effectRecord.blindSpotsAfter || []).join('、')}`,
+    };
+  }
+
+  const protocolName = effectRecord && typeof effectRecord.deltaOverall === 'number' && effectRecord.deltaOverall < 0.05
+    ? 'cove-self-refine-v2'
+    : 'cove-self-refine-lite';
   return {
     name: protocolName,
     requirement: requirement ? _truncateText(requirement, 120) : '',
@@ -187,7 +216,8 @@ function buildP2RevisionProtocol(stageName, params) {
     verificationQuestions,
     evidenceChecks,
     rewriteInstructions,
-    promptHint: `使用 ${protocolName}: 先逐条回答 verificationQuestions，再按 rewriteInstructions 修订产物。`,
+    reChallengeInstructions,
+    promptHint: `使用 ${protocolName}: 先逐条回答 verificationQuestions，再按 rewriteInstructions 修订产物。${reChallengeInstructions ? ' 最后检查 reChallengeInstructions 判断是否需要二次追问。' : ''}`,
   };
 }
 

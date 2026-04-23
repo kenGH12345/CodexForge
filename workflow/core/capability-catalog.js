@@ -27,7 +27,10 @@ function buildCapabilityCatalog({ mode = 'node', capabilities = {} } = {}) {
     .filter(([, v]) => !!v)
     .map(([k]) => ({ id: `cap-${k}`, when: 'runtime-detected', desc: `Runtime capability available: ${k}` }));
 
-  return list.concat(dynamic);
+  const result = list.concat(dynamic);
+  // catalog size jumping unexpectedly often masks mode-detection bugs
+  console.error(`[capability-catalog] built mode=${mode} total=${result.length} dynamic=${dynamic.length}`);
+  return result;
 }
 
 function formatCapabilityCatalogForPrompt(catalog = []) {

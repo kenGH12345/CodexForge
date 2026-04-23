@@ -514,7 +514,7 @@ class AgentFeedbackSystem {
    */
   flush() {
     if (this._feedbackStream) {
-      try { this._feedbackStream.end(); } catch (_) {}
+try { this._feedbackStream.end(); } catch (e) { console.warn('[AgentFeedbackSystem] stream.end() failed:', e.message); }
       this._feedbackStream = null;
     }
     return this.saveFeedbackReport();

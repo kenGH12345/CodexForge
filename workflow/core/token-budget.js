@@ -72,6 +72,7 @@ function setSemanticCompressorCheapLlm(llmCall) {
 const CHARS_PER_TOKEN = 4; // Must stay in sync with constants.js LLM.CHARS_PER_TOKEN
 const STAGE_TOKEN_BUDGET_CHARS = 60000; // ~15k tokens – safe margin for enrichment blocks
 const STAGE_TOKEN_BUDGET_TOKENS = Math.floor(STAGE_TOKEN_BUDGET_CHARS / CHARS_PER_TOKEN); // 15000 tokens
+const CONVERSATION_BUDGET_CHARS = 40000; // ~10k tokens — budget for conversation history serialization
 
 /**
  * Per-stage budget multipliers.
@@ -100,6 +101,39 @@ const STAGE_BUDGET_MULTIPLIERS = {
   ENTROPY:   0.3,   // 18K chars — entropy scan is lightweight
   CI:        0.4,   // 24K chars — CI stage is lightweight
 };
+
+// Adaptive multiplier (C6): blend static stage baseline with triage complexity.
+// Returns { adaptiveFactor, segment, capped }. When enabled:false or score is
+// null/non-finite, returns neutral 1.0 so callers fall back to static behavior.
+// Negative scores clamp to 0; scores >100 clamp to 100. TIGHTENING_STAGES never
+// exceed 1.0 (planning needs predictability); SKIP_STAGES always return 1.0.
+function getAdaptiveMultiplier(stage, complexityScore, opts = {}) {
+  const { ADAPTIVE_MULTIPLIER } = require('./constants');
+  const enabled = opts.enabled === true;
+  if (!enabled || complexityScore === null || complexityScore === undefined || !Number.isFinite(complexityScore)) {
+    return { adaptiveFactor: 1.0, segment: 'disabled', capped: false };
+  }
+  if (ADAPTIVE_MULTIPLIER.SKIP_STAGES.has(stage)) {
+    return { adaptiveFactor: 1.0, segment: 'skipped', capped: false };
+  }
+  const score = Math.max(0, Math.min(100, complexityScore));
+  const segment = ADAPTIVE_MULTIPLIER.SEGMENTS.find(s => score <= s.maxScore)
+    || ADAPTIVE_MULTIPLIER.SEGMENTS[ADAPTIVE_MULTIPLIER.SEGMENTS.length - 1];
+  let factor = segment.factor;
+  // TIGHTENING_STAGES cap at 1.0 to keep planning/analysis predictable even for complex tasks.
+  if (ADAPTIVE_MULTIPLIER.TIGHTENING_STAGES.has(stage) && factor > 1.0) {
+    factor = 1.0;
+  }
+  const baseMul = STAGE_BUDGET_MULTIPLIERS[stage] || 1.0;
+  const combined = baseMul * factor;
+  const cap = ADAPTIVE_MULTIPLIER.UPPER_CAP_RATIO;
+  const capped = combined > cap;
+  return {
+    adaptiveFactor: capped ? (cap / baseMul) : factor,
+    segment: segment.name,
+    capped,
+  };
+}
 
 /**
  * Priority levels for context blocks (higher = more important, kept longer).
@@ -143,13 +177,40 @@ const BLOCK_PRIORITY = {
  * @returns {{ assembled: string, stats: {total: number, dropped: string[], truncated: string[]} }}
  */
 async function _applyTokenBudget(blocks, budget = STAGE_TOKEN_BUDGET_CHARS, opts = {}) {
-  const { telemetry = null, stage = 'UNKNOWN', profile = null } = opts;
+  const {
+    telemetry = null,
+    stage = 'UNKNOWN',
+    profile = null,
+    complexityScore = null,
+    enableAdaptive = process.env.WF_ENABLE_ADAPTIVE_BUDGET !== 'false',
+    observability = null,
+    sessionId = null,
+  } = opts;
 
   // Per-stage budget adjustment: apply stage-specific multiplier when caller
   // uses the default budget (i.e. didn't pass an explicit override).
   // This ensures ANALYSE/PLAN get tighter budgets while DEVELOPER keeps full budget.
+  // C6: when adaptive mode is enabled and a complexityScore is available, blend
+  // the static multiplier with a score-derived adaptive factor.
   if (budget === STAGE_TOKEN_BUDGET_CHARS && STAGE_BUDGET_MULTIPLIERS[stage]) {
-    budget = Math.floor(STAGE_TOKEN_BUDGET_CHARS * STAGE_BUDGET_MULTIPLIERS[stage]);
+    const staticMul = STAGE_BUDGET_MULTIPLIERS[stage];
+    const adaptive = getAdaptiveMultiplier(stage, complexityScore, { enabled: enableAdaptive });
+    const finalMul = staticMul * adaptive.adaptiveFactor;
+    budget = Math.floor(STAGE_TOKEN_BUDGET_CHARS * finalMul);
+    // Audit observability when adaptive actually changed anything.
+    if (observability && adaptive.segment !== 'disabled' && adaptive.segment !== 'skipped') {
+      try {
+        observability.recordAdaptiveMultiplier(sessionId, stage, complexityScore, {
+          staticMul,
+          adaptiveFactor: adaptive.adaptiveFactor,
+          finalMul,
+          segment: adaptive.segment,
+          capped: adaptive.capped,
+          finalBudgetChars: budget,
+        });
+      } catch (_) { /* observability is best-effort */ }
+    }
+    opts._adaptiveResult = adaptive; // expose for getBudgetSummary call-sites
   }
 
   // Filter out empty blocks
@@ -653,15 +714,26 @@ class ToolResultFilter {
  * @param {object} [l3Analysis] - noiseAnalysis from prompt-builder.js
  * @returns {string} Human-readable budget summary
  */
-function getBudgetSummary(l2Stats, l3Analysis = null, stage = null) {
+function getBudgetSummary(l2Stats, l3Analysis = null, stage = null, l1Stats = null, adaptive = null) {
   const multiplier = (stage && STAGE_BUDGET_MULTIPLIERS[stage]) || 1.0;
-  const effectiveBudgetChars = Math.floor(STAGE_TOKEN_BUDGET_CHARS * multiplier);
+  const adaptiveFactor = adaptive && adaptive.segment !== 'disabled' && adaptive.segment !== 'skipped'
+    ? adaptive.adaptiveFactor
+    : 1.0;
+  const effectiveBudgetChars = Math.floor(STAGE_TOKEN_BUDGET_CHARS * multiplier * adaptiveFactor);
   const effectiveBudgetTokens = Math.floor(effectiveBudgetChars / CHARS_PER_TOKEN);
   const multiplierInfo = multiplier < 1.0 ? ` (×${multiplier} for ${stage})` : '';
+  const adaptiveInfo = adaptive
+    ? (adaptive.segment === 'disabled'
+        ? ' [adaptive:OFF]'
+        : ` [adaptive:${adaptive.segment}×${adaptive.adaptiveFactor.toFixed(2)}${adaptive.capped ? ' CAPPED' : ''}]`)
+    : '';
   const lines = [
     `── Token Budget Summary (unified view) ──`,
-    `  L2 Stage Budget  : ${l2Stats.total} chars ≈ ${l2Stats.estimatedTokens} tokens (limit: ${effectiveBudgetChars} chars ≈ ${effectiveBudgetTokens} tokens${multiplierInfo})`,
+    `  L2 Stage Budget  : ${l2Stats.total} chars ≈ ${l2Stats.estimatedTokens} tokens (limit: ${effectiveBudgetChars} chars ≈ ${effectiveBudgetTokens} tokens${multiplierInfo}${adaptiveInfo})`,
   ];
+  if (l1Stats) {
+    lines.push(`  L1 Conversation   : ${l1Stats.total} chars, essential=${l1Stats.essential}, skipped=${l1Stats.skipped}`);
+  }
   if (l2Stats.dropped.length > 0) {
     lines.push(`  L2 dropped       : [${l2Stats.dropped.join(', ')}]`);
   }
@@ -970,11 +1042,13 @@ function _extractEmbeddedSummary(content) {
 module.exports = {
   STAGE_TOKEN_BUDGET_CHARS,
   STAGE_TOKEN_BUDGET_TOKENS,
+  CONVERSATION_BUDGET_CHARS,
   STAGE_BUDGET_MULTIPLIERS,
   BLOCK_PRIORITY,
   _applyTokenBudget,
   ToolResultFilter,
   getBudgetSummary,
+  getAdaptiveMultiplier,
   INTENT_GREP_PATTERNS,
   setSemanticCompressorCheapLlm,
   // P0-A: OpenSpace-inspired conversation truncation

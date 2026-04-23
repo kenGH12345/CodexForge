@@ -27,6 +27,7 @@ const {
 const { ContractViolationError } = require('./file-ref-bus');
 const { buildRetryContext } = require('./retry-divergence-guard');
 const { buildAgentPrompt } = require('./prompt-builder');
+const { getStandardTools } = require('./agent-tools');
 
 // ── ADR-48: Micro-Planning — local task amendment during CODE stage ──────────
 // When the DeveloperAgent encounters plan deviations (unexpected dependencies,
@@ -301,6 +302,11 @@ async function _runDeveloper() {
   const devExpContext = devContextResult.content;
   const devInjectedExpIds = devContextResult.injectedExpIds || [];
   this.obs.recordExpUsage({ injected: devInjectedExpIds.length });
+
+  // ── Optimization 1: Dynamic Tool Calling ──────────────────────────────────
+  // Enable ReAct loop for DeveloperAgent to explore codebase dynamically
+  this.agents[AgentRole.DEVELOPER].tools = getStandardTools(this);
+  console.error(`[Orchestrator] 🛠️  Dynamic Tool Calling enabled for DEVELOPER stage.`);
 
 let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, devExpContext, this.handoffLog);
 

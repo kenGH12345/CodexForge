@@ -2679,6 +2679,47 @@ Introduce `EnrichmentBudgetGuard` — a priority-based budget manager that:
 
 
 
+---
+
+## ADR-20260417-01: Runtime Layer — StateManager + EventStore Architecture
+
+**Status**: Accepted
+
+**Context**:
+Workflow state was stored in untyped `manifest.json` files with no version tracking, no crash recovery, no checkpoint mechanism, and no event sourcing. State writes were ad-hoc file operations with no atomic guarantees. The `EventJournal` wrote events but was disconnected from state management.
+
+**Decision**:
+Introduce a CQRS-style Runtime Layer with two primary interfaces:
+
+1. **IStateManager** (`FileStateStore`): Typed, versioned, atomic-write session state management
+2. **IEventStore** (`RuntimeEventStore` + `JsonlEventStore`): Durable append-only event log with enrichment and category classification
+
+Supporting components:
+- `RuntimeProjector`: Projects runtime state to legacy-compatible formats (manifest, workflow-status, health-trace)
+- `contract-validator`: Interface contract validation for both IStateManager and IEventStore
+- `StateMachine` facade: Delegates to `FileStateStore` when `useRuntimeState=true` (default)
+- `EventJournal` adapter: Dual-write mode to old JSONL + new `RuntimeEventStore`
+- Bridge dual-write: IDE workflow bridge writes both legacy files and runtime layer
+
+**Write Protocol**: Event-first — events are appended before state is mutated. This ensures the event log is always the source of truth for recovery, even if the state write fails.
+
+**Schema Version**: 2.0 with `EVENT_CATEGORY` enum (LIFECYCLE, GUARD, TRACE, RECOVERY, SYSTEM)
+
+**Migration Strategy**: Zero-breaking-change via dual-write. All existing callers continue to work. `StateMachine` API unchanged. `EventJournal` API unchanged. New callers can use `FileStateStore` and `RuntimeEventStore` directly.
+
+**Consequences**:
+- (+) Crash recovery via checkpoint/recovery metadata
+- (+) Event sourcing enables audit trail and replay
+- (+) Typed interfaces with contract validation
+- (+) Version tracking detects stale reads
+- (+) Zero regression — 140 tests passing across all suites
+- (-) Additional file I/O per write operation (dual-write overhead)
+- (-) `FileStateStore` does not implement optimistic locking (single-process only)
+
+**Verification**: 140/140 tests (E2E 33 + Facade 60 + EventJournal 27 + EventStore 20)
+
+
+
 
 
 

@@ -33,7 +33,7 @@ const { ArchitectAgent } = require('./agents/architect-agent');
 const { DeveloperAgent } = require('./agents/developer-agent');
 const { TesterAgent } = require('./agents/tester-agent');
 const { PlannerAgent } = require('./agents/planner-agent');
-const { buildAgentPrompt, setPromptSlotManager, getPromptSlotManager, setSelfReflectionEngine, setSkillEvolutionEngine, setOrchestrator, setEmbeddingService, setContextLoaderCheapLlm, setContextLoaderExperienceStore, preloadAdrDigest } = require('./core/prompt-builder');
+const { buildAgentPrompt, setPromptSlotManager, getPromptSlotManager, setSelfReflectionEngine, setSkillEvolutionEngine, setOrchestrator, setEmbeddingService, setContextLoaderCheapLlm, setContextLoaderExperienceStore, setAdmissionMatrixConfig, preloadAdrDigest } = require('./core/prompt-builder');
 const { PromptSlotManager } = require('./core/prompt-slot-manager');
 const { WorkflowState, AgentRole, STATE_ORDER } = require('./core/types');
 const { PATHS, HOOK_EVENTS, outputPath, getDefaultOutputDir } = require('./core/constants');
@@ -273,8 +273,16 @@ this.projectId = projectId;
     console.error(`[Orchestrator] 🔧 Tool Hook Executor initialized (P1: automatic tool-level hooks)`);
 
     this.bus = new FileRefBus();
+
+    const runtimeStateOpts = {};
+    if (this._config && this._config.runtimeState && this._config.runtimeState.enabled) {
+      runtimeStateOpts.useRuntimeState = true;
+      runtimeStateOpts.runtimeDir = this._config.runtimeState.runtimeDir || path.join(this._outputDir, 'runtime');
+    }
+
     this.stateMachine = new StateMachine(projectId, this.hooks.getEmitter(), {
       manifestPath: path.join(this._outputDir, 'manifest.json'),
+      ...runtimeStateOpts,
     });
     this.memory = new MemoryManager(this.projectRoot);
     this.socratic = new SocraticEngine();
@@ -445,19 +453,45 @@ this.projectId = projectId;
 
       let response;
       if (Array.isArray(prompt)) {
+        // T2: Conversation compaction (R2-safe). Only the Array branch runs this —
+        // string prompts go through formatConversationWithBudget's L1 budget instead.
+        // Lazy-init singleton per orchestrator to keep session state across calls.
+        let effectivePrompt = prompt;
         try {
-          response = await _originalLlmCall(prompt);
+          if (!this._compactor) {
+            const { ConversationCompactor } = require('./core/conversation-compactor');
+            this._compactor = new ConversationCompactor({});
+          }
+          const sessionId = this.sessionId || this.runId || '_default';
+          const compactResult = await this._compactor.compact(prompt, {
+            sessionId,
+            // Hand back the *raw* underlying channel so Compactor's summary LLM
+            // call cannot re-enter this wrapper (would spiral into recursion).
+            llmCall: (p) => _originalLlmCall(p),
+            _skipCompaction: false,
+          });
+          if (compactResult.strategy === 'llm' || compactResult.strategy === 'truncate') {
+            console.error(`[Orchestrator] 🗜️  Compacted ${compactResult.originalMessageCount}→${compactResult.compactedMessageCount} msgs, saved ${compactResult.savedChars} chars (${compactResult.strategy})`);
+            effectivePrompt = compactResult.messages;
+            if (compactResult.overuseWarning) {
+              console.error(`[Orchestrator] ⚠️  ${compactResult.warningMessage}`);
+            }
+          }
+        } catch (compactErr) {
+          console.error(`[Orchestrator] ⚠️  Compaction failed non-fatally: ${compactErr.message}`);
+        }
+
+        try {
+          response = await _originalLlmCall(effectivePrompt);
         } catch (arrayErr) {
           // _originalLlmCall does not support array input – serialise to string
           console.warn(`[Orchestrator] ⚠️  _rawLlmCall: llmCall does not support message arrays (${arrayErr.message}). Serialising conversation history to string.`);
-          const serialised = prompt
-            .map(m => {
-              const role = (m && m.role) ? m.role : 'user';
-              const content = (m && m.content) ? String(m.content) : String(m);
-              return `[${role.charAt(0).toUpperCase() + role.slice(1)}]: ${content}`;
-            })
-            .join('\n\n');
-          response = await _originalLlmCall(serialised);
+          const { formatConversationWithBudget, CONVERSATION_BUDGET_CHARS } = require('./core/token-budget');
+          const CONVERSATION_BUDGET = CONVERSATION_BUDGET_CHARS;
+          const { formatted, stats } = formatConversationWithBudget(effectivePrompt, CONVERSATION_BUDGET);
+          console.error(`[Orchestrator] 💬 Conversation budget: total=${stats.total}, essential=${stats.essential}, skipped=${stats.skipped}`);
+          this._lastBudgetStats = stats;
+          response = await _originalLlmCall(formatted);
         }
       } else {
         response = await _originalLlmCall(prompt);
@@ -495,6 +529,17 @@ this.projectId = projectId;
           this.runGuard.afterLlmCall('__internal', estimatedTokens || 0, respTokens, 0);
         }
       } catch (_) { /* runGuard must never break the call */ }
+
+      // ── T-3: Budget diagnostic summary on fallback path ─────────────
+      if (this._lastBudgetStats) {
+        try {
+          const { getBudgetSummary } = require('./core/token-budget');
+          const l2Stats = { total: 0, estimatedTokens: 0, dropped: [], truncated: [] };
+          const budgetLine = getBudgetSummary(l2Stats, null, null, this._lastBudgetStats);
+          console.error(`[Orchestrator] 📊 Budget diagnostic:\n${budgetLine}`);
+          this._lastBudgetStats = null;
+        } catch (_) { /* diagnostic must never break the call */ }
+      }
 
       return response;
     };
@@ -555,6 +600,13 @@ this.projectId = projectId;
       if (this._experienceStore) {
         setContextLoaderExperienceStore(this._experienceStore);
       }
+      // T-6: Load admission matrix from workflow.config.js
+      try {
+        const config = require('../workflow.config.js');
+        if (config.admissionMatrix) {
+          setAdmissionMatrixConfig(config.admissionMatrix);
+        }
+      } catch (_) { /* admission matrix is optional */ }
     } catch (_) { /* non-fatal */ }
 
     // ── LLM-Lite Skill Refiner: inject LLM into SkillEvolutionEngine ─────────

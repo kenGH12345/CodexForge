@@ -62,6 +62,7 @@ const {
 const { buildArchitectUpstreamCtx, buildArchitectContextBlock } = require('./architect-context-builder');
 const { buildDeveloperUpstreamCtx, buildDeveloperContextBlock } = require('./developer-context-builder');
 const { buildTesterUpstreamCtx, buildTesterContextBlock }       = require('./tester-context-builder');
+const { extractUserStories, extractAcceptanceCriteria, extractRiskSummary } = require('./analysis-quality-gate');
 
 // ─── Stage context storage helpers (owned by this module) ────────────────────
 
@@ -176,8 +177,35 @@ async function storeAnalyseContext(orch, outputPath, clarResult) {
           console.error(`[Orchestrator] 🔄 Module "${mod.id}" isolatable: ${wasIsolatable} �?${mod.isolatable} (auto-calculated from dependency graph)`);
         }
       }
-      console.error(`[Orchestrator] 🗺�? Module Map extracted: ${moduleMap.modules.length} module(s), ${moduleMap.crossCuttingConcerns.length} cross-cutting concern(s).`);
+      console.error(`[Orchestrator] 🗺️  Module Map extracted: ${moduleMap.modules.length} module(s), ${moduleMap.crossCuttingConcerns.length} cross-cutting concern(s).`);
     }
+  }
+
+  // ── L3 Structured Extraction: userStories, acceptanceCriteria, riskSummary ──
+  let userStories = null;
+  let acceptanceCriteria = null;
+  let riskSummary = null;
+  try {
+    const fs = require('fs');
+    const analyseContent = fs.readFileSync(outputPath, 'utf-8');
+    userStories = extractUserStories(analyseContent);
+    acceptanceCriteria = extractAcceptanceCriteria(analyseContent);
+    riskSummary = extractRiskSummary(analyseContent);
+    if (userStories.length > 0) {
+      console.error(`[Orchestrator] 📋 Extracted ${userStories.length} user stories from ANALYSE output.`);
+    }
+    if (acceptanceCriteria.length > 0) {
+      console.error(`[Orchestrator] 📋 Extracted ${acceptanceCriteria.length} acceptance criteria from ANALYSE output.`);
+    }
+    if (riskSummary.length > 0) {
+      console.error(`[Orchestrator] 📋 Extracted ${riskSummary.length} risk items from ANALYSE output.`);
+    }
+    // Normalize to null if empty (avoid storing empty arrays)
+    if (userStories.length === 0) userStories = null;
+    if (acceptanceCriteria.length === 0) acceptanceCriteria = null;
+    if (riskSummary.length === 0) riskSummary = null;
+  } catch (extErr) {
+    console.warn(`[Orchestrator] ⚠️  Structured extraction from ANALYSE output failed (non-fatal): ${extErr.message}`);
   }
 
   orch.stageCtx.set(WorkflowState.ANALYSE, {
@@ -190,9 +218,11 @@ async function storeAnalyseContext(orch, outputPath, clarResult) {
       signalCount:         clarResult.allSignals?.length ?? 0,
       skipped:             clarResult.skipped ?? false,
       moduleMap,
+      userStories,
+      acceptanceCriteria,
+      riskSummary,
     },
-  });
-  const mmMsg = moduleMap ? `, ${moduleMap.modules.length} module(s) mapped` : '';
+  });  const mmMsg = moduleMap ? `, ${moduleMap.modules.length} module(s) mapped` : '';
   console.error(`[Orchestrator] 🔗 ANALYSE context stored: ${ctx.keyDecisions.length} key decision(s)${mmMsg}.`);
   return ctx;
 }

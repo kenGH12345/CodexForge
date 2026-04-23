@@ -267,10 +267,21 @@ ${compactTasks.slice(0, 4000)}${compactTasks.length > 4000 ? '\n... (truncated)'
 
   // Pass telemetry to _applyTokenBudget for lifecycle tracking
   const testTelemetry = orch._adapterTelemetry || null;
+  // T5: Adaptive Multiplier — read complexity score from ANALYSE stage output.
+  const testComplexityScore = (() => {
+    try {
+      const score = orch.stageCtx?.get?.('ANALYSE')?.meta?.complexity?.score;
+      return Number.isFinite(score) ? score : null;
+    } catch { return null; }
+  })();
     const { assembled: testAssembled, stats: testStats } = await _applyTokenBudget(testAdjustedBlocks, undefined, {
     telemetry: testTelemetry,
     stage: 'TESTER',
     profile: _testProfile || null,
+    complexityScore: testComplexityScore,
+    enableAdaptive: process.env.WF_ENABLE_ADAPTIVE_BUDGET !== 'false',
+    sessionId: orch.sessionId || orch.runId || null,
+    observability: orch.obs || null,
   });
   if (testStats.dropped.length > 0 || testStats.truncated.length > 0) {
     console.log(`[Orchestrator] 📊 TESTER token budget: ${testStats.total} chars, dropped=[${testStats.dropped.join(',')}], truncated=[${testStats.truncated.join(',')}]`);

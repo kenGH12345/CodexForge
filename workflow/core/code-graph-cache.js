@@ -49,7 +49,7 @@ const CodeGraphCacheMixin = {
     if (!fs.existsSync(jsonPath)) return;
     try {
       let stat;
-      try { stat = fs.statSync(jsonPath); } catch (_) { return; }
+      try { stat = fs.statSync(jsonPath); } catch (e) { console.warn('[CodeGraphCache] statSync failed for', jsonPath, ':', e.message); return; }
       const cached = _processCache.get(jsonPath);
       if (cached && cached.mtime === stat.mtimeMs) {
         this._symbols.clear();

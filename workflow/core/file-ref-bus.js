@@ -145,8 +145,10 @@ const AGENT_CONTRACTS = {
     requiredSections: [
       // English variants
       '## Requirements', '## Functional', '## Feature', '# Requirements', 'requirements',
+      '## User Stories', '## Acceptance Criteria',
       // Chinese variants (P2-NEW-2)
       '## 需求', '## 功能', '## 功能需求', '## 用户故事', '## 特性', '需求', '功能需求',
+      '## 验收标准',
     ],
     minLength: 100,
     description: 'requirements.md for ArchitectAgent',

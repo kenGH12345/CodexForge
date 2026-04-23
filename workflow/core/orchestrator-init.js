@@ -422,19 +422,33 @@ const OrchestratorInitMixin = {
       _done7();
     }
 
-    // ── Step 10: P2-1 EventJournal — Append-only event sourcing log ──────────
+    // ── Step 10: P2-1 EventJournal + RuntimeEventStore — Unified event sourcing ──
     if (!this._initCompleted.has('eventJournal')) {
       const _done10 = _timing('EventJournal');
       try {
         const { EventJournal } = require('./event-journal');
+        const { RuntimeEventStore } = require('./runtime/runtime-event-store');
+        const { JsonlEventStore } = require('./runtime/jsonl-event-store');
+        const sessionId = `${this.projectId || 'session'}-${Date.now()}`;
+
+        const backingStore = new JsonlEventStore({
+          eventsDir: path.join(this._outputDir, 'runtime', 'events'),
+        });
+        const runtimeEventStore = new RuntimeEventStore({
+          backingStore,
+          sessionId,
+        });
+        this.runtimeEventStore = runtimeEventStore;
+
         this.eventJournal = new EventJournal({
           outputDir: this._outputDir,
-          sessionId: `${this.projectId || 'session'}-${Date.now()}`,
+          sessionId,
           enabled: true,
+          runtimeEventStore,
         });
         this.eventJournal.attachToHookSystem(this.hooks);
+        this.runtimeEventStore.attachToHookSystem(this.hooks);
 
-        // P0: attach runtime loop to live event stream and expose recovery state
         if (this.p0RuntimeLoop) {
           this.p0RuntimeLoop.attachEventJournal(this.eventJournal);
           const restoreResult = this.p0RuntimeLoop.restoreCheckpoint();

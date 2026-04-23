@@ -53,6 +53,10 @@ const EvolutionSignalType = {
   RETROSPECTIVE_PREVENTION: 'RETROSPECTIVE_PREVENTION', // Prevention layer: what to avoid next time
   RETROSPECTIVE_CAPABILITY: 'RETROSPECTIVE_CAPABILITY', // Capability layer: what to replicate
   RETROSPECTIVE_EFFICIENCY: 'RETROSPECTIVE_EFFICIENCY', // Efficiency layer: process improvement
+
+  // [T-005] Socratic effect tracking signals
+  FOLLOWUP_ANSWERED: 'FOLLOWUP_ANSWERED',       // Socratic follow-up questions were addressed
+  FOLLOWUP_IGNORED: 'FOLLOWUP_IGNORED',         // Socratic follow-up questions were ignored
 };
 
 const SignalSeverity = {
@@ -209,7 +213,6 @@ class EvolutionLoop {
   processSocraticChallenge(stage, challengeResult) {
     const { questions = [], blindSpots = [], confidence = 1.0 } = challengeResult;
 
-    // Process each blind spot as a signal
     const results = [];
 
     // Layer 1 — Noise filter (PER-inspired):
@@ -217,20 +220,51 @@ class EvolutionLoop {
     // scoring signal for confidence calculation, NOT a real blind spot.
     // Real blind spots describe concrete problems (e.g. "缺少接口契约").
     // Filtering these prevents 140 noise signals from flooding the evolution log.
-    const realBlindSpots = blindSpots.filter(bs => !bs.includes('未涉及'));
+    // Now handles both string (legacy) and BlindSpotEntry object (new) formats.
+    const realBlindSpots = blindSpots.filter(bs => {
+      const text = typeof bs === 'string' ? bs : bs.evidence || '';
+      return !text.includes('未涉及');
+    });
     const filteredNoise = blindSpots.length - realBlindSpots.length;
 
     if (filteredNoise > 0) {
       this._log(`[EvolutionLoop] 🔇 Filtered ${filteredNoise} noise signal(s) ("未涉及" prefix) from ${blindSpots.length} total blind spots`);
     }
 
+    // Layer 2 — Type-based classification (ADR-55 Rev.3):
+    // BlindSpotEntry objects carry a `type` field (dimension-gap, schema-gap,
+    // claim-without-evidence, stage-specific, rule-driven). Each type maps to
+    // a different severity and signal context, improving downstream consumption.
     for (const blindSpot of realBlindSpots) {
+      const isEntry = typeof blindSpot === 'object' && blindSpot.evidence;
+      const evidence = isEntry ? blindSpot.evidence : String(blindSpot);
+      const bsType = isEntry ? blindSpot.type : 'unclassified';
+      const bsDimension = isEntry ? blindSpot.dimension : null;
+      const bsSeverity = isEntry ? blindSpot.severity : null;
+
+      let severity;
+      if (bsSeverity === 'HIGH') {
+        severity = SignalSeverity.HIGH;
+      } else if (confidence < 0.5 || bsType === 'schema-gap' || bsType === 'claim-without-evidence') {
+        severity = SignalSeverity.HIGH;
+      } else if (bsType === 'dimension-gap' || bsType === 'stage-specific') {
+        severity = SignalSeverity.MEDIUM;
+      } else {
+        severity = confidence < 0.5 ? SignalSeverity.HIGH : SignalSeverity.MEDIUM;
+      }
+
       const result = this.processSignal({
         type: EvolutionSignalType.SOCRATIC_CHALLENGE,
-        severity: confidence < 0.5 ? SignalSeverity.HIGH : SignalSeverity.MEDIUM,
+        severity,
         stage,
-        evidence: blindSpot,
-        context: { questions: questions.slice(0, 3), allBlindSpots: blindSpots, filteredNoise },
+        evidence,
+        context: {
+          questions: questions.slice(0, 3),
+          allBlindSpots: blindSpots,
+          filteredNoise,
+          blindSpotType: bsType,
+          blindSpotDimension: bsDimension,
+        },
         confidence,
       });
       results.push(result);
@@ -314,6 +348,135 @@ class EvolutionLoop {
     });
   }
 
+  /**
+   * Cross-signal relationship and causal inference (RELATE stage).
+   * Identifies causal hypotheses, trends, and rule challenges across multiple signals.
+   *
+   * Inspired by:
+   *   - Double-Loop Learning (Argyris): distinguish single-loop (correct errors)
+   *     from double-loop (change underlying rules)
+   *   - Voyager (Wang et al.): cross-task skill synthesis
+   *
+   * @param {Pattern[]} patterns - Induced patterns from INDUCE stage
+   * @param {Experience[]} history - Historical experiences for trend comparison
+   * @returns {{ causalHypotheses: object[], trends: object[], ruleChallenges: object[] }}
+   */
+  relateSignals(patterns, history = []) {
+    const causalHypotheses = [];
+    const trends = [];
+    const ruleChallenges = [];
+
+    if (!patterns || patterns.length === 0) {
+      return { causalHypotheses, trends, ruleChallenges };
+    }
+
+    for (let i = 0; i < patterns.length; i++) {
+      for (let j = i + 1; j < patterns.length; j++) {
+        const temporalCorr = this._checkTemporalCorrelation(patterns[i], patterns[j]);
+        const semanticSim = this._checkSemanticSimilarity(patterns[i], patterns[j]);
+
+        if (temporalCorr > 0.5 && semanticSim > 0.3) {
+          causalHypotheses.push({
+            cause: patterns[i].summary,
+            effect: patterns[j].summary,
+            confidence: (temporalCorr + semanticSim) / 2,
+            type: temporalCorr > 0.8 ? 'strong' : 'weak',
+          });
+        }
+      }
+    }
+
+    if (history.length > 0) {
+      const trendAnalysis = this._analyzeTrendHistory(history, patterns);
+      trends.push(...trendAnalysis);
+    }
+
+    const challenges = this._identifyRuleChallenges(patterns);
+    ruleChallenges.push(...challenges);
+
+    return { causalHypotheses, trends, ruleChallenges };
+  }
+
+  _checkTemporalCorrelation(p1, p2) {
+    const t1 = new Date(p1.firstSeen || p1.timestamp || Date.now()).getTime();
+    const t2 = new Date(p2.firstSeen || p2.timestamp || Date.now()).getTime();
+    const hourDiff = Math.abs(t1 - t2) / (1000 * 60 * 60);
+
+    if (hourDiff < 1) return 0.9;
+    if (hourDiff < 6) return 0.7;
+    if (hourDiff < 24) return 0.5;
+    return 0.3;
+  }
+
+  _checkSemanticSimilarity(p1, p2) {
+    const words1 = (p1.summary || '').toLowerCase().split(/\s+/);
+    const words2 = (p2.summary || '').toLowerCase().split(/\s+/);
+    const intersection = words1.filter(w => words2.includes(w));
+    const union = new Set([...words1, ...words2]);
+    return union.size === 0 ? 0 : intersection.length / union.size;
+  }
+
+  _analyzeTrendHistory(history, patterns) {
+    const trends = [];
+    for (const pattern of patterns) {
+      const related = history.filter(h =>
+        h.content?.includes(pattern.summary?.slice(0, 20)) ||
+        h.title?.includes(pattern.category || '')
+      );
+
+      if (related.length < 3) continue;
+
+      const sorted = related.sort((a, b) =>
+        new Date(a.createdAt || a.timestamp).getTime() -
+        new Date(b.createdAt || b.timestamp).getTime()
+      );
+      const mid = Math.floor(sorted.length / 2);
+      const earlyCount = sorted.slice(0, mid).length;
+      const recentCount = sorted.slice(mid).length;
+
+      if (recentCount > earlyCount * 1.5) {
+        trends.push({
+          direction: 'degrading',
+          metric: pattern.category || pattern.summary,
+          confidence: Math.min(recentCount / earlyCount - 1, 0.9),
+          severity: recentCount > earlyCount * 2 ? 'critical' : 'high',
+          patternId: pattern.id,
+        });
+      }
+    }
+    return trends;
+  }
+
+  _identifyRuleChallenges(patterns) {
+    const frequencyMap = new Map();
+    for (const pattern of patterns) {
+      const key = pattern.category || pattern.summary;
+      frequencyMap.set(key, (frequencyMap.get(key) || 0) + 1);
+    }
+
+    const challenges = [];
+    for (const [key, count] of frequencyMap.entries()) {
+      if (count >= 3) {
+        challenges.push({
+          type: 'double_loop',
+          pattern: key,
+          count,
+          suggestion: 'Consider changing the underlying rule/method, not just correcting instances',
+          isRuleChange: true,
+        });
+      } else if (count >= 2) {
+        challenges.push({
+          type: 'single_loop',
+          pattern: key,
+          count,
+          suggestion: 'Recurring pattern detected — verify if error correction is sufficient',
+          isRuleChange: false,
+        });
+      }
+    }
+    return challenges;
+  }
+
   // ─── Evolution Triggers ──────────────────────────────────────────────────────
 
   /**
@@ -346,6 +509,18 @@ class EvolutionLoop {
     if (type === EvolutionSignalType.SOCRATIC_CHALLENGE) {
       const evidence = signal.evidence || '';
       if (!evidence.includes('未涉及') && evidence.length > 10) return true;
+    }
+
+    // [T-005] FOLLOWUP_IGNORED: socratic follow-up questions were ignored
+    // Trigger evolution to record this as a negative experience (Reflexion pattern)
+    if (type === EvolutionSignalType.FOLLOWUP_IGNORED) {
+      return true;
+    }
+
+    // [T-005] FOLLOWUP_ANSWERED: low-signal — record as positive experience
+    // but do NOT trigger full evolution cycle (prevents unnecessary processing)
+    if (type === EvolutionSignalType.FOLLOWUP_ANSWERED) {
+      return false;
     }
 
     return false;

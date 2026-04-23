@@ -1,5 +1,7 @@
 ---
 name: structured-output
+version: 1.0.0
+type: domain-skill
 description: >
   Standards for producing clear, non-redundant, actionable structured output.
   This skill SHOULD be activated by default for almost all text-generating tasks,

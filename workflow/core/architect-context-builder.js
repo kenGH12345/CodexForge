@@ -92,9 +92,49 @@ function buildArchitectUpstreamCtx(orch, taskHints = '') {
     console.log(`[Orchestrator] 🗺️  Module Map injected into ArchitectAgent: ${moduleMap.modules.length} module(s), ${moduleMap.modules.filter(m => m.isolatable).length} isolatable.`);
   }
 
-  return (ctx || '') + moduleMapSection;
-}
+  // ── L3: inject ANALYSE quality gate summary if available ──
+  let qualitySection = '';
+  const qualityGate = analyseCtx?.meta?.qualityGate;
+  if (qualityGate) {
+    const qLines = [
+      `\n## 📊 ANALYSE Quality Gate Result`,
+      `> Score: **${qualityGate.score}/100** — ${qualityGate.passed ? '✅ PASSED' : '⚠️ NEEDS IMPROVEMENT'}`,
+    ];
+    if (qualityGate.failedChecks && qualityGate.failedChecks.length > 0) {
+      qLines.push(`> Missing checks: ${qualityGate.failedChecks.join(', ')}`);
+      qLines.push(`> **Action**: Address these gaps in your architecture design. Each gap represents information the ARCHITECT stage may lack.`);
+    }
+    if (analyseCtx?.meta?.userStories) {
+      qLines.push(`\n### User Stories (${analyseCtx.meta.userStories.length})`);
+      for (const us of analyseCtx.meta.userStories.slice(0, 5)) {
+        const prefix = us.lang === 'zh' ? `作为${us.actor}，我希望${us.goal}，以便${us.benefit}` : `As ${us.actor}, I want ${us.goal}, so that ${us.benefit}`;
+        qLines.push(`- ${prefix}`);
+      }
+      if (analyseCtx.meta.userStories.length > 5) {
+        qLines.push(`- ... and ${analyseCtx.meta.userStories.length - 5} more`);
+      }
+    }
+    if (analyseCtx?.meta?.acceptanceCriteria) {
+      qLines.push(`\n### Acceptance Criteria (${analyseCtx.meta.acceptanceCriteria.length})`);
+      for (const ac of analyseCtx.meta.acceptanceCriteria.slice(0, 5)) {
+        const prefix = ac.lang === 'zh' ? `如果${ac.condition}，则${ac.expectation}` : `WHEN ${ac.condition} THEN ${ac.expectation}`;
+        qLines.push(`- ${prefix}`);
+      }
+      if (analyseCtx.meta.acceptanceCriteria.length > 5) {
+        qLines.push(`- ... and ${analyseCtx.meta.acceptanceCriteria.length - 5} more`);
+      }
+    }
+    if (analyseCtx?.meta?.riskSummary) {
+      qLines.push(`\n### Key Risks (${analyseCtx.meta.riskSummary.length})`);
+      for (const r of analyseCtx.meta.riskSummary.slice(0, 5)) {
+        qLines.push(`- [${r.severity}] ${r.text}`);
+      }
+    }
+    qualitySection = qLines.join('\n');
+  }
 
+  return (ctx || '') + moduleMapSection + qualitySection;
+}
 // ─── Full context block assembly ─────────────────────────────────────────────
 
 /**
@@ -195,10 +235,21 @@ async function buildArchitectContextBlock(orch, techStackPrefix, upstreamCtx) {
 
   // Pass telemetry to _applyTokenBudget for lifecycle tracking
   const archTelemetry = orch._adapterTelemetry || null;
+  // T3: Adaptive Multiplier — read complexity score from ANALYSE stage output.
+  const complexityScore = (() => {
+    try {
+      const score = orch.stageCtx?.get?.('ANALYSE')?.meta?.complexity?.score;
+      return Number.isFinite(score) ? score : null;
+    } catch { return null; }
+  })();
     const { assembled, stats } = await _applyTokenBudget(adjustedBlocks, undefined, {
     telemetry: archTelemetry,
     stage: 'ARCHITECT',
     profile: _archProfile || null,
+    complexityScore,
+    enableAdaptive: process.env.WF_ENABLE_ADAPTIVE_BUDGET !== 'false',
+    sessionId: orch.sessionId || orch.runId || null,
+    observability: orch.obs || null,
   });
   if (stats.dropped.length > 0 || stats.truncated.length > 0) {
     console.log(`[Orchestrator] 📊 ARCHITECT token budget: ${stats.total} chars, dropped=[${stats.dropped.join(',')}], truncated=[${stats.truncated.join(',')}]`);

@@ -129,7 +129,7 @@ class DevMapGenerator {
         const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
         deps.direct = Object.keys(pkg.dependencies || {});
         deps.dev = Object.keys(pkg.devDependencies || {});
-      } catch (e) {}
+      } catch (e) { console.warn('[DevMapGenerator] package.json parse failed:', e.message); }
     }
 
     // Python
@@ -157,7 +157,7 @@ class DevMapGenerator {
             source: 'package.json'
           })));
         }
-      } catch (e) {}
+      } catch (e) { console.warn('[DevMapGenerator] package.json parse failed:', e.message); }
     }
 
     // workflow scripts

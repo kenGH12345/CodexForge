@@ -96,7 +96,19 @@ class BaseAgent {
     let promptSuccess = true;
     
     try {
-      llmResponse = await this.llmCall(prompt);
+      if (this.tools && this.tools.length > 0) {
+        const { ReActLoop } = require('../core/react-loop');
+        const reactLoop = new ReActLoop(this.llmCall, this.tools, {
+          onStep: (info) => {
+            if (handoffLog && activityId) {
+              handoffLog.addEvent(activityId, 'tool_call', info);
+            }
+          }
+        });
+        llmResponse = await reactLoop.run(prompt);
+      } else {
+        llmResponse = await this.llmCall(prompt);
+      }
     } catch (err) {
       promptSuccess = false;
       throw err;

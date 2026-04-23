@@ -11,6 +11,7 @@
  *   2. PURGE    — Remove expired experiences (ExperienceStore.purgeExpired)
  *   3. RETIRE   — Retire underperforming skills (SkillEvolution.retireStaleSkills)
  *   4. AUDIT    — Cross-session health audit (HealthAuditor.audit)
+ *   5. REFLECT  — Four-stage cognitive cycle (ReflectionCycle.runCycle)
  *
  * Each stage is wrapped in try/catch — a failure in one stage does not
  * block subsequent stages. All results are collected into a summary.
@@ -64,17 +65,17 @@ async function sleeptime(context = {}) {
         result,
       });
       if (verbose && (result.merged > 0 || result.removed > 0)) {
-        console.log(`  [1/4] 🧪 DISTILL: ${result.merged} cluster(s) merged, ${result.removed} removed (${elapsed}ms)`);
+console.log(`  [1/5] 🧪 DISTILL: ${result.merged} cluster(s) merged, ${result.removed} removed (${elapsed}ms)`);
       } else if (verbose) {
-        console.log(`  [1/4] 🧪 DISTILL: no consolidation needed (${elapsed}ms)`);
+console.log(`  [1/5] 🧪 DISTILL: no consolidation needed (${elapsed}ms)`);
       }
     } else {
       stages.push({ name: 'DISTILL', status: 'skipped', detail: 'ExperienceStore not available' });
-      if (verbose) console.log(`  [1/4] 🧪 DISTILL: skipped (no ExperienceStore)`);
+      if (verbose) console.log(`  [1/5] 🧪 DISTILL: skipped (no ExperienceStore)`);
     }
   } catch (err) {
     stages.push({ name: 'DISTILL', status: 'error', detail: err.message });
-    if (verbose) console.warn(`  [1/4] 🧪 DISTILL: failed — ${err.message}`);
+    if (verbose) console.warn(`  [1/5] 🧪 DISTILL: failed — ${err.message}`);
   }
 
   // ── Stage 2: PURGE — remove expired experiences ─────────────────────────
@@ -91,17 +92,17 @@ async function sleeptime(context = {}) {
         result,
       });
       if (verbose && result.purged > 0) {
-        console.log(`  [2/4] 🗑️  PURGE: ${result.purged} expired record(s) purged (${elapsed}ms)`);
+        console.log(`  [2/5] 🗑️  PURGE: ${result.purged} expired record(s) purged (${elapsed}ms)`);
       } else if (verbose) {
-        console.log(`  [2/4] 🗑️  PURGE: no expired records (${elapsed}ms)`);
+        console.log(`  [2/5] 🗑️  PURGE: no expired records (${elapsed}ms)`);
       }
     } else {
       stages.push({ name: 'PURGE', status: 'skipped', detail: 'ExperienceStore not available' });
-      if (verbose) console.log(`  [2/4] 🗑️  PURGE: skipped (no ExperienceStore)`);
+      if (verbose) console.log(`  [2/5] 🗑️  PURGE: skipped (no ExperienceStore)`);
     }
   } catch (err) {
     stages.push({ name: 'PURGE', status: 'error', detail: err.message });
-    if (verbose) console.warn(`  [2/4] 🗑️  PURGE: failed — ${err.message}`);
+    if (verbose) console.warn(`  [2/5] 🗑️  PURGE: failed — ${err.message}`);
   }
 
   // ── Stage 3: RETIRE — retire underperforming skills ─────────────────────
@@ -124,21 +125,21 @@ async function sleeptime(context = {}) {
         result: { staleCount: result.stale.length, retiredCount: result.retired.length, report: result.report },
       });
       if (verbose && result.retired.length > 0) {
-        console.log(`  [3/4] 📦 RETIRE: ${result.retired.length} skill(s) retired (${elapsed}ms)`);
+        console.log(`  [3/5] 📦 RETIRE: ${result.retired.length} skill(s) retired (${elapsed}ms)`);
         for (const s of result.retired.slice(0, 3)) {
           const hr = ((s.effectiveCount || 0) / (s.usageCount || 1) * 100).toFixed(0);
           console.log(`         - ${s.name}: ${hr}% effective`);
         }
       } else if (verbose) {
-        console.log(`  [3/4] 📦 RETIRE: all skills healthy (${elapsed}ms)`);
+        console.log(`  [3/5] 📦 RETIRE: all skills healthy (${elapsed}ms)`);
       }
     } else {
       stages.push({ name: 'RETIRE', status: 'skipped', detail: 'SkillEvolution not available' });
-      if (verbose) console.log(`  [3/4] 📦 RETIRE: skipped (no SkillEvolution)`);
+      if (verbose) console.log(`  [3/5] 📦 RETIRE: skipped (no SkillEvolution)`);
     }
   } catch (err) {
     stages.push({ name: 'RETIRE', status: 'error', detail: err.message });
-    if (verbose) console.warn(`  [3/4] 📦 RETIRE: failed — ${err.message}`);
+    if (verbose) console.warn(`  [3/5] 📦 RETIRE: failed — ${err.message}`);
   }
 
   // ── Stage 4: AUDIT — cross-session health check ────────────────────────
@@ -161,17 +162,99 @@ async function sleeptime(context = {}) {
         result: { findingCount, summary: result.summary },
       });
       if (verbose && findingCount > 0) {
-        console.log(`  [4/4] 🔍 AUDIT: ${findingCount} finding(s) (${elapsed}ms)`);
+        console.log(`  [4/5] 🔍 AUDIT: ${findingCount} finding(s) (${elapsed}ms)`);
       } else if (verbose) {
-        console.log(`  [4/4] 🔍 AUDIT: clean (${elapsed}ms)`);
+        console.log(`  [4/5] 🔍 AUDIT: clean (${elapsed}ms)`);
       }
     } else {
       stages.push({ name: 'AUDIT', status: 'skipped', detail: 'No auditor available' });
-      if (verbose) console.log(`  [4/4] 🔍 AUDIT: skipped (no auditor)`);
+      if (verbose) console.log(`  [4/5] 🔍 AUDIT: skipped (no auditor)`);
     }
   } catch (err) {
     stages.push({ name: 'AUDIT', status: 'error', detail: err.message });
-    if (verbose) console.warn(`  [4/4] 🔍 AUDIT: failed — ${err.message}`);
+    if (verbose) console.warn(`  [4/5] 🔍 AUDIT: failed — ${err.message}`);
+  }
+
+  // ── Stage 5: REFLECT — four-stage cognitive cycle ──────────────────────
+  try {
+    const { ReflectionCycle, isReflectionCycleEnabled } = require('./reflection-cycle');
+
+    if (!isReflectionCycleEnabled(context.projectRoot)) {
+      stages.push({ name: 'REFLECT', status: 'skipped', detail: 'Disabled by feature flag' });
+      if (verbose) console.log(`  [5/5] 🔄 REFLECT: skipped (feature flag disabled)`);
+    } else {
+    const signals = [];
+
+    if (experienceStore && typeof experienceStore.search === 'function') {
+      const recent = await experienceStore.search({ skill: 'reflection', limit: 50 });
+      signals.push(...recent.map(r => ({
+        id: r.id,
+        source: r.source || 'experience-store',
+        dimension: r.type || r.category,
+        title: r.title,
+        content: r.content,
+        confidence: r.severity === 'critical' ? 0.9 : 0.5,
+        timestamp: r.createdAt,
+      })));
+    }
+
+    if (selfReflection?._reflections?.length > 0) {
+      const openIssues = selfReflection._reflections.filter(r => r.status === 'OPEN').slice(-20);
+      signals.push(...openIssues.map(r => ({
+        id: r.id,
+        source: r.source || 'self-reflection',
+        dimension: r.type,
+        title: r.title,
+        content: r.description,
+        confidence: r.severity === 'critical' ? 0.9 : 0.7,
+        timestamp: r.createdAt,
+      })));
+    }
+
+    if (signals.length > 0) {
+      const cycle = new ReflectionCycle({
+        projectRoot: context.projectRoot,
+        maxRounds: 3,
+        convergenceThreshold: 0.7,
+      });
+
+      const stageStart = Date.now();
+      const result = await cycle.runCycle(signals);
+      const elapsed = Date.now() - stageStart;
+
+      stages.push({
+        name: 'REFLECT',
+        status: 'ok',
+        durationMs: elapsed,
+        detail: `${result.round} round(s), converged=${result.converged}, ${result.actions?.length || 0} action(s)`,
+        result,
+      });
+
+      if (verbose) {
+        console.log(`  [5/5] 🔄 REFLECT: ${result.round} round(s), ${result.actions?.length || 0} action(s) (${elapsed}ms)`);
+      }
+
+      if (result.actions?.length > 0) {
+        for (const action of result.actions) {
+          selfReflection?.recordIssue({
+            type: action.isRuleChange ? 'rule-change' : 'reflection-action',
+            severity: action.priority?.toLowerCase() || 'medium',
+            title: action.target || 'Reflection cycle action',
+            description: action.rationale || action.proposed || '',
+            source: 'reflection-cycle',
+            rootCause: action.rationale,
+            suggestedFix: action.proposed,
+          });
+        }
+      }
+    } else {
+      stages.push({ name: 'REFLECT', status: 'skipped', detail: 'No signals available' });
+      if (verbose) console.log(`  [5/5] 🔄 REFLECT: skipped (no signals)`);
+    }
+    }
+  } catch (err) {
+    stages.push({ name: 'REFLECT', status: 'error', detail: err.message });
+    if (verbose) console.warn(`  [5/5] 🔄 REFLECT: failed — ${err.message}`);
   }
 
   // ── Summary ─────────────────────────────────────────────────────────────

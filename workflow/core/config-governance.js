@@ -150,6 +150,11 @@ function applyConfigGovernance(inputConfig = {}) {
     _lastAppliedAt: new Date().toISOString(),
   };
 
+  if (report.warnings.length > 0) {
+    // config governance warnings are silent by default; surface them so operators can act
+    console.error(`[config-governance] applied with ${report.warnings.length} warning(s): ${report.warnings.slice(0, 3).join(' | ')}${report.warnings.length > 3 ? ' ...' : ''}`);
+  }
+
   return { config, report };
 }
 

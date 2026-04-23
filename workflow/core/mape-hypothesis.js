@@ -145,7 +145,7 @@ class HypothesisGenerator {
         .split('\n')
         .filter(Boolean)
         .map(l => {
-          try { return JSON.parse(l); } catch (_) { return null; }
+          try { return JSON.parse(l); } catch (e) { console.warn('[MAPEHypothesis] JSON.parse failed:', e.message); return null; }
         })
         .filter(r => r && r.status === 'rolled-back' && new Date(r.timestamp).getTime() > cutoff)
         .map(r => ({

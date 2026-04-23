@@ -63,23 +63,25 @@ Produce a Markdown document with the following sections:
 6. **Non-Functional Requirements** – Performance, scalability, security considerations
 7. **Risk Assessment** – Technical risks and mitigation strategies
 8. **Open Architecture Questions** – Decisions that need further input
-9. **Architecture Design** *(mandatory)* – Explicit record of the key architectural decisions made:
+9. **多方案思维树评估 (Tree of Thoughts Evaluation)** *(mandatory)* – Before finalizing the architecture, you MUST generate 2-3 alternative architecture options. For each option, evaluate its pros, cons, and trade-offs (complexity, scalability, maintainability). Then, explicitly state which option is selected as the final architecture and why.
+   - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
+10. **Architecture Design** *(mandatory)* – Explicit record of the key architectural decisions made:
    - Which architectural pattern was chosen (e.g. layered, microservices, event-driven) and WHY
    - Which technology stack was selected and the concrete reasons for each choice
    - Which design trade-offs were made (e.g. consistency vs availability, simplicity vs extensibility)
    - How the architecture satisfies each non-functional requirement
    - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
-10. **Execution Plan** *(mandatory)* – Step-by-step plan for implementing this architecture:
+11. **Execution Plan** *(mandatory)* – Step-by-step plan for implementing this architecture:
     - Ordered list of implementation phases (Phase 1: ..., Phase 2: ..., etc.)
     - For each phase: what components to build, in what order, and why that order
     - Dependencies between phases (what must be done before what)
     - Estimated complexity for each phase (Low / Medium / High)
     - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
-11. **Traceability Coverage** *(mandatory)* – Requirement-to-architecture coverage check:
+12. **Traceability Coverage** *(mandatory)* – Requirement-to-architecture coverage check:
    - For each requirement ID ('REQ-xxx') and acceptance criterion ID ('AC-xxx') found in the input, provide explicit mapping to architecture artifacts.
    - Each item must map to at least one of: module ID, API contract, data model, or decision ID.
    - Explicitly mark uncovered items as 'UNMAPPED' with reason.
-12. **ADR Linkage** *(mandatory)* – Lightweight requirement-to-decision linkage:
+13. **ADR Linkage** *(mandatory)* – Lightweight requirement-to-decision linkage:
    - Provide linkage entries in JSON field 'adrLinkage.links' using shape: { "reqId": "REQ-001", "adrId": "ADR-001", "decisionRef": "<short decision title or id>" }.
    - 'reqId' can be either 'REQ-xxx' or 'AC-xxx'.
    - Keep linkage lightweight and deterministic (avoid free-form prose in JSON values).
@@ -110,7 +112,7 @@ If a **Functional Module Map** section is present in the upstream context above,
 ## Instructions
 First output the JSON metadata block (as instructed above), then write the full Markdown document.
 Remember: NO code, NO implementation, design decisions ONLY.
-**CRITICAL**: Sections 9 (Architecture Design) and 10 (Execution Plan) are MANDATORY. Do not omit them.`;
+**CRITICAL**: Sections 9 (Tree of Thoughts Evaluation), 10 (Architecture Design) and 11 (Execution Plan) are MANDATORY. Do not omit them.`;
   }
 
   /**
@@ -151,6 +153,7 @@ Remember: NO code, NO implementation, design decisions ONLY.
 
     // ── Mandatory section compliance check (P1-4: bilingual support) ─────────
     const mandatorySections = [
+      { en: 'Tree of Thoughts Evaluation', zh: '多方案思维树评估' },
       { en: 'Architecture Design', zh: '架构设计' },
       { en: 'Execution Plan', zh: '执行计划' },
       { en: 'Traceability Coverage', zh: '追溯覆盖' },

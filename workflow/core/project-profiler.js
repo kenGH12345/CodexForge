@@ -169,17 +169,40 @@ class ProjectProfiler {
   }
 
   /**
-   * Analyze with LSP enhancement (future feature).
-   * Currently throws to trigger the fallback path in init-project.js.
+   * Analyze with LSP enhancement (ADR-56 Production-First activation).
+   * Runs baseline analyze(), then enhances symbol/class/interface data via LSP.
+   * Falls back to baseline if LSP is unavailable or unreachable.
    *
    * @param {string} [rootPath] - Project root path
-   * @param {object} [lspConfig] - LSP configuration
-   * @returns {Promise<{ profile: object, mdPath: string }>}
+   * @param {object} [lspConfig] - LSP configuration (enabled, serverCommand, etc.)
+   * @returns {Promise<{ profile: object, mdPath: string, lspEnhanced: boolean }>}
    */
   async analyzeWithLSP(rootPath, lspConfig = {}) {
-    // LSP enhancement is not yet implemented.
-    // Throwing here causes init-project.js to fall back to analyzeAndWrite().
-    throw new Error('LSP enhancement not yet implemented');
+    const root = rootPath || this._projectRoot || process.cwd();
+    if (lspConfig && lspConfig.enabled === false) {
+      throw new Error('LSP enhancement disabled via config');
+    }
+
+    const baselineProfile = this.analyze(root);
+    let profile = baselineProfile;
+    let lspEnhanced = false;
+    try {
+      const { enhanceProfileWithLSP } = require('./lsp-profile-enhancer');
+      profile = await enhanceProfileWithLSP(baselineProfile, root, lspConfig);
+      lspEnhanced = profile && profile.lspEnhanced === true;
+    } catch (err) {
+      console.warn(`[ProjectProfiler] LSP enhancement failed (non-fatal): ${err.message}`);
+      profile = baselineProfile;
+    }
+
+    const outputDir = path.join(root, 'output');
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    const mdPath = path.join(outputDir, 'project-profile.md');
+    const report = this.renderFullReport(profile);
+    fs.writeFileSync(mdPath, report, 'utf-8');
+    return { profile, mdPath, lspEnhanced };
   }
 
   /**

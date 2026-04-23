@@ -47,6 +47,8 @@ function enforceRuntimePolicy(requirement, opts = {}) {
     const scopeExpansionSignals = ['顺便', '另外加', 'and also', 'by the way', 'extra feature'];
     const hit = scopeExpansionSignals.find(s => text.toLowerCase().includes(String(s).toLowerCase()));
     if (hit) {
+      // scope creep is the silent killer of /wf workflows — log loudly
+      console.error(`[runtime-policy] scope-expansion signal hit: "${hit}"`);
       violations.push(`Potential scope expansion detected: "${hit}"`);
     }
   }
@@ -58,6 +60,10 @@ function enforceRuntimePolicy(requirement, opts = {}) {
         riskyMatches.push(String(pattern));
       }
     }
+  }
+  if (riskyMatches.length > 0) {
+    // destructive op detected — operator must see this even if approval path downstream handles it
+    console.error(`[runtime-policy] risky patterns matched (${riskyMatches.length}): ${riskyMatches.join(', ')}`);
   }
 
   const warnings = [];

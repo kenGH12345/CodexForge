@@ -97,6 +97,8 @@ class ServiceContainer {
     // Circular dependency detection
     if (this._resolving.has(name)) {
       const chain = [...this._resolving, name].join(' → ');
+      // DI circular deps are the hardest bug class to diagnose from a stack trace alone
+      console.error(`[service-container] circular dep: ${chain}`);
       throw new Error(`[ServiceContainer] Circular dependency detected: ${chain}`);
     }
 

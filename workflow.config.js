@@ -161,6 +161,7 @@ module.exports = {
       { command: 'deep-audit', cron: 'weekly', args: ['--incremental'] },
       { command: 'regression-check', cron: 'monthly', args: [] },
       { command: 'experience-health', cron: 'daily', args: [] },
+      { command: 'production-readiness-check', cron: 'weekly', args: [] },
     ],
   },
 
@@ -199,6 +200,30 @@ module.exports = {
     },
   },
 
+  // ─── Legacy Projection Outputs (manifest.json + workflow-status.json) ──────
+  // Controls backward-compatible projection outputs for external consumers.
+  // These files are maintained alongside new runtime state for compatibility.
+  projection: {
+    enabled: true,             // Enable legacy projection file generation
+    outputDir: null,           // Custom output dir (default: <projectRoot>/output)
+    formats: ['manifest', 'workflow-status'], // Which projections to generate
+    validate: true,            // Validate projections against contracts on init
+    onInit: {                  // T-8: Init Check configuration
+      verifyDir: true,         // Verify output directory exists and is writable
+      autoCreate: true,        // Auto-create output dir if missing
+      verifySchema: true,      // Verify manifest.json and workflow-status.json schemas
+    },
+  },
+
+  // ─── Runtime State (StateManager + EventStore) ─────────────────────────────
+  // When enabled, StateMachine delegates state persistence to FileStateStore
+  // and EventJournal delegates event storage to RuntimeEventStore.
+  // Dual-write to legacy manifest.json is maintained for backward compatibility.
+  runtimeState: {
+    enabled: false,            // Set true to enable StateManager delegation
+    runtimeDir: null,          // Custom runtime dir (default: <outputDir>/runtime)
+  },
+
   // ─── Module-Level Logging (ARCHITECTURE.md D-1) ────────────────────────────
   // Controls module-level monitoring logs written to workflow-progress.log
   // Enables fine-grained visibility into Experience, CodeGraph, Skill, Evolution modules
@@ -207,5 +232,34 @@ module.exports = {
     defaultLevel: 'INFO',        // Default log level: 'INFO' | 'WARN' | 'ERROR' | 'DETAIL'
     moduleOverrides: {},         // Per-module level overrides (e.g., { Experience: 'WARN' })
     maxEntriesPerSession: 200,   // Safety limit to prevent log explosion
+  },
+
+  // ─── Admission Matrix (Token Optimization P1) ─────────────────────────────
+  // Controls which skills are admitted, demoted, or blocked during context loading.
+  // Demoted skills are moved to the end of the load queue (lower priority).
+  // Blocked skills are excluded entirely from the context window.
+  admissionMatrix: {
+    enabled: true,
+    DEMOTE_TOKEN_CAP: 800,
+    rules: [
+      { skill: 'bp-security-audit', action: 'demote' },
+      { skill: 'bp-performance-optimization', action: 'demote' },
+    ],
+  },
+
+  // ─── Blind Spot Gate (Cross-Stage Tracking) ───────────────────────────────
+  // Controls how blind spots are detected, persisted, and consumed across stages.
+  // Mode "advisory" = blind spots injected as pendingBlindSpots in REQUIRED_OBSERVATION
+  // Mode "hard" = stage-complete rejects if unresolved HIGH-severity blind spots exist
+  blindSpotGate: {
+    enabled: true,
+    mode: 'advisory',
+    persistencePath: 'output/blind-spot-registry.json',
+    autoResolveSeverity: 'MEDIUM',
+    cleanupMaxAgeDays: 7,
+  },
+
+  reflectionCycle: {
+    enabled: true,
   },
 };

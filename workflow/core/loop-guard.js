@@ -43,6 +43,11 @@ class LoopGuard {
 
     /** @type {Array<{ edge: string, timestamp: string, count: number }>} Audit log */
     this._history = [];
+
+    // P0: Progress detection state
+    this._lastOutput = null;
+    this._staleCount = 0;
+    this._jaccardThreshold = options.jaccardThreshold ?? 0.8;
   }
 
   /**
@@ -152,6 +157,68 @@ class LoopGuard {
   resetAll() {
     this._counters.clear();
     this._history = [];
+    this._lastOutput = null;
+    this._staleCount = 0;
+  }
+
+  // ─── P0: Progress Detection (Jaccard-based) ──────────────────────────────
+
+  /**
+   * Strip volatile fields (IDs, timestamps, UUIDs) from structured output
+   * before similarity comparison to avoid false negatives.
+   */
+  _stripVolatiles(text) {
+    if (!text || typeof text !== 'string') return '';
+    return text
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<uuid>')
+      .replace(/\b\d{13,}\b/g, '<ts>')
+      .replace(/"id"\s*:\s*"\d+"/g, '"id":"<id>"')
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.Z]/g, '<iso>');
+  }
+
+  /**
+   * Compute Jaccard similarity between two texts (word-level).
+   */
+  _jaccard(a, b) {
+    const setA = new Set(a.split(/\s+/).filter(w => w.length > 2));
+    const setB = new Set(b.split(/\s+/).filter(w => w.length > 2));
+    if (setA.size === 0 && setB.size === 0) return 1;
+    let intersection = 0;
+    for (const w of setA) {
+      if (setB.has(w)) intersection++;
+    }
+    const union = setA.size + setB.size - intersection;
+    return union === 0 ? 1 : intersection / union;
+  }
+
+  /**
+   * Check whether the current output represents progress over the last output.
+   * Updates internal stale counter and returns a progress report.
+   *
+   * @param {string} currentOutput - The latest stage output
+   * @returns {{ hasProgress: boolean, similarity: number, staleCount: number, signal: string|null }}
+   */
+  hasProgress(currentOutput) {
+    const threshold = this._jaccardThreshold ?? 0.8;
+    if (!this._lastOutput) {
+      this._lastOutput = this._stripVolatiles(currentOutput || '');
+      this._staleCount = 0;
+      return { hasProgress: true, similarity: 0, staleCount: 0, signal: null };
+    }
+
+    const strippedCurrent = this._stripVolatiles(currentOutput || '');
+    const similarity = this._jaccard(this._lastOutput, strippedCurrent);
+    const hasProgress = similarity < threshold;
+
+    if (!hasProgress) {
+      this._staleCount++;
+    } else {
+      this._staleCount = 0;
+    }
+
+    this._lastOutput = strippedCurrent;
+    const signal = this._staleCount >= 2 ? 'STALE_LOOP' : null;
+    return { hasProgress, similarity, staleCount: this._staleCount, signal };
   }
 
   /**

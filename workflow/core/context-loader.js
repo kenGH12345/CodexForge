@@ -34,6 +34,9 @@ const {
   RISK_SKILL_TOKEN_CAP,
   RISK_SKILL_MAX_COUNT,
   RISK_SKILL_PACKS,
+  MIN_SKILL_RELEVANCE,
+  MIN_ADR_RELEVANCE,
+  MIN_DOC_KEYWORD_OVERLAP,
   LOAD_LEVEL,
   BUILTIN_SKILL_KEYWORDS,
   ROLE_MANDATORY_DOCS,
@@ -160,6 +163,11 @@ class ContextLoader {
     this._enrichmentCacheHits = 0;
     /** @type {number} Cache miss counter for observability */
     this._enrichmentCacheMisses = 0;
+
+    /** @type {{enabled:boolean, DEMOTE_TOKEN_CAP:number, rules:Array}|null} Admission matrix config */
+    this._admissionMatrix = null;
+    /** @type {number} Token cap below which skills are demoted to low priority */
+    this._demoteTokenCap = 0;
   }
 
   /**
@@ -203,6 +211,26 @@ class ContextLoader {
       this._cheapLlmCall = llmCall;
       console.log(`[ContextLoader] 🤖 Cheap LLM enabled for semantic ADR digest.`);
     }
+  }
+
+  loadAdmissionMatrix(config) {
+    if (config && typeof config === 'object' && config.enabled) {
+      this._admissionMatrix = config;
+      this._demoteTokenCap = config.DEMOTE_TOKEN_CAP || 0;
+      console.error(`[ContextLoader] 🚦 Admission matrix enabled: ${config.rules ? config.rules.length : 0} rules, DEMOTE_TOKEN_CAP=${this._demoteTokenCap}`);
+    }
+  }
+
+  _checkAdmission(skillName, tokenEstimate) {
+    if (!this._admissionMatrix || !this._admissionMatrix.enabled) return 'admit';
+    const rules = this._admissionMatrix.rules || [];
+    for (const rule of rules) {
+      if (rule.skill === skillName) {
+        if (rule.action === 'block') return 'block';
+        if (rule.action === 'demote' && tokenEstimate > this._demoteTokenCap) return 'demote';
+      }
+    }
+    return 'admit';
   }
 
   /**
@@ -348,7 +376,9 @@ class ContextLoader {
                 budget -= digestTokens;
               }
             }
-          } catch (_) { /* non-fatal: hotspot analysis is optional enhancement */ }
+          } catch (err) {
+            console.warn(`[ContextLoader] Hotspot analysis failed: ${err?.message || err}`);
+          }
         }
       } else if (docName === 'architecture-constraints.md') {
         // Per-role section filtering: inject only the sections relevant to this role.
@@ -366,12 +396,26 @@ class ContextLoader {
           budget -= estimateTokens(truncated);
         }
       } else {
-        const tokens = estimateTokens(content);
-        const truncated = this._truncate(content, Math.min(tokens, budget));
-        if (truncated) {
-          sections.push(`## 📐 ${docName}\n\n${truncated}`);
-          sources.push(docName);
-          budget -= estimateTokens(truncated);
+        // P0 Token Optimization: check doc relevance before full injection
+        const docOverlap = this._validateDocRelevance(content, taskText);
+        if (docOverlap < MIN_DOC_KEYWORD_OVERLAP && content.length > 800) {
+          // Low relevance + long doc → inject only first 3 paragraphs as summary
+          const summaryLines = content.split('\n').filter(l => l.trim()).slice(0, 6);
+          const summary = summaryLines.join('\n') + '\n\n> *(summarized — low task relevance)*';
+          const summaryTokens = estimateTokens(summary);
+          if (summaryTokens <= budget) {
+            sections.push(`## 📐 ${docName} (summary)\n\n${summary}`);
+            sources.push(`${docName} (summary, overlap=${docOverlap.toFixed(2)})`);
+            budget -= summaryTokens;
+          }
+        } else {
+          const tokens = estimateTokens(content);
+          const truncated = this._truncate(content, Math.min(tokens, budget));
+          if (truncated) {
+            sections.push(`## 📐 ${docName}\n\n${truncated}`);
+            sources.push(docName);
+            budget -= estimateTokens(truncated);
+          }
         }
       }
       if (budget <= 0) break;
@@ -443,7 +487,23 @@ class ContextLoader {
       budget = Math.min(taskSkillReserve, MAX_INJECT_TOKENS);
     }
     const matchedSkills = this._matchSkills(taskText, role);
+    const admitted = [];
+    const demoted = [];
     for (const skillName of matchedSkills) {
+      const decision = this._checkAdmission(skillName, MAX_SKILL_TOKENS);
+      if (decision === 'block') {
+        console.error(`[ContextLoader] 🚫 Admission: ${skillName} blocked by matrix rule`);
+        continue;
+      }
+      if (decision === 'demote') {
+        demoted.push(skillName);
+        continue;
+      }
+      admitted.push(skillName);
+    }
+    const orderedSkills = [...admitted, ...demoted];
+
+    for (const skillName of orderedSkills) {
       if (budget <= 0) break;
       if (this._loadedSkillsInResolve.has(skillName)) continue;
       const loaded = this._loadSkillWithDeps(skillName, Math.min(MAX_SKILL_TOKENS, budget), 0);
@@ -466,7 +526,9 @@ class ContextLoader {
             budget -= expertTokens;
           }
         }
-      } catch (_) { /* non-fatal: expert knowledge is optional enhancement */ }
+      } catch (err) {
+        console.warn(`[ContextLoader] Expert knowledge fetch failed: ${err?.message || err}`);
+      }
     }
 
     // 7. Stage-Aware Prevention Rules (MemGPT retrieval pattern — ADR-55)
@@ -499,7 +561,9 @@ class ContextLoader {
             budget -= blockTokens;
           }
         }
-      } catch (_) { /* non-fatal: prevention rules are optional enhancement */ }
+      } catch (err) {
+        console.warn(`[ContextLoader] Prevention rules fetch failed: ${err?.message || err}`);
+      }
     }
 
     const tokenCount = MAX_INJECT_TOKENS - budget;
@@ -654,6 +718,7 @@ class ContextLoader {
           const allowedRoles = SKILL_ROLE_FILTER[r.name];
           return !allowedRoles || allowedRoles.includes(role);
         })
+        .filter(r => (r.score || 0) >= MIN_SKILL_RELEVANCE)
         .map(r => {
           let policyWeight = 1;
           if (this._orchestrator && this._orchestrator.skillEvolution) {
@@ -700,6 +765,7 @@ class ContextLoader {
             const allowedRoles = SKILL_ROLE_FILTER[r.name];
             return !allowedRoles || allowedRoles.includes(role);
           })
+          .filter(r => (r.score || 0) >= MIN_SKILL_RELEVANCE)
           .map(r => r.name);
       }
     }
@@ -978,13 +1044,14 @@ class ContextLoader {
     // Score each ADR block by keyword overlap
     const scored = adrBlocks.map(block => {
       const blockLower = block.toLowerCase();
-      const score = taskWords.filter(w => blockLower.includes(w)).length;
-      return { block, score };
+      const overlap = taskWords.filter(w => blockLower.includes(w)).length;
+      const score = taskWords.length > 0 ? overlap / taskWords.length : 0;
+      return { block, score, overlap };
     });
 
     // Sort by score, take top matches; always include the most recent ADR
     const sorted = scored.sort((a, b) => b.score - a.score);
-    const topMatches = sorted.filter(s => s.score > 0).slice(0, 3);
+    const topMatches = sorted.filter(s => s.score >= MIN_ADR_RELEVANCE).slice(0, 3);
 
     // If no keyword match, fall back to the last 2 ADRs (most recent decisions)
     const toInclude = topMatches.length > 0
@@ -1214,6 +1281,72 @@ _validateSkillContent(content, meta) {
    */
 _truncate(content, tokenBudget) {
     return truncateContent(content, tokenBudget);
+  }
+
+  /**
+   * Checks keyword overlap between a document and the current task.
+   * Returns overlap ratio (0..1). Below MIN_DOC_KEYWORD_OVERLAP,
+   * the doc should be summarized instead of full-injected.
+   *
+   * @param {string} docContent - Full document content
+   * @param {string} taskText   - Current task text
+   * @returns {number} Overlap ratio
+   */
+  _validateDocRelevance(docContent, taskText) {
+    if (!docContent || !taskText) return 0;
+    const taskWords = new Set(taskText.toLowerCase().split(/\W+/).filter(w => w.length > 3));
+    if (taskWords.size === 0) return 1;
+    const docLower = docContent.toLowerCase();
+    let matches = 0;
+    for (const w of taskWords) {
+      if (docLower.includes(w)) matches++;
+    }
+    return matches / taskWords.size;
+  }
+
+  saveBlindSpots(sessionId, blindSpots) {
+    try {
+      const BlindSpotRegistry = require('./blind-spot-registry');
+      const registry = new BlindSpotRegistry(this._projectRoot || process.cwd());
+      const registered = [];
+      for (const bs of blindSpots) {
+        const entry = registry.register({
+          sessionId,
+          stage: bs.stage,
+          evidence: typeof bs === 'string' ? bs : bs.evidence,
+          dimension: typeof bs === 'object' ? bs.dimension : undefined,
+          severity: typeof bs === 'object' ? bs.severity : undefined,
+          type: typeof bs === 'object' ? bs.type : undefined,
+          detectedAt: bs.detectedAt || new Date().toISOString(),
+        });
+        if (entry) registered.push(entry);
+      }
+      return { success: true, registered: registered.length };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  loadBlindSpots(sessionId) {
+    try {
+      const BlindSpotRegistry = require('./blind-spot-registry');
+      const registry = new BlindSpotRegistry(this._projectRoot || process.cwd());
+      return registry._entries.filter(e => !sessionId || e.sessionId === sessionId);
+    } catch { return []; }
+  }
+
+  queryBlindSpots(filters = {}) {
+    try {
+      const BlindSpotRegistry = require('./blind-spot-registry');
+      const registry = new BlindSpotRegistry(this._projectRoot || process.cwd());
+      if (filters.stage) return registry.getPendingForStage(filters.stage);
+      let entries = registry._entries;
+      if (filters.status) entries = entries.filter(e => e.status === filters.status);
+      if (filters.severity) entries = entries.filter(e => e.severity === filters.severity);
+      if (filters.dimension) entries = entries.filter(e => e.dimension === filters.dimension);
+      if (filters.type) entries = entries.filter(e => e.type === filters.type);
+      return entries;
+    } catch { return []; }
   }
 }
 

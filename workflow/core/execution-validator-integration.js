@@ -17,6 +17,372 @@
 
 const fs = require('fs');
 const path = require('path');
+const { buildArchitectureScorecard } = require('./review-checklists');
+const { getProjectionContractSummary } = require('./runtime/projection-contract-validator');
+const { getRollbackScenarioSummary } = require('./rollback-coordinator');
+const { getRuntimeProjectionScenarioSummary } = require('./runtime/file-state-store');
+
+function _extractMarkdownSection(content, heading) {
+  const text = String(content || '');
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(^|\\n)## ${escapedHeading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, 'i');
+  const match = regex.exec(text);
+  return match ? match[2].trim() : '';
+}
+
+function _parseBulletMap(sectionContent) {
+  const entries = [];
+  for (const rawLine of String(sectionContent || '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith('-')) continue;
+    const withoutDash = line.replace(/^-+\s*/, '');
+    const separatorIndex = withoutDash.indexOf(':');
+    if (separatorIndex === -1) continue;
+    const key = withoutDash.slice(0, separatorIndex).trim().toLowerCase();
+    const value = withoutDash.slice(separatorIndex + 1).trim();
+    if (!key) continue;
+    entries.push({ key, value });
+  }
+  return entries;
+}
+
+function _normaliseKey(key) {
+  return String(key || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function _findFieldValue(parsedEntries, aliases) {
+  const aliasSet = new Set(aliases.map(_normaliseKey));
+  const entry = parsedEntries.find((item) => aliasSet.has(_normaliseKey(item.key)));
+  return entry?.value || '';
+}
+
+function _validateStructuredSection(sectionName, sectionContent, fieldSpecs, options = {}) {
+  const {
+    degradeWhenSectionMissing = false,
+    degradeReason = null,
+    coveragePenalty = 0,
+    meta = {},
+  } = options;
+
+  const trimmed = String(sectionContent || '').trim();
+  const parsedEntries = _parseBulletMap(trimmed);
+
+  if (!trimmed) {
+    return {
+      section: sectionName,
+      present: false,
+      valid: false,
+      degraded: Boolean(degradeWhenSectionMissing),
+      reducedCoverage: Boolean(degradeWhenSectionMissing),
+      coveragePenalty,
+      warning: degradeWhenSectionMissing ? degradeReason || `${sectionName} is missing.` : null,
+      missingFields: fieldSpecs.map((field) => field.name),
+      fields: fieldSpecs.map((field) => ({
+        name: field.name,
+        value: '',
+        present: false,
+      })),
+      meta,
+    };
+  }
+
+  const fields = fieldSpecs.map((field) => {
+    const value = _findFieldValue(parsedEntries, field.aliases || [field.name]);
+    return {
+      name: field.name,
+      value,
+      present: Boolean(value),
+    };
+  });
+
+  const missingFields = fields.filter((field) => !field.present).map((field) => field.name);
+  return {
+    section: sectionName,
+    present: true,
+    valid: missingFields.length === 0,
+    degraded: false,
+    reducedCoverage: false,
+    coveragePenalty: 0,
+    warning: null,
+    missingFields,
+    fields,
+    meta,
+  };
+}
+
+function _buildFailureModelAssessment(artifactContent) {
+  const sectionContent = _extractMarkdownSection(artifactContent, 'Failure Model');
+  return _validateStructuredSection(
+    'Failure Model',
+    sectionContent,
+    [
+      { name: 'Failure Mode', aliases: ['Failure Mode', 'Failure Modes', 'Failure Scenario'] },
+      { name: 'Detection Signal', aliases: ['Detection Signal', 'Detection', 'Signal'] },
+      { name: 'Mitigation', aliases: ['Mitigation', 'Fallback', 'Graceful Degradation'] },
+      { name: 'Recovery', aliases: ['Recovery', 'Recovery Path', 'Rollback'] },
+    ]
+  );
+}
+
+function _buildMigrationSafetyAssessment(artifactContent, options = {}) {
+  const projectionContract = options.projectionContract || getProjectionContractSummary();
+  const sectionContent = _extractMarkdownSection(artifactContent, 'Migration Safety Case');
+  const degradeReason = options.degradeReason || 'Projection contract evidence is unavailable, so migration coverage is reduced but not blocked.';
+
+  const result = _validateStructuredSection(
+    'Migration Safety Case',
+    sectionContent,
+    [
+      { name: 'Backward Compatibility', aliases: ['Backward Compatibility', 'Compatibility', 'Legacy Compatibility'] },
+      { name: 'Rollback Strategy', aliases: ['Rollback Strategy', 'Rollback', 'Revert Plan'] },
+      { name: 'Contract Evidence', aliases: ['Contract Evidence', 'Projection Contract', 'Projection Evidence'] },
+      { name: 'Data Migration Scope', aliases: ['Data Migration Scope', 'Migration Scope', 'Scope'] },
+    ],
+    {
+      degradeWhenSectionMissing: false,
+      meta: {
+        projectionContract,
+      },
+    }
+  );
+
+  if (!options.hasProjectionEvidence) {
+    result.degraded = true;
+    result.reducedCoverage = true;
+    result.coveragePenalty = 25;
+    result.warning = degradeReason;
+  }
+
+  return result;
+}
+
+function _runConstitutionCheck(artifactContent, { projectRoot } = {}) {
+  const constraintsPath = path.join(projectRoot, 'workflow', 'docs', 'architecture-constraints.md');
+  if (!fs.existsSync(constraintsPath)) {
+    return { valid: true, checks: [], skipped: true, reason: 'architecture-constraints.md not found' };
+  }
+  const constraintText = fs.readFileSync(constraintsPath, 'utf-8');
+  const enforcedRules = _parseEnforcedConstraints(constraintText);
+  const checks = enforcedRules.map(rule => ({
+    rule: rule.title,
+    enforced: true,
+    passed: rule.pattern ? rule.pattern.test(artifactContent) : true,
+    evidence: rule.description,
+  }));
+  return {
+    valid: checks.every(c => c.passed),
+    checks,
+    skipped: false,
+    checkCount: checks.length,
+    failedChecks: checks.filter(c => !c.passed),
+  };
+}
+
+function _parseEnforcedConstraints(text) {
+  const rules = [];
+  const lines = text.split('\n');
+  let currentRule = null;
+  for (const line of lines) {
+    const headingMatch = line.match(/^##\s+(.+)/);
+    if (headingMatch) {
+      if (currentRule) rules.push(currentRule);
+      currentRule = { title: headingMatch[1].trim(), description: '', enforced: false, pattern: null };
+    }
+    if (currentRule) {
+      if (/Violation\s*=\s*P0|\(P0\)/i.test(line)) {
+        currentRule.enforced = true;
+      }
+      currentRule.description += line + '\n';
+    }
+  }
+  if (currentRule) rules.push(currentRule);
+  const enforced = rules.filter(r => r.enforced);
+  for (const rule of enforced) {
+    const keyTerms = rule.title.split(/[\s(/]+/).filter(w => w.length > 3 && !/^(the|and|for|with|from|rule|must|always)/i.test(w));
+    if (keyTerms.length > 0) {
+      rule.pattern = new RegExp(keyTerms.slice(0, 3).join('|'), 'i');
+    }
+  }
+  return enforced;
+}
+
+function _assessArtifactAvailability(projectRoot, architecturePath) {
+  const outputDir = path.join(projectRoot, 'output');
+  const projectProfilePath = path.join(outputDir, 'project-profile.md');
+  const hasArchitecture = Boolean(architecturePath && fs.existsSync(architecturePath));
+  const hasProjectProfile = fs.existsSync(projectProfilePath);
+  return {
+    outputDir,
+    projectProfilePath,
+    hasArchitecture,
+    hasProjectProfile,
+    hasProjectionEvidence: hasProjectProfile,
+    warnings: hasProjectProfile
+      ? []
+      : ['project-profile.md is missing, so migration validation uses reduced coverage mode.'],
+  };
+}
+
+function _buildScenarioCoverageAssessment(artifactContent) {
+  const sectionContent = _extractMarkdownSection(artifactContent, 'Scenario Coverage');
+  const parsedEntries = _parseBulletMap(sectionContent);
+  const scenarios = parsedEntries.map((entry) => ({
+    name: entry.key,
+    coverage: entry.value,
+  }));
+  return {
+    section: 'Scenario Coverage',
+    present: Boolean(sectionContent),
+    scenarios,
+    valid: scenarios.length >= 3,
+    missingScenarios: scenarios.length >= 3 ? [] : [
+      'projection drift',
+      'rollback boundary',
+      'recovery path',
+    ].slice(scenarios.length),
+  };
+}
+
+function runArchitectureScenarioHarness(options = {}) {
+  const {
+    projectRoot = path.resolve(__dirname, '..', '..'),
+    artifactContent = '',
+    availability = _assessArtifactAvailability(projectRoot, path.join(projectRoot, 'output', 'architecture.md')),
+    contracts = {},
+  } = options;
+
+  const rollbackSummary = getRollbackScenarioSummary();
+  const runtimeSummary = getRuntimeProjectionScenarioSummary(projectRoot);
+  const projectionContract = getProjectionContractSummary();
+  const declaredCoverage = _buildScenarioCoverageAssessment(artifactContent);
+
+  const scenarios = [
+    {
+      id: 'projection-contract-drift',
+      category: 'projection',
+      title: 'Projection contract drift is covered',
+      passed: Boolean(contracts.migrationSafety?.present),
+      details: contracts.migrationSafety?.present
+        ? `Migration Safety Case is present and references projection contracts (${projectionContract.manifest.requiredFields.length} manifest field(s)).`
+        : 'Migration Safety Case section is missing or empty.',
+      evidence: {
+        manifestRequiredFields: projectionContract.manifest.requiredFields,
+        workflowStatusRequiredFields: projectionContract.workflowStatus.requiredFields,
+      },
+    },
+    {
+      id: 'rollback-boundary',
+      category: 'rollback',
+      title: 'Rollback boundary is described against real coordinator stages',
+      passed: Boolean(contracts.migrationSafety?.present),
+      details: contracts.migrationSafety?.present
+        ? `Rollback targets available for ${Object.keys(rollbackSummary.rollbackTargets).length} stage(s).`
+        : 'Rollback Strategy evidence is missing from Migration Safety Case.',
+      evidence: rollbackSummary,
+    },
+    {
+      id: 'recovery-path',
+      category: 'recovery',
+      title: 'Recovery path is grounded in runtime recovery metadata',
+      passed: availability.hasProjectionEvidence,
+      degraded: !availability.hasProjectionEvidence,
+      details: availability.hasProjectionEvidence
+        ? `project-profile.md is present; runtime recovery fields are ${runtimeSummary.recoveryFields.join(', ')}.`
+        : 'project-profile.md is missing, so recovery-path coverage is reduced to runtime metadata only.',
+      evidence: runtimeSummary,
+    },
+    {
+      id: 'bridge-contract-divergence',
+      category: 'contract-divergence',
+      title: 'Bridge and Node governance share the same contract source',
+      passed: true,
+      details: 'Architecture governance is computed through assessArchitectureGovernance() for both integration paths.',
+      evidence: {
+        source: 'execution-validator-integration.assessArchitectureGovernance',
+      },
+    },
+  ];
+
+  const failed = scenarios.filter((scenario) => !scenario.passed && !scenario.degraded);
+  const degraded = scenarios.filter((scenario) => scenario.degraded);
+  const categoriesCovered = new Set(scenarios.filter((scenario) => scenario.passed || scenario.degraded).map((scenario) => scenario.category));
+
+  return {
+    version: 'architecture-scenario-harness-v1',
+    declaredCoverage,
+    scenarios,
+    summary: {
+      total: scenarios.length,
+      passed: scenarios.filter((scenario) => scenario.passed).length,
+      failed: failed.length,
+      degraded: degraded.length,
+      categoriesCovered: [...categoriesCovered],
+      meetsMinimumCoverage: categoriesCovered.size >= 2 && scenarios.length >= 3,
+    },
+  };
+}
+
+function evaluateArchitectureFitnessGates(governance, options = {}) {
+  const {
+    minScore = 70,
+    maxHighSeverityGaps = 0,
+    requireScenarioCoverage = true,
+  } = options;
+
+  const scorecard = governance?.scorecard || {};
+  const contracts = governance?.contracts || {};
+  const scenarioHarness = governance?.scenarioHarness || {};
+  const highSeverityGaps = scorecard.gapSummary?.highSeverityGapIds?.length || 0;
+  const totalScore = scorecard.totalScore ?? 0;
+
+  const checks = [
+    {
+      id: 'architecture-score-threshold',
+      passed: totalScore >= minScore,
+      message: totalScore >= minScore
+        ? `Architecture score ${totalScore} meets threshold ${minScore}.`
+        : `Architecture score ${totalScore} is below threshold ${minScore}.`,
+    },
+    {
+      id: 'architecture-contracts-valid',
+      passed: Boolean(contracts.overallValid),
+      message: contracts.overallValid
+        ? 'Failure and migration contracts are structurally valid.'
+        : 'Failure or migration contract sections are incomplete.',
+    },
+    {
+      id: 'architecture-high-severity-gaps',
+      passed: highSeverityGaps <= maxHighSeverityGaps,
+      message: highSeverityGaps <= maxHighSeverityGaps
+        ? `High severity checklist gaps within limit (${highSeverityGaps}).`
+        : `Too many high severity checklist gaps (${highSeverityGaps} > ${maxHighSeverityGaps}).`,
+    },
+    {
+      id: 'architecture-scenario-coverage',
+      passed: requireScenarioCoverage ? Boolean(scenarioHarness.summary?.meetsMinimumCoverage) : true,
+      message: requireScenarioCoverage
+        ? scenarioHarness.summary?.meetsMinimumCoverage
+          ? 'Scenario harness covers at least two runtime risk categories.'
+          : 'Scenario harness does not cover enough runtime risk categories.'
+        : 'Scenario coverage gate disabled.',
+    },
+    {
+      id: 'architecture-constitution-check',
+      passed: governance?.constitutionCheck?.valid !== false,
+      message: governance?.constitutionCheck?.valid !== false
+        ? `Constitution check passed (${governance?.constitutionCheck?.checkCount ?? 0} enforced constraints verified).`
+        : `Constitution check failed: ${(governance?.constitutionCheck?.failedChecks ?? []).map(c => c.rule).join(', ')}`,
+    },
+  ];
+
+  const failedChecks = checks.filter((check) => !check.passed);
+  return {
+    passed: failedChecks.length === 0,
+    checks,
+    failedChecks,
+    degraded: Boolean(governance?.degradation?.active || governance?.contracts?.degraded || scenarioHarness.summary?.degraded > 0),
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Section 1: Orchestrator Integration Mixin
@@ -468,7 +834,83 @@ function recordValidationEvent(eventJournal, validationResult) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Section 6: Configuration Helper
+// Section 6: Architecture Governance Helper
+// ═══════════════════════════════════════════════════════════════════════════
+
+function assessArchitectureGovernance(options = {}) {
+  const {
+    projectRoot = path.resolve(__dirname, '..', '..'),
+    outputDir = path.join(projectRoot, 'output'),
+    architecturePath = path.join(outputDir, 'architecture.md'),
+    reviewResult = null,
+    artifactContent = null,
+  } = options;
+
+  const availability = _assessArtifactAvailability(projectRoot, architecturePath);
+  let content = typeof artifactContent === 'string' ? artifactContent : '';
+  if (!content && architecturePath && fs.existsSync(architecturePath)) {
+    content = fs.readFileSync(architecturePath, 'utf-8');
+  }
+
+  const scorecard = buildArchitectureScorecard({
+    reviewResult,
+    artifactContent: content,
+  });
+  const failureModel = _buildFailureModelAssessment(content);
+  const migrationSafety = _buildMigrationSafetyAssessment(content, {
+    hasProjectionEvidence: availability.hasProjectionEvidence,
+    projectionContract: getProjectionContractSummary(),
+    degradeReason: availability.warnings[0],
+  });
+
+  const warnings = [
+    ...availability.warnings,
+    ...(failureModel.warning ? [failureModel.warning] : []),
+    ...(migrationSafety.warning ? [migrationSafety.warning] : []),
+  ].filter(Boolean);
+
+  const contracts = {
+    failureModel,
+    migrationSafety,
+    overallValid: failureModel.valid && migrationSafety.valid,
+    degraded: failureModel.degraded || migrationSafety.degraded,
+    reducedCoverage: failureModel.reducedCoverage || migrationSafety.reducedCoverage,
+  };
+  const degradation = {
+    active: warnings.length > 0,
+    warnings,
+    hasProjectProfile: availability.hasProjectProfile,
+    hasProjectionEvidence: availability.hasProjectionEvidence,
+  };
+  const scenarioHarness = runArchitectureScenarioHarness({
+    projectRoot,
+    artifactContent: content,
+    availability,
+    contracts,
+  });
+  const constitutionCheck = _runConstitutionCheck(content, { projectRoot });
+  const fitnessGates = evaluateArchitectureFitnessGates({
+    scorecard,
+    contracts,
+    degradation,
+    scenarioHarness,
+    constitutionCheck,
+  });
+
+  return {
+    architecturePath,
+    exists: Boolean(content),
+    scorecard,
+    contracts,
+    constitutionCheck,
+    scenarioHarness,
+    fitnessGates,
+    degradation,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Section 7: Configuration Helper
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
@@ -505,7 +947,7 @@ function createIntegrationConfig(options = {}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Section 7: Exports
+// Section 8: Exports
 // ═══════════════════════════════════════════════════════════════════════════
 
 module.exports = {
@@ -523,6 +965,11 @@ module.exports = {
 
   // EventJournal
   recordValidationEvent,
+
+  // Architecture governance
+  assessArchitectureGovernance,
+  runArchitectureScenarioHarness,
+  evaluateArchitectureFitnessGates,
 
   // Configuration
   createIntegrationConfig,

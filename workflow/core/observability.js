@@ -158,6 +158,8 @@ class Observability {
      */
     this._blockTelemetry = null;
 
+    this._reflectionCycleMetrics = null;
+
     /**
      * P1 Tool Search Optimisation: plugin skip statistics.
      * Tracks how many plugins were skipped by keyword pre-filtering vs executed.
@@ -601,6 +603,41 @@ class Observability {
     };
     this._toolResultFilterStats.totalSaved += (stats.preFilterSaved || 0);
     this._toolResultFilterStats.filteredBlocks += (stats.filteredLabels || []).length;
+  }
+
+  // C6 adaptive multiplier audit — needed by NFR-2 gain reporting. Cheap
+  // in-memory trail; flushed alongside other metrics by ObservabilityManager.
+  recordAdaptiveMultiplier(sessionId, stage, complexityScore, detail) {
+    if (!this._adaptiveMultiplierTrail) {
+      this._adaptiveMultiplierTrail = { events: [], byStage: {}, byCappedCount: 0 };
+    }
+    const event = {
+      timestamp: new Date().toISOString(),
+      sessionId: sessionId || null,
+      stage,
+      complexityScore: Number.isFinite(complexityScore) ? complexityScore : null,
+      staticMul: detail?.staticMul ?? null,
+      adaptiveFactor: detail?.adaptiveFactor ?? null,
+      finalMul: detail?.finalMul ?? null,
+      segment: detail?.segment || 'unknown',
+      capped: Boolean(detail?.capped),
+      finalBudgetChars: detail?.finalBudgetChars ?? null,
+    };
+    this._adaptiveMultiplierTrail.events.push(event);
+    if (this._adaptiveMultiplierTrail.events.length > 200) {
+      this._adaptiveMultiplierTrail.events.shift();
+    }
+    if (!this._adaptiveMultiplierTrail.byStage[stage]) {
+      this._adaptiveMultiplierTrail.byStage[stage] = { count: 0, totalAdaptiveFactor: 0 };
+    }
+    const agg = this._adaptiveMultiplierTrail.byStage[stage];
+    agg.count += 1;
+    agg.totalAdaptiveFactor += (detail?.adaptiveFactor || 1);
+    if (event.capped) this._adaptiveMultiplierTrail.byCappedCount += 1;
+  }
+
+  getAdaptiveMultiplierTrail() {
+    return this._adaptiveMultiplierTrail || { events: [], byStage: {}, byCappedCount: 0 };
   }
 
   // ─── Custom Metrics Recording ───────────────────────────────────────────

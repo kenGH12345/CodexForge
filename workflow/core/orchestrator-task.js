@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { UnifiedTraceCollector } = require('./unified-trace-collector');
+const { TaskBatcher } = require('./task-batcher');
 const { resolveHealthPaths } = require('./health-observability');
 
 // Import refactored modules
@@ -353,22 +354,32 @@ Guidelines:
 
     this._emit('task:execution:start', { taskCount: allTasks.length });
 
-    // Main execution loop
+    // P0: Use StageBatcher for multi-task execution
+    if (allTasks.length >= 2) {
+      try {
+        this._emit('task:batch:start', { taskCount: allTasks.length, maxWorkers });
+        const batchResult = await this._executeViaBatcher(allTasks, { maxWorkers, maxRetries, taskOutputs });
+        this._emit('task:batch:end', { taskCount: allTasks.length, metrics: batchResult.metrics });
+        return batchResult;
+      } catch (batchErr) {
+        console.warn(`[Orchestrator:Task] ⚠️ StageBatcher failed, falling back to serial: ${batchErr.message}`);
+        // Fall through to original path as degradation
+      }
+    }
+
+    // Original serial execution loop (degradation path for single task or batcher failure)
     let iteration = 0;
-    const maxIterations = allTasks.length * 3; // Safety limit
+    const maxIterations = allTasks.length * 3;
 
     while (iteration < maxIterations) {
       iteration++;
 
-      // Find ready tasks
       const readyTasks = this._findReadyTasks(allTasks, taskOutputs);
 
       if (readyTasks.length === 0) {
-        // Check if all done
         const pending = allTasks.filter(t => t.status === 'pending' || t.status === 'running');
         if (pending.length === 0) break;
 
-        // Deadlock detection
         const blocked = allTasks.filter(t => t.status === 'pending');
         if (blocked.length > 0) {
           this._emit('task:deadlock', { blocked: blocked.map(t => t.id) });
@@ -376,12 +387,10 @@ Guidelines:
           break;
         }
 
-        // Wait for running tasks
         await this._sleep(1000);
         continue;
       }
 
-      // Execute ready tasks (up to maxWorkers)
       const toExecute = readyTasks.slice(0, maxWorkers);
       await Promise.allSettled(toExecute.map(t => this._executeTask(t, { maxRetries, taskOutputs })));
     }
@@ -401,6 +410,56 @@ Guidelines:
         completed: completedTasks.length,
         failed: failedTasks.length,
         executionMs: Date.now() - startTime,
+      },
+    };
+  },
+
+  /**
+   * Executes tasks via StageBatcher for optimized concurrent execution.
+   * @private
+   */
+  async _executeViaBatcher(allTasks, { maxWorkers, maxRetries, taskOutputs }) {
+    const startTime = Date.now();
+    const batcher = new TaskBatcher({
+      concurrency: maxWorkers,
+      batchSize: 5,
+      stopOnError: false,
+    });
+
+    const batchedTasks = allTasks.map(t => ({
+      id: t.id,
+      deps: t.deps || [],
+      priority: t.priority || 50,
+      estimatedTokens: t.estimatedTokens || 0,
+      execute: async () => {
+        await this._executeTask(t, { maxRetries, taskOutputs });
+        return taskOutputs.get(t.id);
+      },
+    }));
+
+    const { results, errors, stats } = await batcher.execute(batchedTasks);
+
+    if (errors.size > 0) {
+      console.warn(`[Orchestrator:Task] ⚠️ ${errors.size} task(s) failed in batch execution`);
+    }
+
+    const completedTasks = allTasks.filter(t => t.status === 'done');
+    const failedTasks = allTasks.filter(t => t.status === 'failed' || t.status === 'exhausted');
+
+    return {
+      success: failedTasks.length === 0,
+      tasks: allTasks,
+      completedTasks: completedTasks.map(t => ({
+        ...t,
+        output: taskOutputs.get(t.id),
+      })),
+      metrics: {
+        totalTasks: allTasks.length,
+        completed: completedTasks.length,
+        failed: failedTasks.length,
+        executionMs: Date.now() - startTime,
+        batchedCalls: stats.batchedCalls,
+        tokensSaved: stats.tokensSaved,
       },
     };
   },

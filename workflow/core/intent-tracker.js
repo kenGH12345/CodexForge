@@ -148,6 +148,8 @@ class IntentTracker {
         gapType = 'complete';
         gapReason = 'Unexpected failure with high confidence';
         severity = 1.0;
+        // the most actionable self-evolution signal: agent was confident but reality diverged
+        console.error(`[intent-tracker] HIGH-CONFIDENCE FAILURE id=${intentId} decision=${intent.decisionType} conf=${intent.confidence.toFixed(2)}`);
       }
     }
     
@@ -206,8 +208,10 @@ class IntentTracker {
     if (experiences.length === 0) {
       return { added: 0, skipped: 0 };
     }
-    
-    return store.batchRecord(experiences);
+    const result = store.batchRecord(experiences);
+    // flush is invisible by default; expose it so operators know self-evolution is actually learning
+    console.error(`[intent-tracker] flushed to experience-store: added=${result.added} skipped=${result.skipped}`);
+    return result;
   }
 
   /**

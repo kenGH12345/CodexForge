@@ -32,6 +32,7 @@ const { generateSocraticQuestions, inferTaskFingerprint, generateCrossStageQuest
 const { detectBlindSpots, detectDimensionBlindSpots, collectRuleDrivenQuestions, buildRuleConfig } = require('./socratic-blind-spot-detector');
 const { extractEntities, generateEntityGroundedQuestions, extractArtifactStructure } = require('./socratic-entity-extractor');
 const { decideChallengeTrigger, buildP2RevisionProtocol } = require('./socratic-trigger-engine');
+const { recordPre, recordPost, recordAdoption } = require('./socratic-effect-tracker');
 
 // Re-export constants for backward compatibility
 const {
@@ -76,6 +77,9 @@ class SocraticChallenger {
     this._log(`${'═'.repeat(50)}`);
 
     const content = this._extractContent(output);
+
+    // [T-002] Record pre-challenge state for effect tracking
+    const preRecord = recordPre(stageName, content, null);
 
     if (String(content || '').includes('[LIGHTWEIGHT]')) {
       this._log(`[SocraticChallenger] 💤 LIGHTWEIGHT artifact detected — skipping all challenges`);
@@ -143,12 +147,16 @@ class SocraticChallenger {
       ? buildP2RevisionProtocol(stageName, { questions, blindSpots, triggerReasons: triggerDecision.reasons, context })
       : null;
 
+    // [T-002] Record post-challenge state and compute effect delta
+    const effectRecord = recordPost(preRecord, confidenceResult, detectedBlindSpots);
+
     return {
       challenged, triggerReasons: triggerDecision.reasons, triggerScore: triggerDecision.triggerScore,
       triggerThreshold: triggerDecision.triggerThreshold, questions, advisoryQuestions, blindSpots,
       advisoryBlindSpots, confidence, confidenceStatus, confidenceReason, evidenceBreakdown,
       dimensionScores, shouldRetry, advisoryOnly: advisoryOnly || false, requiresRevision,
-      p2Protocol, revisionSummary: {
+      p2Protocol, effectRecord,
+      revisionSummary: {
         required: requiresRevision, reason: triggerDecision.reasons[0] || null,
         questionCount: questions.length, advisoryQuestionCount: advisoryQuestions.length,
         blindSpotCount: blindSpots.length, verificationQuestionCount: p2Protocol?.verificationQuestions?.length || 0,
@@ -348,7 +356,10 @@ Output ONLY the rewritten questions in Chinese, one per line, numbered (e.g., "1
     }
     if (challenged && blindSpots.length > 0) {
       this._log(`[SocraticChallenger] ── BLIND SPOTS ──`);
-      blindSpots.forEach((bs, i) => this._log(`  ${i + 1}. ${bs}`));
+      blindSpots.forEach((bs, i) => {
+        const text = typeof bs === 'string' ? bs : `${bs.id || '-'} [${bs.severity || '?'}][${bs.dimension || '?'}] ${bs.evidence}`;
+        this._log(`  ${i + 1}. ${text}`);
+      });
     }
     if (!challenged) {
       const scoreInfo = triggerDecision.triggerScore !== undefined ? ` (score=${triggerDecision.triggerScore}/${triggerDecision.triggerThreshold})` : '';

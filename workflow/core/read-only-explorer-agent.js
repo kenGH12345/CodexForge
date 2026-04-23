@@ -7,6 +7,7 @@ const { ProjectProfiler } = require('./project-profiler');
 
 async function runReadOnlyExploration({ projectRoot, requirement = '', noLsp = false, maxFiles = null } = {}) {
   const root = path.resolve(projectRoot || '.');
+  console.error(`[read-only-explorer] start root=${root} noLsp=${noLsp} maxFiles=${maxFiles || 'default'}`);
   const { config: rawConfig } = { config: getConfig(root, true) };
   const { config, report: governanceReport } = applyConfigGovernance(rawConfig);
 
@@ -36,6 +37,8 @@ async function runReadOnlyExploration({ projectRoot, requirement = '', noLsp = f
       lspUsed = !!profile?.lspEnhanced;
     } catch (err) {
       lspError = err.message;
+      // LSP path silently falling back to plain profiler hides real perf regressions
+      console.error(`[read-only-explorer] LSP failed, falling back to static profiler: ${err.message}`);
     }
   }
 

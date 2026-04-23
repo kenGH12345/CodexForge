@@ -188,7 +188,7 @@ class AgentHandoffLog {
   setOutputDir(outputDir) {
     this._outputDir = outputDir;
     if (this._logStream) {
-      try { this._logStream.end(); } catch (_) {}
+try { this._logStream.end(); } catch (e) { console.warn('[AgentHandoffLog] logStream.end() failed:', e.message); }
       this._logStream = null;
     }
   }
@@ -694,7 +694,7 @@ class AgentHandoffLog {
 
   flush() {
     if (this._logStream) {
-      try { this._logStream.end(); } catch (_) {}
+try { this._logStream.end(); } catch (e) { console.warn('[AgentHandoffLog] logStream.end() failed:', e.message); }
       this._logStream = null;
     }
     return this.saveLog();

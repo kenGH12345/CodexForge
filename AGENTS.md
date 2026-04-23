@@ -51,6 +51,40 @@ Each sub-package has its own `AGENTS.md` with detailed context.
   - Acceptance criteria verification status
   - **Retrospective table** (3 layers): Prevention / Capability / Efficiency — each row MUST have a specific answer, not blank
   - ⚠️ The Modified Files table is CRITICAL — users must see exactly which files were changed
+
+## Production-First Principle (P0)
+
+> **Rule**: Every feature, primitive, or infrastructure module MUST be wired into
+> a real production call path within the same delivery window it lands, or it
+> MUST NOT be merged. "Written but never called" code is zero value and negative
+> cost. **If a feature cannot be put into real use, do not build it.**
+
+**Three mandatory criteria for "production-ready":**
+
+| # | Criterion | Check |
+|---|-----------|-------|
+| 1 | Require-reachable | `require(...)`'d by ≥1 non-test file outside the module's own folder |
+| 2 | Observability event | Emits log/event/trace visible in real `/wf` runs |
+| 3 | End-to-end integration test | Imported & exercised by a file under `tests/`, `test/`, `workflow/tests/`, or `__tests__/` |
+
+A module passing 0-2 of the above is an **Isolation Module** and blocks merge
+unless it declares `@production-exempt experimental|reserved|test-helper` at the
+top of the file.
+
+**Enforcement:**
+
+| Mechanism | How |
+|-----------|-----|
+| Manual awareness | Read `workflow/docs/architecture-constraints.md` Production-First section |
+| Decision record | See `workflow/docs/adr-56-production-first-principle.md` |
+| Automated scan | Run `node workflow/tools/ide-workflow-bridge.js production-readiness-check --project-root .` |
+| Weekly cron | Registered in `workflow.config.js → scheduler.tasks` |
+| Report output | `output/isolation-modules-inventory.md` |
+
+> When planning any new module, ask FIRST: **"who will call it, when, and how
+> will I verify the call actually happens?"** If you cannot answer all three
+> concretely, don't write the code.
+
 ## `/wf init` Command Protocol
 When the user sends `/wf init` or `/wf init --path <dir>`, you **MUST** execute the initialisation script via **terminal**:
 ```bash

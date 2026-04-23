@@ -40,6 +40,7 @@ const {
 const { buildRetryContext, compareOutputFingerprint } = require('./retry-divergence-guard');
 const { ExecutionLogValidator } = require('./execution-log-validator');
 const { EvolutionLoop } = require('./evolution-loop');
+const { ContainerSandboxAdapter } = require('../hooks/adapters/container-sandbox-adapter');
 
 // Forward reference: _runDeveloper is needed for rollback. Lazy-loaded to avoid circular deps.
 let _runDeveloper = null;
@@ -719,6 +720,19 @@ async function _runRealTestLoop({ testCommand, baselineTestCommand = testCommand
       ? `## Fix History\n> This is fix round ${fixRound}. Your previous fix attempt(s) are in the conversation history above.\n> Review what you tried before and why it did not fully resolve the failures.`
       : '';
 
+    // ── Sandbox Diagnostics (Optimization 2) ────────────────────────────────
+    let sandboxDiagnosticsContext = '';
+    try {
+      console.error(`[Orchestrator] 🩺 Running Sandbox Diagnostics...`);
+      const diagnostics = await _runSandboxDiagnostics.call(this, result);
+      if (diagnostics) {
+        sandboxDiagnosticsContext = `## 🩺 Sandbox Diagnostics\n> The following diagnostic information was collected from the test execution environment to help identify the root cause.\n\n\`\`\`\n${diagnostics}\n\`\`\`\n`;
+        console.error(`[Orchestrator] 🩺 Sandbox Diagnostics collected (${diagnostics.length} chars).`);
+      }
+    } catch (diagErr) {
+      console.warn(`[Orchestrator] ⚠️  Sandbox Diagnostics failed (non-fatal): ${diagErr.message}`);
+    }
+
     // Collect source files for Fix Agent context
     let sourceFilesContext = '';
     try {
@@ -815,11 +829,16 @@ async function _runRealTestLoop({ testCommand, baselineTestCommand = testCommand
       console.warn(`[Orchestrator] 🌐 Auto-fix web search failed (non-fatal): ${wsErr.message}`);
     }
 
-const fixPrompt = buildFixAgentPrompt({
+    // Inject sandbox diagnostics into the failure context
+    const enhancedFailureContext = sandboxDiagnosticsContext 
+      ? `${failureContext}\n\n${sandboxDiagnosticsContext}`
+      : failureContext;
+
+    const fixPrompt = buildFixAgentPrompt({
       existingDiff,
       previousFixesBlock,
       sourceFilesContext,
-      failureContext,
+      failureContext: enhancedFailureContext,
       webSearchContext,
       projectRoot: this.projectRoot,
     });
@@ -1023,7 +1042,23 @@ const fixPrompt = buildFixAgentPrompt({
   const failMsg = `[RealTest] Tests still failing after ${fixRound} auto-fix round(s). Exit code: ${result.exitCode}. Failures: ${(result.failureSummary || []).slice(0, 3).join('; ')}`;
   this.stateMachine.recordRisk('high', failMsg);
   this.obs.recordTestResult({ passed: 0, failed: (result.failureSummary || []).length || 1, skipped: 0, rounds: fixRound });
-  
+
+  // ADR-56 Production-First activation of test-fix-loop.js:
+  // Reuse its failure classifier to tag each failure with a structured type,
+  // which improves downstream failure-recorder search quality. Zero LLM cost.
+  let classifiedFailures = null;
+  try {
+    const { TestFixLoop } = require('./test-fix-loop');
+    const fixLoop = new TestFixLoop({ maxFixRounds: 0, verbose: false, outputDir: this._outputDir });
+    const failuresForClassify = (result.failureSummary || []).map((msg, idx) => ({
+      test: `test-${idx}`,
+      error: String(msg),
+    }));
+    classifiedFailures = fixLoop._classifyFailures(failuresForClassify);
+  } catch (classErr) {
+    console.warn(`[Orchestrator] TestFixLoop classification skipped: ${classErr.message}`);
+  }
+
   // Enhanced test failure experience recording (ADR-XX)
   try {
     const failureRecorder = new TestFailureExperienceRecorder(this.experienceStore, { verbose: this._verbose });
@@ -1034,6 +1069,7 @@ const fixPrompt = buildFixAgentPrompt({
       attempt: fixRound,
       fixHistory: fixConversationHistory || [],
       projectContext: 'workflow-agent',
+      classifiedFailures,
     });
   } catch (recErr) {
     console.warn(`[Orchestrator] ⚠️  Failed to record test failure experience (non-fatal): ${recErr.message}`);
@@ -1181,6 +1217,78 @@ function _inferImpactedSuites(changedFiles) {
 
   const order = ['smoke', 'unit', 'integration'];
   return order.filter(s => impacted.has(s));
+}
+
+/**
+ * Run diagnostic commands in the sandbox/environment to gather more context for test failures.
+ * 
+ * @this {import('./orchestrator').Orchestrator}
+ * @param {import('./test-runner').TestRunResult} result
+ * @returns {Promise<string|null>}
+ */
+async function _runSandboxDiagnostics(result) {
+  const diagnostics = [];
+  const isContainerEnabled = this._config?.containerSandbox === true || typeof this._config?.containerSandbox === 'object';
+  
+  try {
+    if (isContainerEnabled) {
+      const adapter = new ContainerSandboxAdapter({ projectRoot: this.projectRoot, ...this._config.containerSandbox });
+      await adapter.connect();
+      
+      // 1. Check environment variables
+      const envRes = await adapter.execute('env | grep -i -E "NODE_ENV|PATH|PORT|HOST|TEST" || true', { timeout: 10000 });
+      if (envRes.stdout) diagnostics.push(`[Environment Variables]\n${envRes.stdout.trim()}`);
+      
+      // 2. Check recent file modifications (last 5 mins)
+      const filesRes = await adapter.execute('find . -type f -mmin -5 -not -path "*/node_modules/*" -not -path "*/.git/*" | head -n 10 || true', { timeout: 10000 });
+      if (filesRes.stdout) diagnostics.push(`[Recently Modified Files]\n${filesRes.stdout.trim()}`);
+      
+      // 3. Check memory/disk usage
+      const memRes = await adapter.execute('free -m || true', { timeout: 10000 });
+      if (memRes.stdout) diagnostics.push(`[Memory Usage]\n${memRes.stdout.trim()}`);
+      
+    } else {
+      // Fallback to host diagnostics if container sandbox is not enabled
+      const { execSync } = require('child_process');
+      
+      // 1. Check node/npm versions
+      try {
+        const nodeVer = execSync('node -v', { cwd: this.projectRoot, encoding: 'utf-8' }).trim();
+        const npmVer = execSync('npm -v', { cwd: this.projectRoot, encoding: 'utf-8' }).trim();
+        diagnostics.push(`[Runtime Versions]\nNode: ${nodeVer}\nNPM: ${npmVer}`);
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  Sandbox diagnostics (node/npm versions) failed: ${err.message}`);
+      }
+      
+      // 2. Check if ports are in use (common cause of test failures)
+      if (result.output && (result.output.includes('EADDRINUSE') || result.output.includes('port'))) {
+        try {
+          const portRes = execSync('netstat -tuln | grep LISTEN | head -n 10 || true', { encoding: 'utf-8' }).trim();
+          if (portRes) diagnostics.push(`[Listening Ports]\n${portRes}`);
+        } catch (err) {
+          console.warn(`[Orchestrator] ⚠️  Sandbox diagnostics (netstat) failed: ${err.message}`);
+        }
+      }
+      
+      // 3. Check recent logs if they exist
+      try {
+        const logFiles = execSync('find . -name "*.log" -mmin -10 -not -path "*/node_modules/*" | head -n 3', { cwd: this.projectRoot, encoding: 'utf-8' }).trim();
+        if (logFiles) {
+          const logPaths = logFiles.split('\n').filter(Boolean);
+          for (const logPath of logPaths) {
+            const tail = execSync(`tail -n 20 "${logPath}"`, { cwd: this.projectRoot, encoding: 'utf-8' }).trim();
+            if (tail) diagnostics.push(`[Recent Log: ${logPath}]\n${tail}`);
+          }
+        }
+      } catch (err) {
+        console.warn(`[Orchestrator] ⚠️  Sandbox diagnostics (recent logs) failed: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[Orchestrator] ⚠️  Sandbox diagnostics error: ${err.message}`);
+  }
+  
+  return diagnostics.length > 0 ? diagnostics.join('\n\n') : null;
 }
 
 /**

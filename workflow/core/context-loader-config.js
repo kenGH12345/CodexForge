@@ -35,6 +35,17 @@ const RISK_SKILL_TOKEN_CAP = 420;
 /** Max number of risk-pack skills to load per prompt (P1.5) */
 const RISK_SKILL_MAX_COUNT = 3;
 
+// ─── Injection Gating Thresholds (P0 Token Optimization) ─────────────────────
+
+/** Min relevance score for skill injection — below this, skill is skipped (saves ~15% tokens) */
+const MIN_SKILL_RELEVANCE = 0.3;
+
+/** Min relevance score for ADR injection — below this, ADR entry is skipped */
+const MIN_ADR_RELEVANCE = 0.2;
+
+/** Min keyword overlap ratio for mandatory doc injection — below this, doc is summarized instead of full-inject */
+const MIN_DOC_KEYWORD_OVERLAP = 0.1;
+
 /**
  * Risk profile → skill pack mapping (P1.5)
  * Used by ContextLoader to pre-load focused review skills based on diff risk.
@@ -104,6 +115,7 @@ const BUILTIN_SKILL_KEYWORDS = {
   'review-interface-contract': ['interface', 'contract', 'schema', 'api contract', 'type mismatch', 'breaking change', 'compatibility', 'export', 'signature'],
   // ── Methodology Skills ─────────────────────────────────────────────────────
   'requirements-analysis':       ['requirement', 'analysis', 'user story', 'acceptance criteria', 'prioritize', 'scope', 'elicit', 'stakeholder', 'moscow', '5 whys', 'invest', 'given when then'],
+  'problem-solving':             ['problem', 'issue', 'root cause', 'debug', 'bug', 'fix', 'feature', 'requirement', 'analyse', 'analyze', 'investigate', 'diagnose', 'why', 'cause', 'gap', 'improve'],
   'git-conventions':             ['commit', 'git', 'changelog', 'version', 'semver', 'branch', 'merge', 'pull request', 'pr', 'mr', 'conventional commit'],
   // ── Output Quality Skills ──────────────────────────────────────────────────
   'structured-output':           ['structured output', 'write clearly', 'structure this', 'organize this', 'reduce redundancy', 'be concise', 'information density', 'token compression', 'concise', 'non-redundant'],
@@ -123,6 +135,7 @@ const BUILTIN_SKILL_KEYWORDS = {
 const SKILL_ROLE_FILTER = {
   'structured-output': ['analyst', 'architect', 'reviewer', 'planner'],
   'requirements-analysis': ['analyst'],
+  'problem-solving': ['analyst'],
   'git-conventions': ['developer', 'reviewer'],
   'documentation-generation': ['analyst', 'architect', 'developer', 'reviewer'],
   'javascript-dev': ['architect', 'planner', 'developer', 'reviewer', 'coding-agent'],
@@ -246,6 +259,10 @@ module.exports = {
   ROLE_MANDATORY_DOCS,
   // Role-specific constraint sections
   ROLE_CONSTRAINT_SECTIONS,
+  // Injection gating (P0 Token Optimization)
+  MIN_SKILL_RELEVANCE,
+  MIN_ADR_RELEVANCE,
+  MIN_DOC_KEYWORD_OVERLAP,
   // Skill → role filter
   SKILL_ROLE_FILTER,
 };

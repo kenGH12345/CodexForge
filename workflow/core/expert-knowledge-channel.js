@@ -774,7 +774,7 @@ function _readFileOrNull(filePath) {
     if (fs.existsSync(filePath)) {
       return fs.readFileSync(filePath, 'utf-8');
     }
-  } catch (_) {}
+  } catch (e) { console.warn('[ExpertKnowledgeChannel] file read failed:', e.message); }
   return null;
 }
 

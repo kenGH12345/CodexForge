@@ -164,7 +164,9 @@ registerCommand(
         const lastRun = JSON.parse(fs.readFileSync(lastRunPath, 'utf-8'));
         lastEvolveTime = new Date(lastRun.timestamp).getTime() || 0;
       }
-    } catch (_) { /* first run */ }
+    } catch (err) {
+      console.warn(`[Evolution] Last run check failed: ${err?.message || err}`);
+    }
 
     // Check if any core files changed since last evolve
     let changedCoreFiles = 0;
@@ -509,7 +511,9 @@ registerCommand(
         fs.mkdirSync(_outDir, { recursive: true });
       }
       fs.writeFileSync(reportPath, JSON.stringify({ ...report, elapsed, timestamp: new Date().toISOString() }, null, 2));
-    } catch (_) { /* non-fatal */ }
+    } catch (err) {
+      console.warn(`[Evolution] Report write failed: ${err?.message || err}`);
+    }
 
     // ── P2b: Compare with baseline (Before/After) ─────────────────────────
     let comparison = null;

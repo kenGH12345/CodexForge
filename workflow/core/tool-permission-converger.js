@@ -116,6 +116,10 @@ function evaluateToolPermission({ toolName = 'unknown', args = [], metadata = {}
   const riskScore = Math.min(100, violations.reduce((sum, v) => sum + (SEVERITY_SCORE[v.severity] || 10), 0));
   const allow = blockingViolations.length === 0;
   const confidence = Number(Math.max(0.05, Math.min(0.99, 1 - riskScore / 120)).toFixed(2));
+  if (!allow) {
+    // visible audit trail when tool execution is denied; otherwise silent failure confuses operators
+    console.error(`[tool-permission] DENY tool=${toolName} rules=[${blockingViolations.map(v => v.id).join(',')}] risk=${riskScore}`);
+  }
 
   return {
     allow,

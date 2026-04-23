@@ -93,12 +93,16 @@ Output Language (CRITICAL):
 - All section headings, descriptions, user stories, acceptance criteria, and explanations must be in Chinese.
 - Only keep technical terms, proper nouns, file names, and code identifiers in English.
 
-Output Schema for analysis.md (CRITICAL — follow exactly):
-Your analysis.md MUST contain ONLY these sections, in this order:
-  ## 根因 / Root Cause       — What is the real problem? (evidence-backed, 1-3 paragraphs)
-  ## 受影响位置               — Which files/modules/lines are affected? (table or list with real file paths)
-  ## 修改范围                 — What needs to change? (table: file | location | change description)
-  ## 风险评估                 — What could go wrong? (list with P0/P1/P2 severity)
+Output Schema for analysis.md (CRITICAL — cover these concepts):
+Your analysis.md MUST cover the following semantic concepts. Chinese OR English
+headings are both accepted; focus on SUBSTANCE, not exact heading text:
+  ## 根因 ／ Root Cause         — What is the real problem? (evidence-backed, 3+ lines)
+  ## 受影响位置                  — Which files/modules/lines are affected? (table or list with real file paths)
+  ## 修改范围 ／ Change Scope      — What needs to change? (table: file | location | change description, 3+ lines)
+  ## 风险评估 ／ Risk Assessment   — What could go wrong? (list with P0/P1/P2 severity, 2+ lines)
+
+⚠️ Empty sections will be REJECTED by the validator (SLOT_TOO_THIN). Each section
+   above needs at least 3 non-empty lines of real content (risk assessment: 2 lines).
 
 ❌ DO NOT write generic requirement templates (User Stories, Functional Requirements, Acceptance Criteria)
    — analysis.md is for task-specific root cause analysis, NOT a requirements document
@@ -136,6 +140,16 @@ Downstream Awareness (IMPORTANT):
 - Therefore, your architecture MUST clearly define: module boundaries, component interfaces, data flow, and file structure.
 - The clearer your module decomposition, the better the Planner can produce actionable vertical-slice tasks.
 - Ambiguous architecture → ambiguous tasks → rework. Be explicit about boundaries.
+
+Required Structured Sections (CRITICAL — cover these concepts, machine-consumed by PLAN stage):
+Your architecture.md MUST cover the following semantic concepts. Chinese OR English
+headings are both accepted; focus on SUBSTANCE, not exact heading text. Each section
+needs at least 3 non-empty lines of real content — empty sections will be REJECTED.
+1. **Architecture Scorecard** （架构评分卡）: Run self-review using the checklist dimensions, embed as structured section with totalScore, coverageScore, dimensions, and gapSummary.
+2. **Failure Model** （失败模型 / 故障模型）: For each critical component, document: failureType, impact, detection method, recovery strategy, severity.
+3. **Migration Safety Case** （迁移安全 / 向后兼容方案）: Document rollbackStrategy, compatibilityConstraints, driftDetection approach, sourceOfTruth, exitCriteria.
+4. **Scenario Coverage** （场景覆盖）: List the runtime scenarios this architecture addresses (projection drift, rollback boundary, recovery path, etc.).
+These sections are machine-consumed by PLAN stage — use structured tables, not prose.
 
 Security-Aware Design (IMPORTANT):
 - Every architecture MUST identify trust boundaries (where does untrusted data enter the system?).

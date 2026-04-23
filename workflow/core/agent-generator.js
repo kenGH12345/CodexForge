@@ -87,7 +87,9 @@ function _buildCorePrompt(opts) {
     if (guidance) {
       ideToolGuidanceSection = `\n\n${guidance}\n\n> 💡 **Implementation Note**: \`CodeGraph.querySymbol()\` automatically uses IDE's \`view_code_item\` when available (ADR-37), falling back to regex parsing only on failure.`;
     }
-  } catch (_) { /* Non-fatal */ }
+  } catch (err) {
+    console.warn(`[AgentGenerator] IDE tool guidance generation failed: ${err?.message || err}`);
+  }
 
   let runtimeEnvSection = '';
   try {
@@ -108,7 +110,9 @@ function _buildCorePrompt(opts) {
       );
     }
     runtimeEnvSection = '\n\n' + envLines.join('\n');
-  } catch (_) { /* Non-fatal */ }
+  } catch (err) {
+    console.warn(`[AgentGenerator] Runtime environment detection failed: ${err?.message || err}`);
+  }
 
   let selfReflectionSection = '';
   try {
@@ -120,7 +124,9 @@ function _buildCorePrompt(opts) {
     if (summary) {
       selfReflectionSection = `\n\n### Known Issues (Self-Reflection)\n${summary}`;
     }
-  } catch (_) { /* Non-fatal: self-reflection is optional */ }
+  } catch (err) {
+    console.warn(`[AgentGenerator] Self-reflection load failed: ${err?.message || err}`);
+  }
 
   let experienceSection = '';
   try {
@@ -140,7 +146,9 @@ function _buildCorePrompt(opts) {
         experienceSection = '\n\n' + expLines.join('\n');
       }
     }
-  } catch (_) { /* Non-fatal */ }
+  } catch (err) {
+    console.warn(`[AgentGenerator] Experience load failed: ${err?.message || err}`);
+  }
 
   // Delegate to template module for the actual prompt content
   const { buildAgentPromptTemplate } = require('./agent-prompt-template');

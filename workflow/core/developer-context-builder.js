@@ -248,10 +248,21 @@ async function buildDeveloperContextBlock(orch, upstreamCtx) {
 
   // Pass telemetry to _applyTokenBudget for lifecycle tracking
   const devTelemetry = orch._adapterTelemetry || null;
+  // T4: Adaptive Multiplier — read complexity score from ANALYSE stage output.
+  const devComplexityScore = (() => {
+    try {
+      const score = orch.stageCtx?.get?.('ANALYSE')?.meta?.complexity?.score;
+      return Number.isFinite(score) ? score : null;
+    } catch { return null; }
+  })();
     const { assembled: devAssembled, stats: devStats } = await _applyTokenBudget(devAdjustedBlocks, undefined, {
     telemetry: devTelemetry,
     stage: 'DEVELOPER',
     profile: _devProfile || null,
+    complexityScore: devComplexityScore,
+    enableAdaptive: process.env.WF_ENABLE_ADAPTIVE_BUDGET !== 'false',
+    sessionId: orch.sessionId || orch.runId || null,
+    observability: orch.obs || null,
   });
   if (devStats.dropped.length > 0 || devStats.truncated.length > 0) {
     console.log(`[Orchestrator] 📊 DEVELOPER token budget: ${devStats.total} chars, dropped=[${devStats.dropped.join(',')}], truncated=[${devStats.truncated.join(',')}]`);

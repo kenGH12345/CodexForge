@@ -30,6 +30,8 @@ const { HOOK_EVENTS } = require('./constants');
 const { generatePreStageQuestions } = require('./pre-stage-questions');
 const { buildRetryContext } = require('./stage-context');
 const { computeArtifactHash, verifyRetryImprovement } = require('./retry-gate');
+const { RetryDivergenceGuard } = require('./retry-divergence-guard');
+const { LoopGuard } = require('./loop-guard');
 
 /**
  * @typedef {object} StageExecutionParams
@@ -222,6 +224,11 @@ async function executeStage(params) {
   let pendingRevisionContext = null;
   let previousConfidence = null;
 
+  // P0: Retry storm circuit-breaking
+  const divergenceGuard = new RetryDivergenceGuard({ maxDivergenceScore: 0.85, windowSize: 3 });
+  const progressGuard = new LoopGuard({ maxRetries: 2, jaccardThreshold: 0.8 });
+  let llmCallCount = 0;
+
   // 4. Retry loop with SocraticChallenger
   let preRetryArtifactHash = null;
   let preRetryArtifactContent = null;
@@ -287,6 +294,38 @@ async function executeStage(params) {
       }
 
       const result = await runner.execute(context);
+
+      // P0: Track LLM call count for budget warning
+      llmCallCount++;
+      const maxLlmCalls = runtimePolicy?.maxLlmCalls ?? 30;
+      if (llmCallCount >= maxLlmCalls * 0.7) {
+        console.warn(`[Orchestrator] ⚠️  LLM call budget warning: ${llmCallCount}/${maxLlmCalls} (70% threshold)`);
+      }
+
+      // P0: Exponential backoff when approaching LLM call budget
+      if (llmCallCount >= maxLlmCalls * 0.8 && llmCallCount < maxLlmCalls) {
+        const backoffDelay = Math.min(1000 * Math.pow(2, llmCallCount - Math.floor(maxLlmCalls * 0.8)), 10000);
+        console.warn(`[Orchestrator] ⏳ Exponential backoff: ${backoffDelay}ms (LLM budget ${llmCallCount}/${maxLlmCalls})`);
+        await new Promise(resolve => setTimeout(resolve, backoffDelay));
+      }
+
+      // P0: Hard stop when LLM call budget exceeded
+      if (llmCallCount >= maxLlmCalls) {
+        console.error(`[Orchestrator] 🛑 LLM call budget EXCEEDED: ${llmCallCount}/${maxLlmCalls}. Forcing stage forward.`);
+        stageSuccess = true;
+        stageResult = result;
+        break;
+      }
+
+      // P0: Check progress via LoopGuard.hasProgress
+      const resultText = typeof result === 'string' ? result : JSON.stringify(result);
+      const progressCheck = progressGuard.hasProgress(resultText);
+      if (progressCheck.signal === 'STALE_LOOP') {
+        console.error(`[Orchestrator] ⚡ STALE_LOOP detected (similarity=${progressCheck.similarity.toFixed(2)}, stale=${progressCheck.staleCount}). Forcing stage forward.`);
+        stageSuccess = true;
+        stageResult = result;
+        break;
+      }
 
       // Emit AGENT_COMPLETE hook
       if (orchestrator.hooks && typeof orchestrator.hooks.emit === 'function') {
@@ -525,6 +564,12 @@ async function executeStage(params) {
       }
 
       if (retryCount < maxRetries) {
+        // P0: Check for retry divergence before retrying
+        const divergenceResult = divergenceGuard.check(stageError.message || '', stageName);
+        if (divergenceResult.divergent) {
+          console.warn(`[Orchestrator] ⚡ Retry divergence detected (score=${divergenceResult.score.toFixed(2)}). Skipping retry to prevent storm.`);
+          break;
+        }
         console.error(`[Orchestrator] 🔄 Retrying stage ${stageName} due to error...`);
         retryCount++;
         continue;

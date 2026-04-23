@@ -19,6 +19,7 @@ const {
   SOCRATIC_LAYERS,
   STAGE_CHALLENGES,
   STAGE_POSITION_WEIGHTS,
+  getStageDimensionChecks,
 } = require('./socratic-constants');
 const { extractEntities, generateEntityGroundedQuestions, extractArtifactStructure } = require('./socratic-entity-extractor');
 const { collectRuleDrivenQuestions, buildRuleConfig } = require('./socratic-blind-spot-detector');
@@ -102,7 +103,7 @@ function generateSocraticQuestions(instance, stageName, claims, content, context
   }
 
   // Eleven-dimension questions — DEMOTED to backfill priority (T4)
-  const dimensionQuestions = generateDimensionQuestions(instance, stageName, content, context, snippets);
+  const dimensionQuestions = generateDimensionQuestions(instance, stageName, content, context, snippets, taskFingerprint);
   for (const q of dimensionQuestions) {
     candidates.push({
       question: q,
@@ -201,10 +202,10 @@ function generateSocraticQuestions(instance, stageName, claims, content, context
 /**
  * Generate questions for each of the twelve dimensions.
  */
-function generateDimensionQuestions(instance, stageName, content, context = {}, snippets = []) {
+function generateDimensionQuestions(instance, stageName, content, context = {}, snippets = [], taskFingerprint = 'general') {
   const questions = [];
   const contentLower = content.toLowerCase();
-  const stageDimChecks = _getStageDimensionChecks(stageName);
+  const stageDimChecks = getStageDimensionChecks(stageName, taskFingerprint);
 
   for (const [dimKey, dim] of Object.entries(ELEVEN_DIMENSIONS)) {
     const stageWeight = stageDimChecks[dimKey] || 1;
@@ -716,18 +717,6 @@ function _extractKeyWords(instance, text) {
     .split(/\s+/)
     .filter(w => w.length >= 3)
     .slice(0, 5);
-}
-
-function _getStageDimensionChecks(stageName) {
-  const checks = {
-    ANALYSE: { RELEVANCE: 2, DEPTH: 2, FIRST_PRINCIPLES: 2, EVIDENCE: 2, ROI_ASSESSMENT: 2 },
-    ARCHITECT: { BREADTH: 2, LOGIC: 2, BOUNDARY: 2, INDUSTRY_COMPARISON: 1, ROI_ASSESSMENT: 2 },
-    PLAN: { PRECISION: 2, LOGIC: 1, DATA: 1, ROI_ASSESSMENT: 1 },
-    CODE: { BOUNDARY: 2, EVIDENCE: 2, CLARITY: 1 },
-    DEVELOP: { BOUNDARY: 2, EVIDENCE: 2, CLARITY: 1 },
-    TEST: { EVIDENCE: 2, BOUNDARY: 2, DATA: 1 },
-  };
-  return checks[stageName] || {};
 }
 
 function _expandCheckSignals(check) {

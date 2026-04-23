@@ -38,6 +38,8 @@ function enforceRequirementBudget(requirement, config = {}) {
     };
   }
 
+  // silent truncation hides prompt-budget bugs; make it visible
+  console.error(`[context-budget] requirement truncated: ${text.length} -> ${policy.requirementMaxChars} chars`);
   return {
     requirement: text.slice(0, policy.requirementMaxChars),
     truncated: true,

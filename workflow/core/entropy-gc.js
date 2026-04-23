@@ -320,7 +320,7 @@ class EntropyGC {
 
   _checkDeadCodeDensity(filePath) {
     let content;
-    try { content = fs.readFileSync(filePath, 'utf-8'); } catch (_) { return null; }
+    try { content = fs.readFileSync(filePath, 'utf-8'); } catch (e) { console.warn('[EntropyGC] readFileSync failed for', filePath, ':', e.message); return null; }
 
     const lines      = content.split('\n');
     const deadLines  = lines.filter(l => /\b(TODO|FIXME|HACK|XXX)\b/i.test(l)).length;
@@ -388,7 +388,7 @@ class EntropyGC {
     const results = [];
     const walk = (d) => {
       let entries;
-      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch (_) { return; }
+      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { console.warn('[EntropyGC] readdirSync failed for', d, ':', e.message); return; }
       for (const e of entries) {
         if (e.name.startsWith('.')) continue;
         if (e.isDirectory()) {
@@ -406,7 +406,7 @@ class EntropyGC {
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
       return content.split('\n').length;
-    } catch (_) { return 0; }
+    } catch (e) { console.warn('[EntropyGC] readFileSync line count failed for', filePath, ':', e.message); return 0; }
   }
 
   // ─── Report Writers ───────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ function buildRequiredObservation(stage, requirement, options) {
   const requiredSchema = opts.requiredSchema || null;
   const adr37Enforcement = opts.adr37Enforcement || null;
   const crossStageContext = opts.crossStageContext || null;
+  const pendingBlindSpots = opts.pendingBlindSpots || null;
 
   return {
     outputPath,
@@ -28,6 +29,7 @@ function buildRequiredObservation(stage, requirement, options) {
     adr37Enforcement,
     preStageThinking: generatePreStageQuestions(stage, requirement || ''),
     ...(crossStageContext ? { crossStageContext } : {}),
+    ...(pendingBlindSpots && pendingBlindSpots.length > 0 ? { pendingBlindSpots } : {}),
   };
 }
 

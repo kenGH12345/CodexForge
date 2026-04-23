@@ -50,6 +50,173 @@ module.exports = new LifecyclePlugin({
     // No teardown needed — RollbackCoordinator is stateless between runs
   },
 
+  // ── T-2: Programmatic validation API for StageCompletionHook integration ──
+  validate(input) {
+    const fs = require('fs');
+    const path = require('path');
+
+    const { stage, projectRoot, outputFile, outputSummary } = input;
+
+    // Map stage to downstream role
+    const stageToDownstreamRole = {
+      'ANALYSE': 'architect',
+      'ARCHITECT': 'planner',
+      'PLAN': 'developer',
+      'CODE': 'tester',
+    };
+    const downstreamRole = stageToDownstreamRole[stage];
+
+    // No downstream for TEST or unknown stages
+    if (!downstreamRole) {
+      return {
+        passed: true,
+        skipped: true,
+        message: stage === 'TEST'
+          ? 'TEST is the final stage — no downstream contract to validate.'
+          : `Unknown stage: "${stage}"`,
+      };
+    }
+
+    // Default output file mapping
+    const stageOutputFiles = {
+      'ANALYSE': 'output/analysis.md',
+      'ARCHITECT': 'output/architecture.md',
+      'PLAN': 'output/execution-plan.md',
+      'CODE': 'output/code.diff',
+    };
+    const actualOutputFile = outputFile
+      || path.join(projectRoot || process.cwd(), stageOutputFiles[stage] || '');
+
+    // Downstream contracts (same as bridge handler)
+    const DOWNSTREAM_CONTRACTS = {
+      architect: {
+        requiredSections: [
+          '## Requirements', '## Functional', '## Feature', '# Requirements', 'requirements',
+          '## 需求', '## 功能', '## 功能需求', '## 用户故事', '## 特性', '需求', '功能需求',
+        ],
+        minLength: 100,
+        description: 'requirements.md for ArchitectAgent',
+      },
+      planner: {
+        requiredSections: [
+          '## Architecture', '## Component', '## Design', '## System', '# Architecture', 'architecture',
+          '## 架构', '## 系统架构', '## 组件', '## 模块', '## 设计', '## 技术栈', '架构设计', '技术栈',
+        ],
+        minLength: 200,
+        description: 'architecture.md for PlannerAgent',
+      },
+      developer: {
+        requiredSections: [
+          '"tasks"', '"phases"', '"dependencies"', '"moduleGrouping"',
+          '## Tasks', '## Phases', '## Dependencies', '# Tasks', '# Phases', '# Dependencies',
+          '## 任务', '## 阶段', '## 依赖', '## 任务分解', '## 实施阶段',
+          'tasks', 'phases', 'dependencies', 'Tasks', 'Phases', 'Dependencies',
+        ],
+        minLength: 200,
+        description: 'execution-plan.md for DeveloperAgent (via PlannerAgent)',
+      },
+      tester: {
+        requiredSections: [
+          '## Test Results', '## Coverage', '## Test', '# Test', 'test results',
+          '## 测试结果', '## 覆盖率', '## 测试报告', '## 测试用例', '测试结果', '测试覆盖',
+        ],
+        minLength: 100,
+        description: 'test-report.md for TesterAgent',
+      },
+    };
+
+    const contract = DOWNSTREAM_CONTRACTS[downstreamRole];
+    if (!contract) {
+      return {
+        passed: true,
+        skipped: true,
+        message: `No contract defined for downstreamRole="${downstreamRole}"`,
+      };
+    }
+
+    const failures = [];
+
+    if (!fs.existsSync(actualOutputFile)) {
+      failures.push({
+        check: 'file-exists',
+        detail: `Output file not found: ${actualOutputFile}`,
+      });
+    } else {
+      const content = fs.readFileSync(actualOutputFile, 'utf-8');
+      if (content.length < contract.minLength) {
+        failures.push({
+          check: 'min-length',
+          detail: `File is too short (${content.length} chars < ${contract.minLength} required).`,
+        });
+      }
+
+      // Smart section detection: support both Markdown headings and JSON block fields
+      let hasRequiredSection = contract.requiredSections.some(s => content.includes(s));
+
+      // For execution-plan.md, also check JSON block structure
+      if (!hasRequiredSection && stage === 'PLAN') {
+        try {
+          // Extract JSON block (content between ```json and ```)
+          // Support both LF and CRLF line endings
+          const jsonMatch = content.match(/```json\r?\n([\s\S]*?)\r?\n```/);
+          if (jsonMatch) {
+            const jsonContent = jsonMatch[1];
+            const parsed = JSON.parse(jsonContent);
+            // Check for essential execution plan fields
+            hasRequiredSection = (
+              (parsed.tasks && Array.isArray(parsed.tasks) && parsed.tasks.length > 0) ||
+              (parsed.phases && Array.isArray(parsed.phases) && parsed.phases.length > 0) ||
+              (parsed.dependencies && Array.isArray(parsed.dependencies))
+            );
+          }
+        } catch (e) {
+          // JSON parse failed, rely on string matching only
+        }
+      }
+
+      if (!hasRequiredSection) {
+        failures.push({
+          check: 'required-sections',
+          detail: `None of the required section headings found. Expected at least one of: ${contract.requiredSections.slice(0, 5).join(', ')}...`,
+        });
+      }
+    }
+
+    const passed = failures.length === 0;
+    const rollbackTargets = {
+      'ANALYSE': null,
+      'ARCHITECT': 'ANALYSE',
+      'PLAN': 'ARCHITECT',
+      'CODE': 'PLAN',
+    };
+
+    return {
+      passed,
+      skipped: false,
+      stage,
+      downstreamRole,
+      outputFile: path.relative(projectRoot || process.cwd(), actualOutputFile),
+      contractDescription: contract.description,
+      failures,
+      suggestions: passed ? [] : [
+        `Ensure the output file contains one of: ${contract.requiredSections.slice(0, 3).join(', ')}...`,
+        `Minimum file length: ${contract.minLength} characters`,
+      ],
+      metrics: {
+        checksRun: failures.length + (passed ? 1 : 0),
+        failuresCount: failures.length,
+      },
+      rollbackRecommendation: passed ? null : {
+        shouldRollback: true,
+        rollbackTo: rollbackTargets[stage],
+        reason: `${stage} output does not satisfy ${downstreamRole}'s input contract: ${failures.map(f => f.detail).join('; ')}`,
+        action: rollbackTargets[stage]
+          ? `Re-execute the ${rollbackTargets[stage]} stage to produce a valid output for ${downstreamRole}.`
+          : `Re-execute the ${stage} stage to produce a valid output.`,
+      },
+    };
+  },
+
   bridge: {
     subcommand: 'rollback-check',
     handler: async (args) => {
@@ -119,11 +286,13 @@ module.exports = new LifecyclePlugin({
         },
         developer: {
           requiredSections: [
-            '## Architecture', '## Component', '## Design', '## System', '# Architecture', 'architecture',
-            '## 架构', '## 系统架构', '## 组件', '## 模块', '## 设计', '## 技术栈', '架构设计', '技术栈',
+            'tasks', 'phases', 'dependencies', 'Tasks', 'Phases', 'Dependencies',
+            '## Tasks', '## Phases', '## Dependencies', '# Tasks', '# Phases', '# Dependencies',
+            '## 任务', '## 阶段', '## 依赖', '## 任务分解', '## 实施阶段',
+            '"tasks"', '"phases"', '"dependencies"', '"moduleGrouping"',
           ],
           minLength: 200,
-          description: 'architecture.md for DeveloperAgent (via PlannerAgent)',
+          description: 'execution-plan.md for DeveloperAgent (via PlannerAgent)',
         },
         tester: {
           requiredSections: [
@@ -159,7 +328,31 @@ module.exports = new LifecyclePlugin({
             detail: `File is too short (${content.length} chars < ${contract.minLength} required).`,
           });
         }
-        const hasRequiredSection = contract.requiredSections.some(s => content.includes(s));
+
+        // Smart section detection: support both Markdown headings and JSON block fields
+        let hasRequiredSection = contract.requiredSections.some(s => content.includes(s));
+
+        // For execution-plan.md, also check JSON block structure
+        if (!hasRequiredSection && stage === 'PLAN') {
+          try {
+            // Extract JSON block (content between ```json and ```)
+            // Support both LF and CRLF line endings
+            const jsonMatch = content.match(/```json\r?\n([\s\S]*?)\r?\n```/);
+            if (jsonMatch) {
+              const jsonContent = jsonMatch[1];
+              const parsed = JSON.parse(jsonContent);
+              // Check for essential execution plan fields
+              hasRequiredSection = (
+                (parsed.tasks && Array.isArray(parsed.tasks) && parsed.tasks.length > 0) ||
+                (parsed.phases && Array.isArray(parsed.phases) && parsed.phases.length > 0) ||
+                (parsed.dependencies && Array.isArray(parsed.dependencies))
+              );
+            }
+          } catch (e) {
+            // JSON parse failed, rely on string matching only
+          }
+        }
+
         if (!hasRequiredSection) {
           failures.push({
             check: 'required-sections',

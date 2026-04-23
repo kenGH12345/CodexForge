@@ -287,6 +287,15 @@ let _contextLoaderCheapLlm = null;
  */
 let _contextLoaderExperienceStore = null;
 
+let _admissionMatrixConfig = null;
+
+function setAdmissionMatrixConfig(config) {
+  _admissionMatrixConfig = config;
+  if (_cachedLoader && typeof _cachedLoader.loadAdmissionMatrix === 'function') {
+    _cachedLoader.loadAdmissionMatrix(config);
+  }
+}
+
 /**
  * Sets the module-level EmbeddingService reference (Plan-C).
  * Called by Orchestrator during initialisation.
@@ -469,6 +478,11 @@ function _getOrCreateLoader(options) {
   // ADR-55: inject experienceStore into newly created loader (Prevention Rule injection)
   if (_contextLoaderExperienceStore) {
     _cachedLoader._experienceStore = _contextLoaderExperienceStore;
+  }
+
+  // T-6: Load admission matrix from workflow.config.js
+  if (typeof _cachedLoader.loadAdmissionMatrix === 'function' && _admissionMatrixConfig) {
+    _cachedLoader.loadAdmissionMatrix(_admissionMatrixConfig);
   }
 
   // Fire one-shot callbacks when ContextLoader is first created.
@@ -1130,6 +1144,8 @@ module.exports = {
   setContextLoaderCheapLlm,
   // ADR-55: ExperienceStore for ContextLoader Prevention Rule injection (MemGPT retrieval pattern)
   setContextLoaderExperienceStore,
+  // T-6: Admission matrix config for ContextLoader gate
+  setAdmissionMatrixConfig,
   preloadAdrDigest,
 // P3: Output style constants and helpers
   OUTPUT_STYLES,

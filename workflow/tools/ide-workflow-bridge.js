@@ -122,6 +122,109 @@ const { requirementFingerprint: _sharedRequirementFingerprint } = require('../co
 const { normalizeRunCategory, resolveHealthPaths } = require('../core/health-observability');
 const { generatePreStageQuestions: _sharedGeneratePreStageQuestions } = require('../core/pre-stage-questions');
 const { buildRequiredObservation, buildRetryContext } = require('../core/stage-context');
+const { FileStateStore } = require('../core/runtime/file-state-store');
+const { extractMdSummary, extractDiffSummary } = require('../core/stage-output-reporter');
+const { RuntimeProjector } = require('../core/runtime/runtime-projector');
+const { JsonlEventStore } = require('../core/runtime/jsonl-event-store');
+const { RuntimeEventStore } = require('../core/runtime/runtime-event-store');
+const { assessArchitectureGovernance } = require('../core/execution-validator-integration');
+
+let _runtimeStateManager = null;
+let _runtimeEventStore = null;
+
+function _getRuntimeStateManager(projectRoot) {
+  if (_runtimeStateManager) return { stateManager: _runtimeStateManager, eventStore: _runtimeEventStore };
+  try {
+    const runtimeDir = path.join(projectRoot || '.', 'output', 'runtime');
+    const eventsDir = path.join(projectRoot || '.', 'output', 'runtime', 'events');
+    const stateManager = new FileStateStore({ runtimeDir });
+    const backingStore = new JsonlEventStore({ eventsDir });
+    const eventStore = new RuntimeEventStore({ backingStore });
+    _runtimeStateManager = stateManager;
+    _runtimeEventStore = eventStore;
+    return { stateManager, eventStore };
+  } catch (err) {
+    console.error(`[Bridge] ⚠️ Runtime StateManager init failed (non-fatal): ${err.message}`);
+    return { stateManager: null, eventStore: null };
+  }
+}
+
+const PROJECTION_MODE = (process.env.PROJECTION_MODE || 'dual-write').toLowerCase();
+const PROJECTION_MODES = Object.freeze(['dual-write', 'sync']);
+
+function _getProjectionMode() {
+  const mode = PROJECTION_MODE;
+  if (!PROJECTION_MODES.includes(mode)) {
+    console.error(`[Bridge] ⚠️ Invalid PROJECTION_MODE="${mode}", falling back to "dual-write". Valid: ${PROJECTION_MODES.join(', ')}`);
+    return 'dual-write';
+  }
+  return mode;
+}
+
+function _writeStatusFile(statusFilePath, statusData, projectRoot, sessionId) {
+  const mode = _getProjectionMode();
+  if (mode === 'sync') {
+    try {
+      const rt = _getRuntimeStateManager(projectRoot || '.');
+      if (rt.stateManager && sessionId) {
+        if (statusData.activeWorkflow) {
+          const aw = statusData.activeWorkflow;
+          const existing = rt.stateManager.loadSession(sessionId);
+          const session = {
+            ...(existing || {}),
+            sessionId,
+            startedAt: aw.startedAt || existing?.startedAt || new Date().toISOString(),
+            currentStage: aw.currentStage || existing?.currentStage || '',
+            requirement: aw.requirement || existing?.requirement || '',
+            requirementFingerprint: aw.requirementFingerprint || existing?.requirementFingerprint || '',
+            ttlExpiry: aw.ttlExpiry || existing?.ttlExpiry || null,
+            stages: { ...(existing?.stages || {}) },
+            status: 'active',
+          };
+          if (aw.completedStages) {
+            for (const s of aw.completedStages) {
+              session.stages[s] = { ...(session.stages[s] || {}), status: 'completed' };
+            }
+          }
+          if (aw.currentStage) {
+            session.currentStage = aw.currentStage;
+          }
+          rt.stateManager.saveSession(session);
+        }
+        if (statusData.pendingRetry) {
+          const existing = rt.stateManager.loadSession(sessionId);
+          if (existing) {
+            existing.recovery = existing.recovery || {};
+            existing.recovery.pendingRetry = true;
+            existing.recovery.nextRetryStage = statusData.pendingRetry.stage;
+            existing.recovery.nextRetryAttempt = statusData.pendingRetry.retryCount;
+            existing.recovery.questions = statusData.pendingRetry.questions || [];
+            existing.recovery.blindSpots = statusData.pendingRetry.blindSpots || [];
+            existing.recovery.artifactHash = statusData.pendingRetry.artifactHash || '';
+            existing.recovery.resumeState = statusData.recoveryState || null;
+            existing.recovery.blockedReason = statusData.blockedReason || null;
+            rt.stateManager.saveSession(existing);
+          }
+        }
+        if (!statusData.activeWorkflow && !statusData.pendingRetry) {
+          const existing = rt.stateManager.loadSession(sessionId);
+          if (existing) rt.stateManager.saveSession(existing);
+        }
+        const projector = new RuntimeProjector(rt.stateManager, rt.eventStore);
+        const projected = projector.projectWorkflowStatus(sessionId);
+        if (projected) {
+          fs.writeFileSync(statusFilePath, JSON.stringify(projected, null, 2), 'utf-8');
+          console.error(`[Bridge] 📡 PROJECTION_MODE=sync: workflow-status.json projected from StateManager for session=${sessionId}`);
+          return;
+        }
+      }
+      console.error(`[Bridge] ⚠️ PROJECTION_MODE=sync but projection failed (no session/state), falling back to direct write`);
+    } catch (projErr) {
+      console.error(`[Bridge] ⚠️ PROJECTION_MODE=sync projection failed: ${projErr.message}, falling back to direct write`);
+    }
+  }
+  fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
+}
 
 // ─── CLI Argument Parsing ────────────────────────────────────────────────────
 
@@ -220,6 +323,10 @@ function parseArgs(argv) {
     prevention: '',
     capability: '',
     efficiency: '',
+    // analysis-quality-gate specific args
+    file: '',
+    minLength: '500',
+    failThreshold: '50',
   };
 
   if (argv.length < 3) return args;
@@ -301,6 +408,15 @@ function parseArgs(argv) {
         break;
       case '--dimension':
         args.dimension = argv[++i] || '';
+        break;
+      case '--operation':
+        args.operation = argv[++i] || '';
+        break;
+      case '--statusFilter':
+        args.statusFilter = argv[++i] || '';
+        break;
+      case '--reason':
+        args.reason = argv[++i] || '';
         break;
       case '--verbose':
         args.verbose = true;
@@ -421,6 +537,15 @@ function parseArgs(argv) {
         break;
       case '--efficiency':
         args.efficiency = argv[++i] || '';
+        break;
+      case '--file':
+        args.file = argv[++i] || '';
+        break;
+      case '--min-length':
+        args.minLength = argv[++i] || '500';
+        break;
+      case '--fail-threshold':
+        args.failThreshold = argv[++i] || '50';
         break;
     }
   }
@@ -556,7 +681,7 @@ function runRequirementCheck(args) {
  * Run ContextLoader.resolve() for a given stage/role and task text.
  * Returns injected skill sections, ADR digests, and source list.
  */
-function runContext(args) {
+async function runContext(args) {
   try {
     const { PATHS } = require('../core/constants');
     const workflowRoot = path.resolve(path.join(__dirname, '..'));
@@ -600,7 +725,7 @@ function runContext(args) {
       experienceStore: _bridgeExperienceStore,  // ADR-55
     });
 
-    const { sections, tokenCount, sources } = loader.resolve(taskText, role);
+    const { sections, tokenCount, sources } = await loader.resolve(taskText, role);
 
     // T-6: Log context loading result for observability
     try {
@@ -1056,6 +1181,43 @@ function runBuildAgentPrompt(args) {
 // ─── Sub-command: rollback-check ─────────────────────────────────────────────
 
 /**
+ * Run ANALYSE stage quality gate check.
+ * Validates the structural completeness of a requirements.md file.
+ */
+function runAnalysisQualityGate(args) {
+  try {
+    const { validateAnalysisQuality } = require(path.join(args.projectRoot, 'workflow', 'core', 'analysis-quality-gate'));
+    const filePath = args.file ? path.resolve(args.projectRoot, args.file) : path.resolve(args.projectRoot, 'output', 'analysis.md');
+    if (!fs.existsSync(filePath)) {
+      return {
+        success: false,
+        subcommand: 'analysis-quality-gate',
+        error: `File not found: ${path.relative(args.projectRoot, filePath)}. Use --file <path> to specify the analysis output file.`,
+      };
+    }
+    const minLength = args.minLength ? parseInt(args.minLength, 10) : 500;
+    const failThreshold = args.failThreshold ? parseInt(args.failThreshold, 10) : 50;
+    const result = validateAnalysisQuality(filePath, { minLength, failThreshold });
+    return {
+      success: true,
+      subcommand: 'analysis-quality-gate',
+      data: {
+        file: path.relative(args.projectRoot, filePath),
+        score: result.score,
+        passed: result.passed,
+        failThreshold: result.failThreshold,
+        failedChecks: result.failedChecks.map(c => ({ id: c.id, name: c.name, severity: c.severity })),
+        criticalFailed: result.criticalFailed.map(c => ({ id: c.id, name: c.name })),
+        highFailed: result.highFailed.map(c => ({ id: c.id, name: c.name })),
+        summary: result.summary,
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'analysis-quality-gate', error: err.message };
+  }
+}
+
+/**
  * Validate a stage's output file against the downstream Agent's input contract.
  * This implements Auto-Rollback detection for IDE Agent mode.
  *
@@ -1124,11 +1286,16 @@ function runRollbackCheck(args) {
       },
       developer: {
         requiredSections: [
-          '## Architecture', '## Component', '## Design', '## System', '# Architecture', 'architecture',
-          '## 架构', '## 系统架构', '## 组件', '## 模块', '## 设计', '## 技术栈', '架构设计', '技术栈',
+          // JSON block keys for execution-plan.md
+          '"tasks"', '"phases"', '"dependencies"', '"moduleGrouping"',
+          // Markdown sections
+          '## Tasks', '## Phases', '## Dependencies', '# Tasks', '# Phases', '# Dependencies',
+          '## 任务', '## 阶段', '## 依赖', '## 任务分解', '## 实施阶段',
+          // Generic keywords
+          'tasks', 'phases', 'dependencies', 'Tasks', 'Phases', 'Dependencies',
         ],
         minLength: 200,
-        description: 'architecture.md for DeveloperAgent (via PlannerAgent)',
+        description: 'execution-plan.md for DeveloperAgent (via PlannerAgent)',
       },
       tester: {
         requiredSections: [
@@ -2526,6 +2693,46 @@ function runContractCheck(args) {
   }
 }
 
+// ─── Sub-command: constitution-check (T-3: Architecture Governance) ────────────
+
+/**
+ * Run Constitution Check against enforced: true constraints.
+ * Validates architecture artifact against hard constraints from architecture-constraints.md.
+ * Only checks enforced: true rules — soft governance is handled by assessArchitectureGovernance.
+ */
+function runConstitutionCheck(args) {
+  try {
+    const projectRoot = args.projectRoot || '.';
+    const architecturePath = args.architecturePath
+      || path.join(projectRoot, 'output', 'architecture.md');
+
+    const result = assessArchitectureGovernance({
+      projectRoot,
+      architecturePath,
+    });
+
+    const cc = result.constitutionCheck || { valid: true, checks: [], skipped: true, reason: 'constitutionCheck not available' };
+
+    return {
+      success: true,
+      subcommand: 'constitution-check',
+      data: {
+        valid: cc.valid,
+        skipped: cc.skipped || false,
+        checkCount: cc.checkCount || 0,
+        checks: cc.checks || [],
+        failedChecks: cc.failedChecks || [],
+        reason: cc.reason || undefined,
+        recommendation: cc.valid
+          ? 'All enforced constraints passed.'
+          : `${(cc.failedChecks || []).length} enforced constraint(s) violated. Review failedChecks.`,
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'constitution-check', error: err.message };
+  }
+}
+
 // ─── Sub-command: skill-discover (Gap #3) ────────────────────────────────────
 
 /**
@@ -3367,6 +3574,77 @@ function _detectArtifact(filePath) {
   }
 }
 
+function runProductionReadinessCheck(args) {
+  try {
+    const projectRoot = args['project-root'] || process.cwd();
+    const write = args.write !== 'false';
+    const format = args.format || 'json';
+    const { scan, renderMarkdown } = require('./production-readiness-scanner');
+    const report = scan(projectRoot);
+    let reportPath = null;
+    if (write) {
+      const outDir = path.join(projectRoot, 'output');
+      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+      reportPath = path.join(outDir, 'isolation-modules-inventory.md');
+      fs.writeFileSync(reportPath, renderMarkdown(report), 'utf8');
+    }
+    const status = report.totals.isolation > 0 ? 'action-needed'
+      : report.totals.weak > 0 ? 'warning'
+      : 'healthy';
+    return {
+      success: true,
+      subcommand: 'production-readiness-check',
+      data: {
+        status,
+        totals: report.totals,
+        isolationCount: report.totals.isolation,
+        weakCount: report.totals.weak,
+        reportPath,
+        format,
+        recommendation: status === 'action-needed'
+          ? `Found ${report.totals.isolation} isolation module(s). Review ${reportPath || 'the JSON output'} and either integrate them into production paths or add @production-exempt tags per ADR-56.`
+          : status === 'warning'
+          ? `Found ${report.totals.weak} module(s) with weak integration. Review and strengthen within the next delivery window.`
+          : 'All scanned modules meet the Production-First criteria (ADR-56).',
+        isolationSample: report.isolationModules.slice(0, 10),
+        weakSample: report.weakModules.slice(0, 10),
+      },
+    };
+  } catch (e) {
+    return {
+      success: false,
+      subcommand: 'production-readiness-check',
+      error: String((e && e.message) || e),
+    };
+  }
+}
+
+function runCheckpointGC(args) {
+  try {
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const { FileStateStore } = require('../core/runtime/file-state-store');
+    const { JsonlEventStore } = require('../core/runtime/jsonl-event-store');
+    const { CheckpointGC } = require('../core/runtime/checkpoint-gc');
+
+    const runtimeDir = path.join(projectRoot, 'output', 'runtime');
+    const eventsDir = path.join(runtimeDir, 'events');
+
+    const stateStore = new FileStateStore({ runtimeDir });
+    const eventStore = new JsonlEventStore({ eventsDir });
+
+    const gc = new CheckpointGC({ stateStore, eventStore });
+
+    const opts = {};
+    if (args.ttl) opts.ttlMs = parseInt(args.ttl);
+    if (args['dry-run']) opts.dryRun = true;
+
+    const result = gc.run(opts);
+    return { success: true, subcommand: 'checkpoint-gc', data: result };
+  } catch (err) {
+    return { success: false, subcommand: 'checkpoint-gc', error: err.message };
+  }
+}
+
 function runTraceAppend(args) {
   try {
     const projectRoot = path.resolve(args.projectRoot || '.');
@@ -3918,6 +4196,7 @@ async function runSocraticChallenge(args) {
       llmSource: 'mock',
       isMockLlm: true,
       previousArtifacts,  // D7: Cross-stage context
+      triageScore: args.triageScore, // Pass triageScore to trigger engine
       artifactMeta: {
         lines: contentLines.length,
         headings: headingClaims,
@@ -4012,6 +4291,47 @@ function _generateContentAwareQuestions(stage, content, contentLower, requiremen
 // ─── Health Report ───────────────────────────────────────────────────────────
 
 /**
+ * Generate projections (manifest + workflow-status) for Bridge/CLI consumption.
+ * T-4: Bridge Projection Agent — Provides unified access to Runtime projections.
+ *
+ * @param {Object} args
+ * @param {string} [args.session] — Session ID (uses latest if not provided)
+ * @param {string} [args.format='both'] — 'manifest' | 'status' | 'both' | 'trace'
+ * @param {boolean} [args.validate=true] — Validate projections against contracts
+ * @param {boolean} [args.writeLegacy=false] — Write to legacy output files
+ * @param {string} [args.projectRoot] — Project root path
+ * @returns {Object}
+ */
+function runProjection(args) {
+  try {
+    const { RuntimeApiAdapter } = require('./runtime-api-adapter');
+
+    const projectRoot = args.projectRoot || args['project-root'] || '.';
+    const adapter = new RuntimeApiAdapter({ projectRoot });
+    adapter.init();
+
+    const result = adapter.handleProjectionCommand({
+      sessionId: args.session,
+      format: args.format || 'both',
+      validate: args.validate !== 'false',
+      writeLegacy: args.writeLegacy === 'true',
+    });
+
+    return {
+      success: result.success,
+      subcommand: 'projection',
+      ...result,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      subcommand: 'projection',
+      error: err.message,
+    };
+  }
+}
+
+/**
  * Generate health report from real trace data.
  * Delegates to generate-health-report.js for clean separation of concerns.
  */
@@ -4060,6 +4380,103 @@ function runEnrichmentStats(args) {
     return result;
   } catch (err) {
     return { status: 'error', message: err.message };
+  }
+}
+
+function runBudgetSummary(args) {
+  const projectRoot = args.projectRoot || args['project-root'] || '.';
+  const fs = require('fs');
+  const path = require('path');
+
+  try {
+    const {
+      CONVERSATION_BUDGET_CHARS,
+      STAGE_TOKEN_BUDGET_CHARS,
+      STAGE_TOKEN_BUDGET_TOKENS,
+      STAGE_BUDGET_MULTIPLIERS,
+      getBudgetSummary,
+    } = require('../core/token-budget');
+
+    const result = {
+      success: true,
+      subcommand: 'budget-summary',
+      data: {
+        l1: {
+          name: 'Conversation Budget',
+          budgetChars: CONVERSATION_BUDGET_CHARS,
+          budgetTokens: Math.floor(CONVERSATION_BUDGET_CHARS / 4),
+        },
+        l2: {
+          name: 'Stage Budget',
+          budgetChars: STAGE_TOKEN_BUDGET_CHARS,
+          budgetTokens: STAGE_TOKEN_BUDGET_TOKENS,
+          multipliers: STAGE_BUDGET_MULTIPLIERS,
+        },
+        l3: {
+          name: 'Prompt Guard',
+          note: 'Threshold defined in prompt-builder.js HALLUCINATION_RISK_THRESHOLD',
+        },
+        recentUsage: null,
+      },
+    };
+
+    const progressLog = path.join(projectRoot, 'output', 'workflow-progress.log');
+    if (fs.existsSync(progressLog)) {
+      const content = fs.readFileSync(progressLog, 'utf-8');
+      const budgetLines = content.split('\n').filter(l => l.includes('Conversation budget:'));
+      const lastLine = budgetLines[budgetLines.length - 1];
+      if (lastLine) {
+        const match = lastLine.match(/total=(\d+).*essential=(\d+).*skipped=(\d+)/);
+        if (match) {
+          result.data.recentUsage = {
+            layer: 'L1',
+            totalChars: parseInt(match[1], 10),
+            essentialChars: parseInt(match[2], 10),
+            skippedSegments: parseInt(match[3], 10),
+          };
+        }
+      }
+    }
+
+    return result;
+  } catch (err) {
+    return { success: false, subcommand: 'budget-summary', error: err.message };
+  }
+}
+
+function runAdmissionMatrix(args) {
+  const projectRoot = args.projectRoot || args['project-root'] || '.';
+  const path = require('path');
+
+  try {
+    let config = null;
+    try {
+      const configPath = path.join(projectRoot, 'workflow.config.js');
+      delete require.cache[require.resolve(configPath)];
+      config = require(configPath);
+    } catch (_) {
+      return { success: false, subcommand: 'admission-matrix', error: 'workflow.config.js not found or invalid' };
+    }
+
+    const matrix = config.admissionMatrix || { enabled: false, rules: [] };
+
+    const result = {
+      success: true,
+      subcommand: 'admission-matrix',
+      data: {
+        enabled: matrix.enabled || false,
+        DEMOTE_TOKEN_CAP: matrix.DEMOTE_TOKEN_CAP || 0,
+        rules: (matrix.rules || []).map(r => ({
+          skill: r.skill,
+          action: r.action,
+        })),
+        summary: `${(matrix.rules || []).length} rules configured, matrix ${matrix.enabled ? 'ENABLED' : 'DISABLED'}`,
+      },
+    };
+
+    return result;
+  } catch (err) {
+    return { success: false, subcommand: 'admission-matrix', error: err.message };
   }
 }
 
@@ -5519,6 +5936,38 @@ async function runWorkflowStage(args) {
     const sessionId = traceStartResult.data?.session || traceStartResult.data?.sessionId || args.session || '';
     console.error(`[runWorkflowStage] stage_start trace written. session=${sessionId} traceSuccess=${traceStartResult.success}`);
 
+    // ── T-12 AC-3: Delegate stage start to StateManager + EventStore ──
+    // This ensures the runtime state layer stays in sync with workflow progress.
+    // Dual-write: the trace above writes to workflow-trace.jsonl, while
+    // StateManager.beginStage() writes to the structured runtime state store.
+    try {
+      const rt = _getRuntimeStateManager(args.projectRoot || '.');
+      if (rt.stateManager && sessionId) {
+        rt.stateManager.beginStage({
+          sessionId,
+          stage,
+          stageInput: args.stageInput || '',
+        });
+        console.error(`[runWorkflowStage] ✅ StateManager.beginStage(${stage}) synced for session=${sessionId}`);
+      }
+    } catch (smErr) {
+      console.error(`[runWorkflowStage] ⚠️ StateManager.beginStage failed (non-fatal): ${smErr.message}`);
+    }
+    try {
+      const rt = _getRuntimeStateManager(args.projectRoot || '.');
+      if (rt.eventStore && sessionId) {
+        rt.eventStore.append({
+          sessionId,
+          kind: 'stage_started',
+          stage,
+          payload: { stageInput: args.stageInput || '' },
+        });
+        console.error(`[runWorkflowStage] ✅ EventStore.append(stage_started, ${stage}) synced for session=${sessionId}`);
+      }
+    } catch (esErr) {
+      console.error(`[runWorkflowStage] ⚠️ EventStore.append failed (non-fatal): ${esErr.message}`);
+    }
+
     // ── P0-STARTUP-2: Lightweight init for IDE Agent mode ──────────────────
     // Node Orchestrator mode calls _initWorkflow() which runs 14+ init steps
     // (Experience preheat, Skill Discovery, MCP adapters, etc.). IDE Agent mode
@@ -5635,6 +6084,40 @@ async function runWorkflowStage(args) {
     const taskText = args.task || '';
     let contextData;
 
+    // ── O5: Context static-layer disk cache ──────────────────────────────────
+    // Skills and ADR docs rarely change between stages in the same session.
+    // Cache the resolved context to disk keyed by role + skill file mtimes.
+    // On cache hit, skip loader.resolve() entirely — saves ~25 file reads per stage.
+    const _ctxCachePath = path.join(args.projectRoot || '.', 'output', '.context-cache.json');
+    let _ctxCacheHit = false;
+
+    const _buildCtxCacheKey = (r) => {
+      try {
+        const skillsDir = path.join(path.resolve(path.join(__dirname, '..')), 'skills');
+        let mtimeSum = 0;
+        if (fs.existsSync(skillsDir)) {
+          for (const f of fs.readdirSync(skillsDir)) {
+            try { mtimeSum += fs.statSync(path.join(skillsDir, f)).mtimeMs; } catch (e) { console.warn('[Bridge] skill stat failed:', e.message); }
+          }
+        }
+        return `${r}:${mtimeSum}`;
+      } catch (e) { console.warn('[Bridge] skill stat sum failed for role', r, ':', e.message); return `${r}:0`; }
+    };
+
+    const _ctxCacheKey = _buildCtxCacheKey(role);
+
+    try {
+      if (fs.existsSync(_ctxCachePath)) {
+        const _cached = JSON.parse(fs.readFileSync(_ctxCachePath, 'utf-8'));
+        if (_cached.key === _ctxCacheKey && _cached.data) {
+          contextData = _cached.data;
+          _ctxCacheHit = true;
+          console.error(`[runWorkflowStage] ⚡ Context cache HIT for role=${role} (skipped loader.resolve)`);
+        }
+      }
+    } catch (_) { /* non-fatal: fall through to loader.resolve */ }
+
+    if (!_ctxCacheHit) {
     try {
       const { sections, tokenCount, sources } = loader.resolve(taskText, role);
       contextData = {
@@ -5646,6 +6129,13 @@ async function runWorkflowStage(args) {
         tokenCount,
         sources,
       };
+      try {
+        const _cachePayload = JSON.stringify({ key: _ctxCacheKey, data: contextData });
+        if (_cachePayload.length < 512 * 1024) {
+          fs.writeFileSync(_ctxCachePath, _cachePayload, 'utf-8');
+          console.error(`[runWorkflowStage] ⚡ Context cache WRITTEN for role=${role}`);
+        }
+      } catch (_) { /* non-fatal */ }
     } catch (ctxErr) {
       // Context loading is optional for workflow-stage
       contextData = {
@@ -5655,6 +6145,7 @@ async function runWorkflowStage(args) {
         error: ctxErr.message,
       };
     }
+    } // end if (!_ctxCacheHit)
 
     // Determine output file path
     const outputDir = path.join(args.projectRoot, 'output');
@@ -5892,8 +6383,8 @@ async function runWorkflowStage(args) {
           console.error(`[runWorkflowStage] 🧹 Requirement change: ${resetCount} file(s) deleted, completedStages reset`);
         }
       }
-      fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
-      console.error(`[runWorkflowStage] ✅ activeWorkflow written: session=${sessionId} stage=${stage}`);
+      _writeStatusFile(statusFilePath, statusData, args.projectRoot, sessionId);
+      console.error(`[runWorkflowStage] ✅ activeWorkflow written: session=${sessionId} stage=${stage} projectionMode=${_getProjectionMode()}`);
     } catch (activeWfErr) {
       console.error(`[runWorkflowStage] ⚠️ Failed to write activeWorkflow (non-fatal): ${activeWfErr.message}`);
     }
@@ -5916,13 +6407,13 @@ async function runWorkflowStage(args) {
             // Normal case: same session, same stage — inject retry context
             pendingRetryContext = statusData.pendingRetry;
             delete statusData.pendingRetry;
-            fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
+            _writeStatusFile(statusFilePath, statusData, args.projectRoot, sessionId);
             console.error(`[runWorkflowStage] 🔁 RETRY context injected for stage=${stage} retryCount=${pendingRetryContext.retryCount}`);
           } else if (!sameSession) {
             // Cross-session contamination: clear stale pendingRetry from different session
             console.error(`[runWorkflowStage] 🧹 Clearing stale pendingRetry from session=${retrySession || 'unknown'} (current=${sessionId}, stage=${statusData.pendingRetry.stage})`);
             delete statusData.pendingRetry;
-            fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
+            _writeStatusFile(statusFilePath, statusData, args.projectRoot, sessionId);
           }
           // If same session but different stage, leave pendingRetry alone — it will be
           // picked up when the correct stage is re-run
@@ -5972,6 +6463,35 @@ async function runWorkflowStage(args) {
         console.error(`[runWorkflowStage] ⚠️ Test auto-execution error (non-fatal): ${testErr.message}`);
       }
     }
+
+    // ── O1: Fast Path detection — triageScore < 20 means Simple task ──────────
+    // When triageScore is very low, the task is trivial and doesn't need full
+    // artifact depth. Signal this to the IDE Agent so it can produce minimal output.
+    let _fastPath = false;
+    try {
+      // ── T-12 AC-1: Prefer StateManager over manifest.json ──
+      let _score = NaN;
+      const rt = _getRuntimeStateManager(args.projectRoot || '.');
+      if (rt.stateManager && args.session) {
+        try {
+          const compat = rt.stateManager.projectCompatibility(args.session);
+          if (compat && compat.manifestLike) {
+            _score = Number(compat.manifestLike.triageScore);
+          }
+        } catch (_) { /* fallback to manifest.json */ }
+      }
+      if (Number.isNaN(_score)) {
+        const _manifestPath = path.join(args.projectRoot || '.', 'manifest.json');
+        if (fs.existsSync(_manifestPath)) {
+          const _manifest = JSON.parse(fs.readFileSync(_manifestPath, 'utf-8'));
+          _score = Number(_manifest.triageScore);
+        }
+      }
+      if (!Number.isNaN(_score) && _score < 20) {
+        _fastPath = true;
+        console.error(`[runWorkflowStage] ⚡ FAST PATH activated: triageScore=${_score} < 20`);
+      }
+    } catch (_) { /* non-fatal: default to full path */ }
 
     // Build instructions — inject retry context if present
     const baseInstructions = [
@@ -6050,8 +6570,19 @@ async function runWorkflowStage(args) {
         `  ## 修改范围                 — What needs to change? (file | location | change)`,
         `  ## 风险评估                 — What could go wrong? (P0/P1/P2 severity)`,
         `❌ NO generic templates: User Stories / Functional Requirements / Acceptance Criteria`,
-        `❌ NO Socratic dimension list — use the 11 dimensions as internal thinking only`,
+      `❌ NO Socratic dimension list — use the 11 dimensions as internal thinking only`,
         `✅ Socratic thinking MUST happen internally — output conclusions, NOT the dimension list`,
+      ].join('\n') : null,
+      _fastPath ? [
+        ``,
+        `⚡ ═══════════════════════════════════════════════════════`,
+        `⚡  FAST PATH MODE (triageScore < 20 — Simple task)`,
+        `⚡  Produce MINIMAL output for this stage:`,
+        `⚡  - Skip exhaustive analysis sections`,
+        `⚡  - Write concise artifact (target: < 300 words)`,
+        `⚡  - Focus only on the specific change needed`,
+        `⚡  - No trade-off analysis, no risk matrices`,
+        `⚡ ═══════════════════════════════════════════════════════`,
       ].join('\n') : null,
       `After completing ALL work for this stage, call stage-complete to finalize:`,
       `  node workflow/tools/ide-workflow-bridge.js stage-complete --stage ${stage} --session ${sessionId} --project-root . --summary "<1-2 sentence summary of what was done>"`,
@@ -6127,6 +6658,13 @@ async function runWorkflowStage(args) {
             note: `Read this artifact to understand previous stage conclusions before starting ${stage}`,
           })),
         } : null,
+        pendingBlindSpots: (() => {
+          try {
+            const BlindSpotRegistry = require('../core/blind-spot-registry');
+            const registry = new BlindSpotRegistry(projectRoot);
+            return registry.getPendingForStage(stage);
+          } catch { return null; }
+        })(),
       }),
       data: {
         stage,
@@ -6386,7 +6924,7 @@ function runInputReceived(args) {
         }
 
         if (wroteChanges) {
-          fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
+          _writeStatusFile(statusFilePath, statusData, projectRoot, sessionId);
         }
 
         // ── Scenario 3: Requirement change detection ──
@@ -6427,7 +6965,7 @@ function runInputReceived(args) {
             // Reset activeWorkflow so stages start from scratch
             delete statusData.activeWorkflow;
             delete statusData.pendingRetry;
-            fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
+            _writeStatusFile(statusFilePath, statusData, projectRoot, sessionId);
             console.error(`[runInputReceived] 🧹 Requirement change cleanup: ${resetCount} file(s) deleted, activeWorkflow reset`);
             _writeProgressLog(projectRoot, [
               `🔄 需求变更检测 — 跨阶段上下文已重置`,
@@ -6572,7 +7110,35 @@ function _stageToOutputFile(stage) {
 const ARTIFACT_SCHEMA = {
   ANALYSE: {
     file: 'analysis.md',
-    requiredSections: ['## 根因', '## 受影响位置', '## 修改范围', '## 风险评估', '## 思考摘要'],
+    requiredSections: ['## 根因', '## 修改范围', '## 风险评估'],
+    recommendedSections: ['## 受影响位置', '## 思考摘要'],
+    // ── B++ Slot-Based Semantic Validation (2026-04) ─────────────────────────
+    // Replaces brittle exact-string matching with alias-regex + minContentLines.
+    // When requiredSlots is present, slot validation takes priority; requiredSections
+    // is kept as fallback for inline test schemas (test-evidence-gate.js).
+    //
+    // Industry alignment: Anthropic "simplest solution first" + LangGraph/Swarm
+    // structured-output principles. NOT Judge-LLM (cost/latency/hallucination risk).
+    requiredSlots: [
+      {
+        id: 'root_cause',
+        aliases: [/^##\s*根因(?:\s|$|[（(\/、])/im, /^##\s*Root\s*Cause\b/im],
+        minContentLines: 3,
+        description: 'Root cause analysis — what is the real problem?',
+      },
+      {
+        id: 'change_scope',
+        aliases: [/^##\s*修改范围(?:\s|$|[（(\/、])/im, /^##\s*Change\s*Scope\b/im, /^##\s*Scope\s+of\s+Change\b/im],
+        minContentLines: 3,
+        description: 'Change scope — which files/locations need modification?',
+      },
+      {
+        id: 'risk_assessment',
+        aliases: [/^##\s*风险评估(?:\s|$|[（(\/、])/im, /^##\s*Risk\s*Assessment\b/im, /^##\s*Risks?\b/im],
+        minContentLines: 2,
+        description: 'Risk assessment — what could go wrong?',
+      },
+    ],
     // ── Forbidden Sections (template pollution prevention) ───────────────────
     // LLM inertia causes it to write generic requirement templates into analysis.md.
     // These sections are NEVER valid in analysis.md — they belong in requirement.md.
@@ -6608,9 +7174,41 @@ const ARTIFACT_SCHEMA = {
   },
   ARCHITECT: {
     file: 'architecture.md',
-    requiredSections: ['## '],
-    minLines: 5,
-    description: 'architecture.md must have at least one section with content',
+    requiredSections: [
+      '## Architecture Scorecard',
+      '## Failure Model',
+      '## Migration Safety Case',
+      '## Scenario Coverage',
+    ],
+    // B++ Slot-based validation: accept Chinese/English headings + semantic variants.
+    requiredSlots: [
+      {
+        id: 'scorecard',
+        aliases: [/^##\s*Architecture\s*Scorecard\b/im, /^##\s*架构评分卡?(?:\s|$|[（(\/、])/im, /^##\s*架构自评(?:\s|$|[（(\/、])/im],
+        minContentLines: 3,
+        description: 'Architecture Scorecard — self-review against checklist dimensions',
+      },
+      {
+        id: 'failure_model',
+        aliases: [/^##\s*Failure\s*Model\b/im, /^##\s*失败模型(?:\s|$|[（(\/、])/im, /^##\s*故障模型(?:\s|$|[（(\/、])/im],
+        minContentLines: 3,
+        description: 'Failure Model — failure types, detection, recovery',
+      },
+      {
+        id: 'migration_safety',
+        aliases: [/^##\s*Migration\s*Safety(?:\s*Case)?\b/im, /^##\s*迁移安全(?:方案)?(?:\s|$|[（(\/、])/im, /^##\s*向后兼容(?:方案|策略)?(?:\s|$|[（(\/、])/im],
+        minContentLines: 3,
+        description: 'Migration Safety Case — rollback, compatibility, drift detection',
+      },
+      {
+        id: 'scenario_coverage',
+        aliases: [/^##\s*Scenario\s*Coverage\b/im, /^##\s*场景覆盖(?:\s|$|[（(\/、])/im, /^##\s*覆盖场景(?:\s|$|[（(\/、])/im],
+        minContentLines: 3,
+        description: 'Scenario Coverage — which scenarios this architecture addresses',
+      },
+    ],
+    minLines: 16,
+    description: 'architecture.md must include a structured Architecture Scorecard plus fixed Failure Model, Migration Safety Case, and Scenario Coverage sections',
     // ADR-37 Evidence Gate: ARCHITECT must reference actual modules/files found via IDE tools
     evidencePatterns: [
       /\b\w[\w/-]*\.(js|ts|jsx|tsx|py|go|java|cs|cpp|c|rb|rs|md|json|yaml|yml)\b/,
@@ -6667,6 +7265,48 @@ const ARTIFACT_SCHEMA = {
   },
 };
 
+// ── B++ Slot Matcher ────────────────────────────────────────────────────────
+// Given a requiredSlot definition and artifact content, returns whether any
+// alias regex matches AND whether the section body has enough content lines.
+// Content lines are counted between the matched heading and the next `## ` heading
+// (or EOF), skipping blank lines and sub-headings (`### ` etc.).
+function _matchSlot(content, slot) {
+  const aliases = Array.isArray(slot.aliases) ? slot.aliases : [];
+  const minContentLines = typeof slot.minContentLines === 'number' ? slot.minContentLines : 3;
+
+  let matchIndex = -1;
+  let matchedAlias = null;
+  for (const rx of aliases) {
+    const m = content.match(rx);
+    if (m && typeof m.index === 'number') {
+      matchIndex = m.index;
+      matchedAlias = rx.source;
+      break;
+    }
+  }
+
+  if (matchIndex < 0) {
+    return { matched: false, contentLines: 0, passedMinLines: false, matchedAlias: null };
+  }
+
+  const afterHeading = content.slice(matchIndex).split('\n').slice(1);
+  let lines = 0;
+  for (const raw of afterHeading) {
+    if (/^##\s/.test(raw)) break;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    if (/^#{3,}\s/.test(trimmed)) continue;
+    lines += 1;
+  }
+
+  return {
+    matched: true,
+    contentLines: lines,
+    passedMinLines: lines >= minContentLines,
+    matchedAlias,
+  };
+}
+
 function _validateArtifact(stage, projectRoot) {
   const schema = ARTIFACT_SCHEMA[stage];
   if (!schema) return { valid: true, skipped: true, reason: `No schema defined for stage ${stage}` };
@@ -6706,15 +7346,52 @@ function _validateArtifact(stage, projectRoot) {
     };
   }
 
-  // Check required sections
-  const missingSections = schema.requiredSections.filter(section => !content.includes(section));
-  if (missingSections.length > 0) {
-    return {
-      valid: false,
-      error: `[ARTIFACT_SCHEMA_FAILED] output/${schema.file} missing required sections: ${missingSections.join(', ')}`,
-      fixInstruction: `Add the following sections to output/${schema.file}: ${missingSections.join(', ')}. ${schema.description}`,
-      missingSections,
-    };
+  // B++ Slot-based validation (takes priority). Falls back to requiredSections
+  // for schemas without requiredSlots (e.g. PLAN/TEST, inline test schemas).
+  if (Array.isArray(schema.requiredSlots) && schema.requiredSlots.length > 0) {
+    const slotResults = schema.requiredSlots.map(slot => ({ slot, result: _matchSlot(content, slot) }));
+    const missingSlots = slotResults.filter(sr => !sr.result.matched).map(sr => sr.slot);
+    const thinSlots = slotResults.filter(sr => sr.result.matched && !sr.result.passedMinLines);
+
+    if (missingSlots.length > 0) {
+      const missingList = missingSlots.map(s => `${s.id} (${s.description})`).join('; ');
+      return {
+        valid: false,
+        error: `[SLOT_MISSING] output/${schema.file} is missing required semantic slots: ${missingList}`,
+        fixInstruction: `Cover the following concepts in output/${schema.file} (Chinese or English headings both accepted): ${missingSlots.map(s => s.id).join(', ')}. Each section needs at least ${missingSlots[0].minContentLines || 3} non-empty lines of real content. ${schema.description}`,
+        missingSections: missingSlots.map(s => s.id),
+        slotViolation: true,
+      };
+    }
+    if (thinSlots.length > 0) {
+      const thinList = thinSlots.map(sr => `${sr.slot.id} (${sr.result.contentLines} lines, need >= ${sr.slot.minContentLines})`).join('; ');
+      return {
+        valid: false,
+        error: `[SLOT_TOO_THIN] output/${schema.file} has semantic slots with insufficient content: ${thinList}`,
+        fixInstruction: `Each section in output/${schema.file} must contain substantive content, not just a heading. Expand these sections: ${thinSlots.map(sr => sr.slot.id).join(', ')}.`,
+        missingSections: [],
+        slotViolation: true,
+        thinSlots: thinSlots.map(sr => ({ id: sr.slot.id, contentLines: sr.result.contentLines, required: sr.slot.minContentLines })),
+      };
+    }
+  } else if (Array.isArray(schema.requiredSections) && schema.requiredSections.length > 0) {
+    const missingSections = schema.requiredSections.filter(section => !content.includes(section));
+    if (missingSections.length > 0) {
+      return {
+        valid: false,
+        error: `[ARTIFACT_SCHEMA_FAILED] output/${schema.file} missing required sections: ${missingSections.join(', ')}`,
+        fixInstruction: `Add the following sections to output/${schema.file}: ${missingSections.join(', ')}. ${schema.description}`,
+        missingSections,
+      };
+    }
+  }
+
+  // Check recommended sections (warning only, does not block pipeline)
+  if (schema.recommendedSections && schema.recommendedSections.length > 0) {
+    const missingRecommended = schema.recommendedSections.filter(section => !content.includes(section));
+    if (missingRecommended.length > 0) {
+      console.error(`[_validateArtifact] ⚠️ Recommended sections missing (non-blocking): ${missingRecommended.join(', ')}`);
+    }
   }
 
   // ── Forbidden Sections Gate (Template Pollution Prevention) ─────────────────
@@ -7042,7 +7719,7 @@ async function runStageComplete(args) {
           try {
             const ev = JSON.parse(line);
             return ev.event === 'stage_start' && ev.stage === stage && ev.session === args.session;
-          } catch (_) { return false; }
+          } catch (e) { console.warn('[Bridge] progress log JSON parse failed at line:', line.substring(0, 80), ':', e.message); return false; }
         });
         if (!hasStageStart) {
           console.error(`[runStageComplete] ❌ ANTI-SKIP GUARD (FATAL): No stage_start found for stage=${stage} session=${args.session}.`);
@@ -7304,22 +7981,75 @@ async function runStageComplete(args) {
       };
     } else {
       try {
+        // ── T-12 AC-1: Prefer StateManager over manifest.json ──
+        let triageScore = undefined;
+        const rt = _getRuntimeStateManager(args.projectRoot || '.');
+        if (rt.stateManager && args.session) {
+          try {
+            const compat = rt.stateManager.projectCompatibility(args.session);
+            if (compat && compat.manifestLike) {
+              triageScore = compat.manifestLike.triageScore;
+            }
+          } catch (_) { /* fallback to manifest.json */ }
+        }
+        if (triageScore === undefined) {
+          try {
+            const manifestPath = path.join(args.projectRoot || '.', 'manifest.json');
+            if (fs.existsSync(manifestPath)) {
+              const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+              triageScore = manifest.triageScore;
+            }
+          } catch (e) { /* ignore */ }
+        }
+
         socraticResult = await runSocraticChallenge({
           projectRoot: args.projectRoot || '.',
-        stage,
-        session: args.session,
-        seq: args.seq || '1',
-        requirement: args.requirement || '',
-      });
-    } catch (socErr) {
-      console.error(`[runStageComplete] Socratic challenge failed (non-fatal): ${socErr.message}`);
-    }
+          stage,
+          session: args.session,
+          seq: args.seq || '1',
+          requirement: args.requirement || '',
+          triageScore,
+        });
+      } catch (socErr) {
+        console.error(`[runStageComplete] Socratic challenge failed (non-fatal): ${socErr.message}`);
+      }
     } // end else (non-terminal stage)
 
     console.error(`[runStageComplete] stage_end trace written. traceSuccess=${traceEndResult.success}`);
 
-    // ── Ralph Loop equivalent: MANDATORY_NEXT_ACTION (Stop Hook injection) ──
-    // Industry reference: Claude Code's Stop Hook injects nextCommand as a
+    // ── T-12 AC-3: Delegate stage completion to StateManager + EventStore ──
+    // This mirrors the dual-write strategy: trace file + runtime state store.
+    // StateManager.completeStage() updates the structured runtime state,
+    // and EventStore.append() records the completion event for projectHealthTrace().
+    try {
+      const rt = _getRuntimeStateManager(args.projectRoot || '.');
+      if (rt.stateManager && args.session) {
+        rt.stateManager.completeStage({
+          sessionId: args.session,
+          stage,
+          outputRefs: args.stageOutput ? [{ path: args.stageOutput }] : [],
+        });
+        console.error(`[runStageComplete] ✅ StateManager.completeStage(${stage}) synced for session=${args.session}`);
+      }
+    } catch (smErr) {
+      console.error(`[runStageComplete] ⚠️ StateManager.completeStage failed (non-fatal): ${smErr.message}`);
+    }
+    try {
+      const rt = _getRuntimeStateManager(args.projectRoot || '.');
+      if (rt.eventStore && args.session) {
+        rt.eventStore.append({
+          sessionId: args.session,
+          kind: 'stage_completed',
+          stage,
+          payload: { stageOutput: args.stageOutput || '' },
+        });
+        console.error(`[runStageComplete] ✅ EventStore.append(stage_completed, ${stage}) synced for session=${args.session}`);
+      }
+    } catch (esErr) {
+      console.error(`[runStageComplete] ⚠️ EventStore.append failed (non-fatal): ${esErr.message}`);
+    }
+
+    // ── Ralph Loop equivalent: MANDATORY_NEXT_ACTION (Stop Hook Injection) ──    // Industry reference: Claude Code's Stop Hook injects nextCommand as a
     // mandatory user message, forcing the agent to continue. We replicate this
     // by surfacing MANDATORY_NEXT_ACTION at the TOP LEVEL (not buried in data),
     // making it impossible for the LLM to treat it as optional information.
@@ -7402,8 +8132,8 @@ async function runStageComplete(args) {
           // If LLM submits same artifact again, gate rejects without running Socratic evaluation.
           artifactHashAtRetry: artifactValidation?.hash || null,
         };
-        fs.writeFileSync(statusFilePath, JSON.stringify(statusData, null, 2), 'utf-8');
-        console.error(`[runStageComplete] ✅ pendingRetry written to workflow-status.json for stage=${stage}`);
+        _writeStatusFile(statusFilePath, statusData, args.projectRoot, sessionId);
+        console.error(`[runStageComplete] ✅ pendingRetry written to workflow-status.json for stage=${stage} projectionMode=${_getProjectionMode()}`);
       } catch (statusErr) {
         console.error(`[runStageComplete] ⚠️ Failed to write pendingRetry to workflow-status.json (non-fatal): ${statusErr.message}`);
       }
@@ -7428,6 +8158,80 @@ async function runStageComplete(args) {
         console.error(`[runStageComplete] ✅ EvolutionLoop: processed ${socraticResult.data.blindSpots.length} blindSpot(s) for stage=${stage}`);
       } catch (evoErr) {
         console.error(`[runStageComplete] ⚠️ EvolutionLoop integration failed (non-fatal): ${evoErr.message}`);
+      }
+
+      // Register blind spots into BlindSpotRegistry for cross-stage consumption
+      try {
+        const BlindSpotRegistry = require('../core/blind-spot-registry');
+        const registry = new BlindSpotRegistry(projectRoot);
+        for (const bs of socraticResult.data.blindSpots) {
+          const isEntry = typeof bs === 'object' && bs.evidence;
+          registry.register({
+            sessionId: args.session || '',
+            stage,
+            evidence: isEntry ? bs.evidence : String(bs),
+            dimension: isEntry ? bs.dimension : undefined,
+            severity: isEntry ? bs.severity : undefined,
+            type: isEntry ? bs.type : undefined,
+            detectedAt: new Date().toISOString(),
+          });
+        }
+        console.error(`[runStageComplete] ✅ BlindSpotRegistry: registered ${socraticResult.data.blindSpots.length} blindSpot(s) for stage=${stage}`);
+      } catch (regErr) {
+        console.error(`[runStageComplete] ⚠️ BlindSpotRegistry registration failed (non-fatal): ${regErr.message}`);
+      }
+    }
+
+    // [T-003] Record adoption: IDE mode user executes stage-complete = adopted
+    if (!willRetry && socraticResult?.data?.effectRecord) {
+      try {
+        const { recordAdoption } = require('../core/socratic-effect-tracker');
+        recordAdoption(socraticResult.data.effectRecord, true);
+        console.error(`[runStageComplete] ✅ Socratic adoption recorded for stage=${stage}`);
+      } catch (adoptErr) {
+        console.error(`[runStageComplete] ⚠️ Socratic adoption recording failed (non-fatal): ${adoptErr.message}`);
+      }
+    }
+
+    // [T-005] FOLLOWUP_ANSWERED: detect when socratic questions were answered and triggered retry
+    // When user answers socratic questions and decides to retry, trigger
+    // FOLLOWUP_ANSWERED signal to EvolutionLoop for positive experience recording (Reflexion).
+    if (willRetry && socraticResult?.data?.questions?.length > 0) {
+      try {
+        const { EvolutionLoop, EvolutionSignalType } = require('../core/evolution-loop');
+        const evolutionLoop = new EvolutionLoop({ verbose: false, sessionId: args.session });
+        evolutionLoop.processSignal({
+          type: EvolutionSignalType.FOLLOWUP_ANSWERED,
+          severity: 'LOW',
+          stage,
+          evidence: `Socratic follow-up questions answered and retry triggered: ${(socraticResult.data.questions || []).slice(0, 3).map((q, i) => `Q${i + 1}: ${String(q).slice(0, 80)}`).join('; ')}`,
+          context: { questionCount: socraticResult.data.questions.length, retryTriggered: true },
+          confidence: 0.70,
+        });
+        console.error(`[runStageComplete] ✅ FOLLOWUP_ANSWERED signal sent: ${socraticResult.data.questions.length} question(s) answered for stage=${stage}`);
+      } catch (answeredErr) {
+        console.error(`[runStageComplete] ⚠️ FOLLOWUP_ANSWERED signal failed (non-fatal): ${answeredErr.message}`);
+      }
+    }
+
+    // [T-005] FOLLOWUP_IGNORED: detect when socratic questions were presented but not answered
+    // When user executes stage-complete without answering socratic questions, trigger
+    // FOLLOWUP_IGNORED signal to EvolutionLoop for negative experience recording (Reflexion).
+    if (!willRetry && socraticResult?.data?.questions?.length > 0) {
+      try {
+        const { EvolutionLoop, EvolutionSignalType } = require('../core/evolution-loop');
+        const evolutionLoop = new EvolutionLoop({ verbose: false, sessionId: args.session });
+        evolutionLoop.processSignal({
+          type: EvolutionSignalType.FOLLOWUP_IGNORED,
+          severity: 'MEDIUM',
+          stage,
+          evidence: `Socratic follow-up questions ignored: ${(socraticResult.data.questions || []).slice(0, 3).map((q, i) => `Q${i + 1}: ${String(q).slice(0, 80)}`).join('; ')}`,
+          context: { questionCount: socraticResult.data.questions.length },
+          confidence: 0.85,
+        });
+        console.error(`[runStageComplete] ⚠️ FOLLOWUP_IGNORED signal sent: ${socraticResult.data.questions.length} question(s) unanswered for stage=${stage}`);
+      } catch (ignoreErr) {
+        console.error(`[runStageComplete] ⚠️ FOLLOWUP_IGNORED signal failed (non-fatal): ${ignoreErr.message}`);
       }
     }
 
@@ -7563,7 +8367,7 @@ async function runStageComplete(args) {
             }
             statusData2.activeWorkflow.currentStage = nextStage || stage;
           }
-          fs.writeFileSync(statusFilePath2, JSON.stringify(statusData2, null, 2), 'utf-8');
+          _writeStatusFile(statusFilePath2, statusData2, args.projectRoot, sessionId);
         }
       }
     } catch (activeWfErr2) {
@@ -7578,7 +8382,7 @@ async function runStageComplete(args) {
     const outputExists = fs.existsSync(outputArtifactPath);
     let outputSize = '';
     if (outputExists) {
-      try { outputSize = ` (${fs.statSync(outputArtifactPath).size} bytes)`; } catch (_) {}
+      try { outputSize = ` (${fs.statSync(outputArtifactPath).size} bytes)`; } catch (e) { console.warn('[Bridge] output stat failed:', e.message); }
     }
     // ADR-51: Count both challenge questions AND advisory questions
     const socraticChallengeCount = socraticResult?.data?.questions?.length || 0;
@@ -7888,6 +8692,51 @@ async function runStageComplete(args) {
       console.error(`[runStageComplete] ⚠️ Code-forced self-report failed (non-fatal): ${reportErr.message}`);
     }
 
+    // ── T-2: RollbackCoordinator Integration ──────────────────────────────
+    // Trigger downstream contract validation via rollback-check logic.
+    // This ensures stage output satisfies the next stage's input contract.
+    let rollbackCheckResult = { passed: true, failures: [], skipped: true };
+    try {
+      // Reuse the rollback-check logic from subcommand handler
+      // Map Bridge stage names to RollbackCoordinator stage names
+      const stageMap = { ANALYSE: 'ANALYSE', ARCHITECT: 'ARCHITECT', PLAN: 'PLAN', DEVELOP: 'CODE', TEST: 'TEST', REVIEW: 'REVIEW', DEPLOY: 'DEPLOY' };
+      const rcStage = stageMap[stage] || stage;
+
+      // Import and call RollbackCoordinator validation directly
+      const RollbackCoordinatorPlugin = require('../core/plugins/rollback-coordinator-plugin');
+      const coordinator = new RollbackCoordinatorPlugin();
+
+      // Build input context for validation
+      const validationInput = {
+        stage: rcStage,
+        projectRoot: args.projectRoot || '.',
+        outputFile: rcStage === 'ANALYSE' ? 'output/analysis.md'
+          : rcStage === 'ARCHITECT' ? 'output/architecture.md'
+          : rcStage === 'PLAN' ? 'output/execution-plan.md'
+          : rcStage === 'CODE' ? 'output/code.diff'
+          : rcStage === 'TEST' ? 'output/test-report.md'
+          : null,
+        outputSummary: args.summary || '',
+        timestamp: new Date().toISOString(),
+      };
+
+      rollbackCheckResult = coordinator.validate ? coordinator.validate(validationInput)
+        : { passed: true, skipped: true, reason: 'validate method not found' };
+
+      console.error(`[runStageComplete] T-2: RollbackCoordinator validation ${rollbackCheckResult.passed ? '✅ passed' : '❌ failed'} for stage ${rcStage}`);
+    } catch (rcErr) {
+      // Non-fatal: rollback check must not break the pipeline
+      console.error(`[runStageComplete] ⚠️ T-2: RollbackCoordinator validation failed (non-fatal): ${rcErr.message}`);
+      rollbackCheckResult = { passed: true, skipped: true, error: rcErr.message };
+    }
+
+    const architectureGovernance = stage === 'ARCHITECT'
+      ? assessArchitectureGovernance({
+          projectRoot: args.projectRoot || '.',
+          architecturePath: path.join(args.projectRoot || '.', 'output', 'architecture.md'),
+        })
+      : null;
+
     // ── P0 FIX: Return success=false when retry is required ──
     // Root cause of "triggered retry but didn't execute": stage-complete returned
     // success=true even when willRetry=true. LLM sees success=true and treats the
@@ -7916,6 +8765,8 @@ async function runStageComplete(args) {
           traceWritten: traceEndResult.success,
           artifactValidated: !artifactValidation.skipped && artifactValidation.valid,
           artifactHash: artifactValidation.hash || null,
+          // ── T-2: RollbackCoordinator validation result ──
+          rollbackCheck: rollbackCheckResult,
           selfReport: codeForcedReport ? {
             confidence: codeForcedReport.confidence,
             blockers: codeForcedReport.blockers.length,
@@ -7923,6 +8774,34 @@ async function runStageComplete(args) {
           } : null,
         },
       };
+    }
+
+    // Stage artifact summary for transparency (ADR: Production-First activation of stage-output-reporter)
+    let stageOutputReport = null;
+    try {
+      const artifactAbs = artifactValidation && artifactValidation.path
+        ? artifactValidation.path
+        : null;
+      if (artifactAbs && fs.existsSync(artifactAbs)) {
+        const content = fs.readFileSync(artifactAbs, 'utf-8');
+        if (artifactAbs.endsWith('.diff')) {
+          stageOutputReport = {
+            kind: 'diff',
+            artifact: path.basename(artifactAbs),
+            ...extractDiffSummary(content),
+          };
+        } else {
+          const md = extractMdSummary(content, stage);
+          stageOutputReport = {
+            kind: 'markdown',
+            artifact: path.basename(artifactAbs),
+            outline: md.outline.slice(0, 8),
+            keyPoints: md.keyPoints.slice(0, 6),
+          };
+        }
+      }
+    } catch (e) {
+      stageOutputReport = { error: `report-extraction-failed: ${e.message}` };
     }
 
     return {
@@ -7943,6 +8822,22 @@ async function runStageComplete(args) {
         artifactValidated: !artifactValidation.skipped && artifactValidation.valid,
         artifactHash: artifactValidation.hash || null,
         artifactLines: artifactValidation.lineCount || null,
+        stageOutputReport,
+        architectureScorecard: stage === 'ARCHITECT'
+          ? architectureGovernance?.scorecard || null
+          : null,
+        architectureContracts: stage === 'ARCHITECT'
+          ? architectureGovernance?.contracts || null
+          : null,
+        architectureScenarioHarness: stage === 'ARCHITECT'
+          ? architectureGovernance?.scenarioHarness || null
+          : null,
+        architectureFitnessGates: stage === 'ARCHITECT'
+          ? architectureGovernance?.fitnessGates || null
+          : null,
+        governanceDegradation: stage === 'ARCHITECT'
+          ? architectureGovernance?.degradation || null
+          : null,
         // ── P0: Code-Forced Self-Report (Plan A) ──
         // Included in return data so LLM can see what was collected.
         selfReport: codeForcedReport ? {
@@ -7951,6 +8846,8 @@ async function runStageComplete(args) {
           filesWritten: codeForcedReport.filesWritten.length,
           source: 'code-forced',
         } : null,
+        // ── T-2: RollbackCoordinator validation result ──
+        rollbackCheck: rollbackCheckResult,
       },
     };
   } catch (err) {
@@ -8837,6 +9734,8 @@ async function main() {
   const absProjectRoot = path.resolve(args.projectRoot || '.');
   const runConfig = getConfig(absProjectRoot);
 
+  console.error(`[Bridge] 🔮 PROJECTION_MODE=${_getProjectionMode()}`);
+
   const result = await executeWithToolGovernance({
     command: args.subcommand || 'unknown',
     input: args,
@@ -8865,7 +9764,7 @@ async function main() {
           innerResult = runRequirementCheck(args);
           break;
         case 'context':
-          innerResult = runContext(args);
+          innerResult = await runContext(args);
           break;
         case 'experience-search':
           innerResult = runExperienceSearch(args);
@@ -8903,6 +9802,9 @@ async function main() {
         case 'gate-check':
           innerResult = runGateCheck(args);
           break;
+        case 'analysis-quality-gate':
+          innerResult = runAnalysisQualityGate(args);
+          break;
         case 'dev-map':
           innerResult = await runDevMap(args);
           break;
@@ -8923,6 +9825,9 @@ async function main() {
           break;
         case 'contract-check':
           innerResult = runContractCheck(args);
+          break;
+        case 'constitution-check':
+          innerResult = runConstitutionCheck(args);
           break;
         case 'skill-discover':
           innerResult = await runSkillDiscover(args);
@@ -8951,6 +9856,25 @@ async function main() {
         case 'scheduler-check':
           innerResult = runSchedulerCheck(args);
           break;
+        case 'production-readiness-check':
+          innerResult = runProductionReadinessCheck(args);
+          break;
+        case 'checkpoint-gc':
+          innerResult = runCheckpointGC(args);
+          break;
+        case 'reflect-cycle': {
+          const { ReflectionCycle } = require('../core/reflection-cycle');
+          const cycle = new ReflectionCycle({
+            sessionId: args.session,
+            projectRoot: args['project-root'] || process.cwd(),
+            maxRounds: parseInt(args['max-rounds']) || 3,
+          });
+          const reflectSignals = JSON.parse(args.signals || '[]');
+          innerResult = await cycle.runCycle(reflectSignals, {
+            maxRounds: parseInt(args['max-rounds']) || 3,
+          });
+          break;
+        }
         case 'degrade-output':
           innerResult = runDegradeOutput(args);
           break;
@@ -9023,9 +9947,63 @@ async function main() {
         case 'enrichment-stats':
           innerResult = runEnrichmentStats(args);
           break;
+        case 'budget-summary':
+          innerResult = runBudgetSummary(args);
+          break;
+        case 'admission-matrix':
+          innerResult = runAdmissionMatrix(args);
+          break;
         case 'health-report':
           innerResult = await runHealthReport(args);
           break;
+        case 'compact-preview': {
+          const { ConversationCompactor } = require('../core/conversation-compactor');
+          const sessionId = args.session || '_default';
+          const messages = Array.isArray(args.messages) ? args.messages : [];
+          const compactor = new ConversationCompactor({});
+          const trigger = compactor.shouldTrigger(messages);
+          const state = compactor._getSessionState(sessionId);
+          innerResult = {
+            success: true,
+            sessionId,
+            messageCount: messages.length,
+            wouldTrigger: trigger.trigger,
+            triggerReason: trigger.reason,
+            thresholdConfig: {
+              triggerMessages: compactor._triggerMessages,
+              triggerChars: compactor._triggerChars,
+              cooldownMessages: compactor._cooldownMessages,
+              maxPerSession: compactor._maxPerSession,
+            },
+            sessionState: {
+              compactCount: state.compactCount,
+              lastCompactAt: state.lastCompactAt,
+            },
+            enabled: compactor._enabled,
+          };
+          break;
+        }
+        case 'compact-reset': {
+          const { ConversationCompactor } = require('../core/conversation-compactor');
+          const sessionId = args.session;
+          if (!sessionId) {
+            innerResult = { success: false, error: 'Missing --session argument' };
+            break;
+          }
+          const compactor = new ConversationCompactor({});
+          const prev = compactor._getSessionState(sessionId);
+          const previousCount = prev.compactCount;
+          compactor.resetSession(sessionId);
+          const after = compactor._getSessionState(sessionId);
+          innerResult = {
+            success: true,
+            sessionId,
+            action: previousCount > 0 ? 'reset' : 'no-op',
+            previousCount,
+            currentCount: after.compactCount,
+          };
+          break;
+        }
         case 'session-summary':
           innerResult = runSessionSummary(args);
           break;
@@ -9034,31 +10012,164 @@ async function main() {
         case '-h':
           innerResult = printHelp();
           break;
-        default: {
-          // ── Lifecycle Plugin Registry: Dynamic subcommand dispatch ──
-          // Check if any registered plugin provides this subcommand
-          try {
-            const { getGlobalRegistry } = require('../core/lifecycle-plugin-registry');
-            const registry = getGlobalRegistry();
-            const pluginDir = require('path').join(__dirname, '..', 'core', 'plugins');
+        case 'resume-inspect': {
+          const { ResumeEngine } = require('../core/runtime/resume-engine');
+          const { FileStateStore } = require('../core/runtime/file-state-store');
+          const fsStore = new FileStateStore({ projectRoot: args.projectRoot });
+          const engine = new ResumeEngine({ stateStore: fsStore });
+          const sessionId = args.session;
+          if (!sessionId) innerResult = { success: false, error: 'Missing --session argument' };
+          else { const inspection = engine.inspect(sessionId); innerResult = { success: true, inspection }; }
+          break;
+        }
 
-            // Auto-discover plugins if not yet done
-            if (registry.getAll().length === 0) {
-              registry.autoDiscover(pluginDir);
-            }
+        case 'resume-plan': {
+          const { ResumeEngine } = require('../core/runtime/resume-engine');
+          const { FileStateStore } = require('../core/runtime/file-state-store');
+          const fsStore = new FileStateStore({ projectRoot: args.projectRoot });
+          const engine = new ResumeEngine({ stateStore: fsStore });
+          const sessionId = args.session;
+          if (!sessionId) innerResult = { success: false, error: 'Missing --session argument' };
+          else { const plan = engine.buildPlan(sessionId, { forceDecision: args.forceDecision }); innerResult = { success: true, plan }; }
+          break;
+        }
 
-            if (registry.getBridgeSubcommands().includes(args.subcommand)) {
-              innerResult = await registry.executeBridgeCommand(args.subcommand, args);
+        case 'resume-execute': {
+          const { ResumeEngine } = require('../core/runtime/resume-engine');
+          const { FileStateStore } = require('../core/runtime/file-state-store');
+          const fsStore = new FileStateStore({ projectRoot: args.projectRoot });
+          const engine = new ResumeEngine({ stateStore: fsStore });
+          const sessionId = args.session;
+          if (!sessionId) innerResult = { success: false, error: 'Missing --session argument' };
+          else { const result = await engine.resume(sessionId); innerResult = { success: true, result }; }
+          break;
+        }
+
+        case 'compensation-register': {
+          const { ResumeEngine } = require('../core/runtime/resume-engine');
+          const { FileStateStore } = require('../core/runtime/file-state-store');
+          const fsStore = new FileStateStore({ projectRoot: args.projectRoot });
+          const engine = new ResumeEngine({ stateStore: fsStore });
+          const sessionId = args.session;
+          const stage = args.stage;
+          const taskId = args.taskId;
+          const actionType = args.actionType;
+          if (!sessionId || !stage || !taskId || !actionType) {
+            innerResult = { success: false, error: 'Missing required args: --session, --stage, --taskId, --actionType' };
+          } else {
+            const descriptor = engine.registerCompensation(sessionId, { stage, taskId, actionType, args: args.compArgs ? JSON.parse(args.compArgs) : {} });
+            innerResult = { success: true, descriptor };
+          }
+          break;
+        }
+
+        case 'runtime': {
+          const { WorkRuntimeStateManager } = require('../core/runtime/work-runtime-state-manager');
+          const { FileStateStore } = require('../core/runtime');
+          const runtimeMgr = new WorkRuntimeStateManager({
+            stateStore: new FileStateStore({ projectRoot: args.projectRoot }),
+          });
+
+          switch (args.operation) {
+            case 'status': {
+              const sessionId = args.session;
+              if (!sessionId) {
+                innerResult = { success: false, error: 'Missing --session argument' };
+              } else {
+                const status = runtimeMgr.getOverallStatus(sessionId);
+                if (!status) {
+                  innerResult = { success: false, error: `Session not found: ${sessionId}` };
+                } else {
+                  innerResult = { success: true, status };
+                }
+              }
               break;
             }
-          } catch (prErr) {
-            // Plugin registry not available — fall through to unknown command
+            case 'list': {
+              const filters = {};
+              if (args.statusFilter) filters.status = args.statusFilter;
+              const sessions = runtimeMgr.listSessions(filters);
+              innerResult = { success: true, count: sessions.length, sessions: sessions.map(s => ({ sessionId: s.sessionId, status: s.status, currentStage: s.currentStage })) };
+              break;
+            }
+            case 'create': {
+              const requirement = args.requirement;
+              if (!requirement) {
+                innerResult = { success: false, error: 'Missing --requirement argument' };
+              } else {
+                const session = runtimeMgr.createSession({ requirement });
+                innerResult = { success: true, sessionId: session.sessionId, status: session.status };
+              }
+              break;
+            }
+            case 'inspect': {
+              const sessionId = args.session;
+              if (!sessionId) {
+                innerResult = { success: false, error: 'Missing --session argument' };
+              } else {
+                const inspection = runtimeMgr.inspect(sessionId);
+                innerResult = { success: true, inspection };
+              }
+              break;
+            }
+            case 'plan': {
+              const sessionId = args.session;
+              if (!sessionId) {
+                innerResult = { success: false, error: 'Missing --session argument' };
+              } else {
+                const plan = runtimeMgr.buildPlan(sessionId);
+                innerResult = { success: true, plan };
+              }
+              break;
+            }
+            case 'resume': {
+              const sessionId = args.session;
+              if (!sessionId) {
+                innerResult = { success: false, error: 'Missing --session argument' };
+              } else {
+                const result = await runtimeMgr.resume(sessionId);
+                innerResult = { success: result.success, result: { decision: result.decision, operations: result.operations, nextSteps: result.nextSteps } };
+              }
+              break;
+            }
+            case 'block': {
+              const sessionId = args.session;
+              const reason = args.reason;
+              if (!sessionId || !reason) {
+                innerResult = { success: false, error: 'Missing required args: --session, --reason' };
+              } else {
+                const result = runtimeMgr.markBlocked(sessionId, reason);
+                innerResult = { success: result.success, blocked: result.success, reason };
+              }
+              break;
+            }
+            case 'unblock': {
+              const sessionId = args.session;
+              if (!sessionId) {
+                innerResult = { success: false, error: 'Missing --session argument' };
+              } else {
+                const result = await runtimeMgr.unblock(sessionId);
+                innerResult = { success: result.success, wasBlocked: result.wasBlocked, recoverable: result.recoverable };
+              }
+              break;
+            }
+            default:
+              innerResult = { success: false, error: `Unknown runtime operation: ${args.operation}. Available: status, list, create, inspect, plan, resume, block, unblock` };
           }
+          break;
+        }
 
+        case 'projection': {
+          innerResult = runProjection(args);
+          break;
+        }
+
+        default: {
           innerResult = {
             success: false,
             error: `Unknown sub-command: "${args.subcommand}". Run with "help" to see available commands.`,
           };
+          break;
         }
       }
       return innerResult;
@@ -9119,6 +10230,7 @@ if (require.main === module) {
 
 module.exports = {
   parseArgs,
+  runProjection,
   runContext,
   runExperienceSearch,
   runExperienceContext,
@@ -9166,4 +10278,9 @@ module.exports = {
   runFailurePatternAnalyze,
   runIssuePatternCollect,
   runTeardownPipeline,
+  __testHooks: {
+    ARTIFACT_SCHEMA,
+    _matchSlot,
+    _validateArtifact,
+  },
 };

@@ -1,0 +1,19 @@
+{
+  "sessionId": "wf-1776526699127-cd27ae93",
+  "projectId": null,
+  "status": "created",
+  "currentStage": null,
+  "startedAt": "2026-04-18T15:38:19.127Z",
+  "updatedAt": "2026-04-18T15:38:19.129Z",
+  "version": 1,
+  "stages": {},
+  "tasks": {},
+  "recovery": {
+    "recoverable": false,
+    "pendingRetry": false,
+    "resumeState": null,
+    "blockedReason": null,
+    "pendingCompensationCount": 0,
+    "ledger": {}
+  }
+}
