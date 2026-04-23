@@ -13,7 +13,7 @@ const REQUIRE_SCAN_ROOTS = ['workflow'];
 const EXCLUDE_DIRS = new Set(['node_modules', '.git', 'output', '.workflow', '__tests__']);
 const GRACE_PERIOD_DAYS = 7;
 
-const EXEMPT_TAG_RE = /@production-exempt\s+(experimental|reserved|test-helper)(?:\s+[-—]\s+(.+?))?(?:\n|\*\/)/i;
+const EXEMPT_TAG_RE = /@production-exempt\s+(experimental|reserved|test-helper)(?:[^\r\n]*?)?\r?\n/i;
 const REQUIRE_RE = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 // D4: Capture dynamic script loads (Worker Threads, child_process.fork/spawn).
 // Matches literal paths inside new Worker('...'), fork('...'), spawn('node', ['...']).
@@ -37,6 +37,13 @@ const THIN_DELEGATOR_METHOD_RE = /async?\s*(execute|run|handle)\s*\([^)]*\)\s*\{
 // only require() + module.exports with zero function/class declarations.
 const FACADE_HEADER_RE = /Re-?export\s+Facade|ADR-33|mixin|aggregat\w+\s+export/i;
 
+// D10: ADR-33 sub-components (pure-function helpers, entity extractors, calculators
+// split from hub modules) cannot carry R2 observability themselves — the host is
+// the proper logging site. Detect modules that are only consumed by "trusted
+// hosts" (production-ready or weak-R3-only) as aggregation sub-components and
+// treat them as exempt. Scope is strict: must have at least one trusted host
+// caller; modules consumed only by other iso/failing modules stay in isolation.
+
 function scan(projectRoot, opts = {}) {
   const roots = opts.scanRoots || DEFAULT_SCAN_ROOTS;
   const now = Date.now();
@@ -52,6 +59,38 @@ function scan(projectRoot, opts = {}) {
   const requireIndex = buildRequireIndex(projectRoot);
   const dynamicLoadIndex = buildDynamicLoadIndex(projectRoot);
   const testImportIndex = buildTestImportIndex(projectRoot);
+
+  // D10: iterative two-pass scan. Pass 1 classifies every module without D10 so
+  // we know which callers are "trusted hosts" (prod-ready or weak-R3-only).
+  // Then we expand the trusted-host set iteratively: any module whose only
+  // "dark" property is R2+R3 but that is exclusively consumed by trusted hosts
+  // is promoted to exempt, and its existence extends the host set for its own
+  // downstream sub-components (e.g., socratic-challenger -> socratic-question-
+  // generator -> socratic-diversity-mixer). Iteration stops when no new module
+  // is promoted (fixed point).
+  const firstPassClassification = classifyFirstPass(modules, {
+    now, graceMs, requireIndex, dynamicLoadIndex, testImportIndex,
+  });
+  const trustedHosts = buildTrustedHostSet(firstPassClassification);
+  const aggregationIndex = new Map();
+  let changed = true;
+  let iter = 0;
+  while (changed && iter < 8) {
+    changed = false;
+    iter++;
+    const nextIndex = buildAggregationIndex(modules, trustedHosts);
+    for (const [childRel, hosts] of nextIndex.entries()) {
+      if (!aggregationIndex.has(childRel)) {
+        aggregationIndex.set(childRel, hosts);
+        // Promote the newly-exempt child to trusted host so its own sub-
+        // components can be reached in the next iteration.
+        if (!trustedHosts.has(childRel)) {
+          trustedHosts.add(childRel);
+          changed = true;
+        }
+      }
+    }
+  }
 
   const report = {
     generatedAt: new Date().toISOString(),
@@ -82,6 +121,21 @@ function scan(projectRoot, opts = {}) {
       report.exemptModules.push({
         module: mod.relPath,
         exemption: { tag: 'reserved', reason: 're-export facade (ADR-33 P0 decomposition, auto-detected)' },
+      });
+      continue;
+    }
+
+    // D10: aggregation sub-component — consumed only by trusted hosts that
+    // themselves satisfy R1+R2. Host observability covers the sub-component.
+    const aggregationHosts = aggregationIndex.get(mod.relPath);
+    if (aggregationHosts && aggregationHosts.length > 0) {
+      report.totals.exempt++;
+      report.exemptModules.push({
+        module: mod.relPath,
+        exemption: {
+          tag: 'reserved',
+          reason: `aggregation sub-component (hosts: ${aggregationHosts.slice(0, 3).join(', ')}${aggregationHosts.length > 3 ? '…' : ''})`,
+        },
       });
       continue;
     }
@@ -327,11 +381,100 @@ function isReExportFacade(content) {
   return requireCount >= 1;
 }
 
+// D10: first-pass classifier \u2014 same signals/rules as scan(), minus D10 itself.
+// Output: Map<relPath, { signals, isNew, isPureType, isFacade, isCliEntry,
+// isDynamicPlugin, isThinDelegator, hasTestConsumer }>. Used to identify which
+// modules are trusted hosts for the aggregation-subcomponent promotion.
+function classifyFirstPass(modules, ctx) {
+  const { now, graceMs, requireIndex, dynamicLoadIndex, testImportIndex } = ctx;
+  const result = new Map();
+  for (const mod of modules) {
+    const content = safeRead(mod.absPath);
+    const exemption = parseExemption(content);
+    if (exemption) { result.set(mod.relPath, { status: 'exempt' }); continue; }
+    if (isReExportFacade(content)) { result.set(mod.relPath, { status: 'exempt' }); continue; }
+    const ageMs = now - fileAge(mod.absPath);
+    const isNew = ageMs < graceMs;
+    const isPureType = isPureTypeModule(mod, content);
+    const isCliEntry = isCliEntryModule(content);
+    const isDynamicPlugin = isDynamicPluginModule(mod, content);
+    const isThinDelegator = isThinDelegatorModule(content);
+    const hasTestConsumer = hasIntegrationTest(mod, testImportIndex);
+    const failed = [];
+    if (!isCliEntry && !isDynamicPlugin && !isRequireReachable(mod, requireIndex) && !isDynamicallyLoaded(mod, dynamicLoadIndex)) failed.push('R1');
+    if (!isPureType && !isThinDelegator && !hasObservability(content)) failed.push('R2');
+    if (!hasTestConsumer) failed.push('R3');
+    let status;
+    if (failed.length === 0) status = 'prod-ready';
+    else if (isNew) status = 'pending';
+    else if (failed.length === 1) status = 'weak';
+    else if (hasTestConsumer && failed.includes('R1') && failed.length === 2) status = 'weak';
+    else status = 'isolation';
+    result.set(mod.relPath, { status, failed, hasTestConsumer });
+  }
+  return result;
+}
+
+// D10: a trusted host must pass R1+R2 (i.e., has reachability AND observability).
+// That means: production-ready, OR (weak|pending) with only R3 missing. pending
+// modules are included when their only failing signal is R3, because R1+R2 are
+// already satisfied and the R3 gap alone does not invalidate host status.
+// Exempt modules ARE included because their host responsibility is already
+// covered (facade modules or sub-components of a healthy aggregation chain).
+function buildTrustedHostSet(firstPassClassification) {
+  const trusted = new Set();
+  for (const [relPath, info] of firstPassClassification.entries()) {
+    if (info.status === 'prod-ready' || info.status === 'exempt') { trusted.add(relPath); continue; }
+    if ((info.status === 'weak' || info.status === 'pending') &&
+        Array.isArray(info.failed) && info.failed.length === 1 && info.failed[0] === 'R3') {
+      trusted.add(relPath);
+    }
+  }
+  return trusted;
+}
+
+// D10: build reverse index of aggregation-subcomponent => list of trusted hosts.
+// A module qualifies as aggregation sub-component if: (a) it has at least one
+// trusted host caller, AND (b) the module itself is NOT already prod-ready or
+// trusted (we only promote failing modules, never re-classify healthy ones).
+// The require-based resolution walks basename matches similar to
+// isRequireReachable(), but specifically targets non-test external callers.
+function buildAggregationIndex(modules, trustedHosts) {
+  const index = new Map();
+  if (trustedHosts.size === 0) return index;
+  const byBasename = new Map();
+  for (const mod of modules) byBasename.set(mod.moduleName, mod.relPath);
+  for (const hostRel of trustedHosts) {
+    const absHost = modules.find((m) => m.relPath === hostRel);
+    if (!absHost) continue;
+    const content = safeRead(absHost.absPath);
+    let m;
+    REQUIRE_RE.lastIndex = 0;
+    while ((m = REQUIRE_RE.exec(content)) !== null) {
+      const target = m[1];
+      if (!target.startsWith('.')) continue;
+      const resolvedName = path.basename(target, '.js');
+      const childRel = byBasename.get(resolvedName);
+      if (!childRel || childRel === hostRel) continue;
+      if (trustedHosts.has(childRel)) continue;
+      if (!index.has(childRel)) index.set(childRel, []);
+      if (!index.get(childRel).includes(hostRel)) index.get(childRel).push(hostRel);
+    }
+  }
+  return index;
+}
+
 function parseExemption(content) {
-  const head = content.slice(0, 500);
+  const head = content.slice(0, 1500);
   const m = head.match(EXEMPT_TAG_RE);
   if (!m) return null;
-  return { tag: m[1], reason: (m[2] || '').trim() };
+  const tag = m[1];
+  // Extract optional reason text on same line after tag, trimmed of
+  // leading separator chars (dash variants, colon, space) and trailing space.
+  const line = m[0];
+  const afterTag = line.slice(line.toLowerCase().indexOf(tag) + tag.length);
+  const reason = afterTag.replace(/^[\s\-–—:]+/, '').replace(/\r?\n$/, '').trim();
+  return { tag, reason };
 }
 
 function safeRead(abs) {

@@ -44,6 +44,18 @@ class StageContextStore {
     /** @type {Map<string, number>} stageName → last access timestamp (for LRU) */
     this._accessOrder = new Map();
 
+    // T-1 (G5-A+): Explicit scratchpad namespace separate from stage context.
+    // Agents use setScratch/getScratch to pass arbitrary k/v across stages without
+    // going through the stage-summary pipeline. Entries carry TTL + scope metadata.
+    /** @type {Map<string, ScratchEntry>} */
+    this._scratchpad = new Map();
+    /** @type {Map<string, number>} key → last access ts (LRU for scratchpad) */
+    this._scratchAccessOrder = new Map();
+    // Capacity derived from T-0 model capability when available; falls back
+    // to explicit opt. Medium tier (8K maxInject / 4) ≈ 2K scratchpad budget.
+    this._scratchMaxEntries    = opts.scratchMaxEntries    ?? 50;
+    this._scratchMaxTotalChars = opts.scratchMaxTotalChars ?? _resolveScratchBudget();
+
     // Auto-load persisted context on construction so workflow resumption
     // (e.g. after a crash mid-CODE stage) can see ANALYSE + ARCHITECT summaries.
     if (this._outputDir) {
@@ -53,10 +65,18 @@ class StageContextStore {
     // Flush pending debounced write on process exit. see CHANGELOG: P1-4/exit-handler
     if (this._outputDir) {
       this._exitHandler = () => {
-        if (!this._persistPending) return; // nothing pending, skip
+        if (!this._persistPending && this._scratchpad.size === 0) return;
         try {
           const data = {};
           for (const [k, v] of this._store) data[k] = v;
+          if (this._requirementFingerprint) {
+            data._meta = { requirementFingerprint: this._requirementFingerprint };
+          }
+          if (this._scratchpad.size > 0) {
+            const scratchOut = {};
+            for (const [k, v] of this._scratchpad) scratchOut[k] = v;
+            data._scratchpad = scratchOut;
+          }
           const outPath = require('path').join(this._outputDir, 'stage-context.json');
           const tmpPath = outPath + '.tmp';
           require('fs').writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
@@ -64,6 +84,37 @@ class StageContextStore {
         } catch { /* best-effort – cannot throw in exit handler */ }
       };
       process.on('exit', this._exitHandler);
+    }
+  }
+
+  /**
+   * Forces an immediate synchronous flush of all in-memory state to disk.
+   * Needed for short-lived CLI invocations (bridge commands) that exit before
+   * the debounced setImmediate write fires. Safe to call repeatedly; no-op if
+   * there's nothing to persist and no outputDir configured.
+   */
+  flush() {
+    if (!this._outputDir) return false;
+    try {
+      const data = {};
+      for (const [k, v] of this._store) data[k] = v;
+      if (this._requirementFingerprint) {
+        data._meta = { requirementFingerprint: this._requirementFingerprint };
+      }
+      if (this._scratchpad.size > 0) {
+        const scratchOut = {};
+        for (const [k, v] of this._scratchpad) scratchOut[k] = v;
+        data._scratchpad = scratchOut;
+      }
+      const outPath = path.join(this._outputDir, 'stage-context.json');
+      const tmpPath = outPath + '.tmp';
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+      fs.renameSync(tmpPath, outPath);
+      this._persistPending = false;
+      return true;
+    } catch (err) {
+      if (this._verbose) console.error(`[StageContextStore] flush failed: ${err.message}`);
+      return false;
     }
   }
 
@@ -470,6 +521,191 @@ class StageContextStore {
     };
   }
 
+  // ─── Scratchpad API (T-1 / G5-A+) ─────────────────────────────────────────
+
+  /**
+   * Stores an explicit scratchpad entry addressable by key (not by stage name).
+   * Scope determines lifetime: 'session' (default) survives until workflow end;
+   * 'nextStage' is readable only by the immediately-following stage then auto-purged;
+   * a number (ms since epoch) is an absolute expiry timestamp.
+   *
+   * @param {string} key
+   * @param {string|object} value - string or JSON-serialisable object
+   * @param {object} [opts]
+   * @param {('session'|'nextStage')} [opts.scope='session']
+   * @param {number} [opts.ttlMs] - explicit TTL; overrides scope if provided
+   * @param {string} [opts.fromStage] - origin stage name, for trace/audit
+   * @param {string[]} [opts.tags] - optional labels for filtering
+   * @returns {boolean} true if stored, false if rejected (oversize or bad key)
+   */
+  setScratch(key, value, opts = {}) {
+    if (!key || typeof key !== 'string' || key.length > 120) return false;
+    const serialised = typeof value === 'string' ? value : _safeJson(value);
+    if (serialised == null) return false;
+    if (serialised.length > 8000) return false; // single-entry hard cap
+
+    const scope = opts.scope === 'nextStage' ? 'nextStage' : 'session';
+    const now = Date.now();
+    const expiresAt = typeof opts.ttlMs === 'number' && opts.ttlMs > 0
+      ? now + opts.ttlMs
+      : (scope === 'nextStage' ? null : null);
+
+    const entry = {
+      key,
+      value: serialised,
+      valueKind: typeof value === 'string' ? 'string' : 'json',
+      scope,
+      expiresAt,
+      fromStage: opts.fromStage || null,
+      tags: Array.isArray(opts.tags) ? opts.tags.filter(t => typeof t === 'string').slice(0, 8) : [],
+      createdAt: now,
+    };
+    this._scratchpad.set(key, entry);
+    this._scratchAccessOrder.set(key, now);
+    this._evictScratchIfNeeded();
+
+    if (this._verbose) {
+      console.error(`[StageContextStore] scratch SET ${key} scope=${scope} size=${serialised.length}`);
+    }
+    if (this._outputDir) this._persist();
+    return true;
+  }
+
+  /**
+   * Reads a scratchpad entry. Returns null if missing or expired.
+   * For scope='nextStage' entries, caller must pass currentStage so the store can
+   * enforce the one-stage visibility window (entry visible only while currentStage
+   * != fromStage; auto-purged after first cross-stage read).
+   *
+   * @param {string} key
+   * @param {object} [opts]
+   * @param {string} [opts.currentStage] - needed for nextStage-scoped entries
+   * @returns {{value:any,scope:string,fromStage:string|null,tags:string[]}|null}
+   */
+  getScratch(key, opts = {}) {
+    const entry = this._scratchpad.get(key);
+    if (!entry) return null;
+
+    if (entry.expiresAt && Date.now() > entry.expiresAt) {
+      this._scratchpad.delete(key);
+      this._scratchAccessOrder.delete(key);
+      return null;
+    }
+
+    if (entry.scope === 'nextStage' && opts.currentStage && entry.fromStage
+        && opts.currentStage !== entry.fromStage) {
+      // first cross-stage read: consume + purge
+      const consumed = this._materialiseScratch(entry);
+      this._scratchpad.delete(key);
+      this._scratchAccessOrder.delete(key);
+      if (this._outputDir) this._persist();
+      return consumed;
+    }
+
+    this._scratchAccessOrder.set(key, Date.now());
+    return this._materialiseScratch(entry);
+  }
+
+  /**
+   * Deletes a scratchpad entry. Returns true if it existed.
+   */
+  deleteScratch(key) {
+    const existed = this._scratchpad.has(key);
+    if (existed) {
+      this._scratchpad.delete(key);
+      this._scratchAccessOrder.delete(key);
+      if (this._outputDir) this._persist();
+    }
+    return existed;
+  }
+
+  /**
+   * Lists scratchpad entries. Expired items are purged lazily during iteration.
+   *
+   * @param {object} [opts]
+   * @param {string} [opts.scope] - filter by scope
+   * @param {string} [opts.tag]   - filter by tag membership
+   * @param {string} [opts.fromStage]
+   * @returns {Array<{key:string,scope:string,fromStage:string|null,tags:string[],size:number,createdAt:number}>}
+   */
+  listScratch(opts = {}) {
+    const now = Date.now();
+    const out = [];
+    for (const [k, e] of this._scratchpad) {
+      if (e.expiresAt && now > e.expiresAt) {
+        this._scratchpad.delete(k);
+        this._scratchAccessOrder.delete(k);
+        continue;
+      }
+      if (opts.scope && e.scope !== opts.scope) continue;
+      if (opts.fromStage && e.fromStage !== opts.fromStage) continue;
+      if (opts.tag && !(e.tags || []).includes(opts.tag)) continue;
+      out.push({
+        key: k,
+        scope: e.scope,
+        fromStage: e.fromStage,
+        tags: e.tags || [],
+        size: (e.value || '').length,
+        createdAt: e.createdAt,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Returns scratchpad totals for diagnostics / trace events.
+   */
+  getScratchStats() {
+    let totalChars = 0;
+    for (const [, e] of this._scratchpad) totalChars += (e.value || '').length;
+    return {
+      entries: this._scratchpad.size,
+      totalChars,
+      maxEntries: this._scratchMaxEntries,
+      maxTotalChars: this._scratchMaxTotalChars,
+    };
+  }
+
+  _materialiseScratch(entry) {
+    let value = entry.value;
+    if (entry.valueKind === 'json') {
+      try { value = JSON.parse(entry.value); } catch { /* fall through: expose raw string */ }
+    }
+    return {
+      value,
+      scope: entry.scope,
+      fromStage: entry.fromStage,
+      tags: entry.tags || [],
+      createdAt: entry.createdAt,
+    };
+  }
+
+  _evictScratchIfNeeded() {
+    const getLru = () => [...this._scratchAccessOrder.entries()]
+      .sort((a, b) => a[1] - b[1])
+      .map(([k]) => k);
+
+    while (this._scratchpad.size > this._scratchMaxEntries) {
+      const victim = getLru()[0];
+      if (!victim) break;
+      this._scratchpad.delete(victim);
+      this._scratchAccessOrder.delete(victim);
+    }
+
+    while (this._getScratchTotalChars() > this._scratchMaxTotalChars && this._scratchpad.size > 1) {
+      const victim = getLru()[0];
+      if (!victim) break;
+      this._scratchpad.delete(victim);
+      this._scratchAccessOrder.delete(victim);
+    }
+  }
+
+  _getScratchTotalChars() {
+    let total = 0;
+    for (const [, e] of this._scratchpad) total += (e.value || '').length;
+    return total;
+  }
+
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   // Scan full document for heading+content pairs; pick most informative paragraphs. see CHANGELOG: Improvement #3, P1-1, P1-2, P0-NEW-1
@@ -656,6 +892,12 @@ class StageContextStore {
         if (this._requirementFingerprint) {
           data._meta = { requirementFingerprint: this._requirementFingerprint };
         }
+        // T-1: persist scratchpad alongside stage data under a reserved key.
+        if (this._scratchpad.size > 0) {
+          const scratchOut = {};
+          for (const [k, v] of this._scratchpad) scratchOut[k] = v;
+          data._scratchpad = scratchOut;
+        }
         const outPath = path.join(this._outputDir, 'stage-context.json');
         // Atomic write: write to .tmp first, then rename over the target.
         // This prevents a corrupt stage-context.json if the process crashes mid-write.
@@ -721,10 +963,19 @@ class StageContextStore {
       // P1-4 / P2-4 fix: check the age of the persisted data.
       // Use the most recent timestamp across all stored entries as the "file age".
       // If ALL entries are older than MAX_RESUME_AGE_MS, the file is stale.
+      // T-1 fix: scratchpad entries have createdAt (ms) — include them so
+      // pure-scratchpad files (no stage summaries yet) aren't incorrectly treated
+      // as "infinitely old" and deleted.
       const now = Date.now();
-      const timestamps = Object.values(data)
-        .map(entry => entry.timestamp ? new Date(entry.timestamp).getTime() : 0)
+      const timestamps = Object.entries(data)
+        .filter(([k]) => k !== '_meta' && k !== '_scratchpad')
+        .map(([, entry]) => entry && entry.timestamp ? new Date(entry.timestamp).getTime() : 0)
         .filter(t => t > 0);
+      if (data._scratchpad && typeof data._scratchpad === 'object') {
+        for (const e of Object.values(data._scratchpad)) {
+          if (e && typeof e.createdAt === 'number' && e.createdAt > 0) timestamps.push(e.createdAt);
+        }
+      }
       const mostRecentTs = timestamps.length > 0 ? Math.max(...timestamps) : 0;
       const ageMs = mostRecentTs > 0 ? now - mostRecentTs : Infinity;
 
@@ -742,9 +993,22 @@ class StageContextStore {
 
       let loaded = 0;
       for (const [stageName, entry] of Object.entries(data)) {
+        if (stageName === '_meta' || stageName === '_scratchpad') continue;
         if (!this._store.has(stageName)) {
           this._store.set(stageName, entry);
           loaded++;
+        }
+      }
+      // T-1: restore scratchpad entries; skip already-expired ones.
+      if (data._scratchpad && typeof data._scratchpad === 'object') {
+        const now = Date.now();
+        for (const [k, e] of Object.entries(data._scratchpad)) {
+          if (!e || typeof e !== 'object') continue;
+          if (e.expiresAt && now > e.expiresAt) continue;
+          if (!this._scratchpad.has(k)) {
+            this._scratchpad.set(k, e);
+            this._scratchAccessOrder.set(k, now);
+          }
         }
       }
       if (loaded > 0 && this._verbose) {
@@ -802,6 +1066,36 @@ function requirementFingerprint(text) {
 // ─── Module-level helpers (Defect D fix) ──────────────────────────────────────
 
 const { WorkflowState, STATE_ORDER } = require('./types');
+
+/**
+ * T-1: derives scratchpad total-char budget from T-0 shared decision signals.
+ * Medium tier (default) → 2000 chars; large → 6000 chars; small → 700 chars.
+ * Falls back to 2000 if the decision-signals module is unavailable, keeping
+ * this helper safe during bootstrap/circular-require edge cases.
+ */
+function _resolveScratchBudget() {
+  try {
+    const { getModelCapability } = require('./context-decision-signals');
+    const cap = getModelCapability();
+    if (cap && typeof cap.maxInject === 'number' && cap.maxInject > 0) {
+      return Math.max(700, Math.floor(cap.maxInject / 4));
+    }
+  } catch { /* decision signals not yet available */ }
+  return 2000;
+}
+
+/**
+ * T-1: safe JSON serialisation that returns null instead of throwing on circular
+ * references or non-serialisable values. Keeps setScratch robust against caller bugs.
+ */
+function _safeJson(value) {
+  try {
+    const out = JSON.stringify(value);
+    return typeof out === 'string' ? out : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Defect D fix: Computes proximity between two stages in the pipeline.

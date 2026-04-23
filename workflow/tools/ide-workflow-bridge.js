@@ -547,6 +547,24 @@ function parseArgs(argv) {
       case '--fail-threshold':
         args.failThreshold = argv[++i] || '50';
         break;
+      case '--key':
+        args.key = argv[++i] || '';
+        break;
+      case '--value':
+        args.value = argv[++i] || '';
+        break;
+      case '--scope':
+        args.scope = argv[++i] || 'session';
+        break;
+      case '--ttl-ms':
+        args.ttlMs = argv[++i] || '';
+        break;
+      case '--from-stage':
+        args.fromStage = argv[++i] || '';
+        break;
+      case '--current-stage':
+        args.currentStage = argv[++i] || '';
+        break;
     }
   }
 
@@ -6865,6 +6883,127 @@ function _generatePreStageQuestions(stage, requirement) {
  *   --session      : session ID
  *   --project-root : project root path
  */
+// T-3 scratchpad / decision-signals commands.
+// StageContextStore's scratchpad namespace persists to <projectRoot>/output/stage-context.json,
+// so CLI invocations across processes share state with in-process workflow runs.
+function _openScratchStore(projectRoot) {
+  const { StageContextStore } = require('../core/stage-context-store');
+  const outputDir = path.join(projectRoot, 'output');
+  try { fs.mkdirSync(outputDir, { recursive: true }); } catch { /* exists */ }
+  return new StageContextStore({ outputDir });
+}
+
+function runScratchSet(args) {
+  const projectRoot = args.projectRoot || '.';
+  const key = args.key;
+  if (!key) {
+    return { success: false, error: 'Missing required argument: --key' };
+  }
+  const rawValue = args.value != null ? args.value : '';
+  let value = rawValue;
+  if (typeof rawValue === 'string' && rawValue.length > 0
+      && (rawValue.startsWith('{') || rawValue.startsWith('['))) {
+    try { value = JSON.parse(rawValue); } catch { /* treat as raw string */ }
+  }
+  const scope = args.scope === 'nextStage' ? 'nextStage' : 'session';
+  const ttlMs = args.ttlMs ? parseInt(args.ttlMs, 10) : undefined;
+  const tags = args.tags ? String(args.tags).split(',').map(s => s.trim()).filter(Boolean) : [];
+  const opts = { scope, fromStage: args.fromStage || null, tags };
+  if (Number.isFinite(ttlMs) && ttlMs > 0) opts.ttlMs = ttlMs;
+
+  const store = _openScratchStore(projectRoot);
+  const ok = store.setScratch(key, value, opts);
+  if (!ok) {
+    return {
+      success: false,
+      error: 'setScratch rejected entry (check key length ≤120, value size ≤8KB, serialisable)',
+    };
+  }
+  store.flush();
+  return {
+    success: true,
+    key,
+    scope,
+    stored: true,
+    stats: store.getScratchStats(),
+  };
+}
+
+function runScratchGet(args) {
+  const projectRoot = args.projectRoot || '.';
+  const key = args.key;
+  if (!key) {
+    return { success: false, error: 'Missing required argument: --key' };
+  }
+  const store = _openScratchStore(projectRoot);
+  const entry = store.getScratch(key, { currentStage: args.currentStage || undefined });
+  if (!entry) {
+    return { success: true, found: false, key };
+  }
+  store.flush(); // nextStage consumes on cross-stage read → must persist purge
+  return {
+    success: true,
+    found: true,
+    key,
+    value: entry.value,
+    scope: entry.scope,
+    fromStage: entry.fromStage,
+    tags: entry.tags,
+    createdAt: entry.createdAt,
+  };
+}
+
+function runScratchList(args) {
+  const projectRoot = args.projectRoot || '.';
+  const store = _openScratchStore(projectRoot);
+  const filter = {};
+  if (args.scope && (args.scope === 'session' || args.scope === 'nextStage')) {
+    filter.scope = args.scope;
+  }
+  if (args.fromStage) filter.fromStage = args.fromStage;
+  if (args.tags) {
+    const first = String(args.tags).split(',').map(s => s.trim()).filter(Boolean)[0];
+    if (first) filter.tag = first;
+  }
+  const entries = store.listScratch(filter);
+  return {
+    success: true,
+    count: entries.length,
+    entries,
+    stats: store.getScratchStats(),
+  };
+}
+
+function runScratchDelete(args) {
+  const projectRoot = args.projectRoot || '.';
+  const key = args.key;
+  if (!key) {
+    return { success: false, error: 'Missing required argument: --key' };
+  }
+  const store = _openScratchStore(projectRoot);
+  const existed = store.deleteScratch(key);
+  store.flush();
+  return { success: true, key, existed };
+}
+
+function runDecisionSignals(args) {
+  const { getModelCapability, resolveInjectBudget, getStageSignal, getTaskImportance } =
+    require('../core/context-decision-signals');
+  const stageSignal = args.stage ? getStageSignal(args.stage) : null;
+  const importance = args.score ? getTaskImportance({ score: parseInt(args.score, 10) || 0 }) : null;
+  const budget = resolveInjectBudget({
+    stage: args.stage || undefined,
+    score: args.score ? parseInt(args.score, 10) : undefined,
+  });
+  return {
+    success: true,
+    capability: getModelCapability(),
+    stageSignal,
+    taskImportance: importance,
+    resolvedBudget: budget,
+  };
+}
+
 function runInputReceived(args) {
   try {
     const userInput = args.userInput || args.requirement || '';
@@ -10163,6 +10302,26 @@ async function main() {
           innerResult = runProjection(args);
           break;
         }
+
+        case 'scratch-set':
+          innerResult = runScratchSet(args);
+          break;
+
+        case 'scratch-get':
+          innerResult = runScratchGet(args);
+          break;
+
+        case 'scratch-list':
+          innerResult = runScratchList(args);
+          break;
+
+        case 'scratch-delete':
+          innerResult = runScratchDelete(args);
+          break;
+
+        case 'decision-signals':
+          innerResult = runDecisionSignals(args);
+          break;
 
         default: {
           innerResult = {
