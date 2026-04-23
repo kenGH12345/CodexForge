@@ -38,6 +38,113 @@ const {
   computeExperienceSimilarity,
 } = require('./experience-query-similarity');
 
+const { SemanticCompressor } = require('./semantic-compressor');
+
+const { getLayerForCategory } = require('./experience-types');
+
+// T-4: Layer-aware freshness. Different knowledge layers age at different rates:
+// PLATFORM (frameworks/APIs) = 180d, DOMAIN (business rules) = 60d, PRACTICE (pitfalls) = 14d.
+// Unknown layers default to DOMAIN's 60d (matches the previous flat HALF_LIFE_DAYS).
+const DEFAULT_HALF_LIFE_MAP = Object.freeze({
+  platform: 180,
+  domain:   60,
+  practice: 14,
+});
+
+// Hit-recency boost: a recent hit on an experience suggests it is still useful,
+// so temporarily raise its ranking. Decays over 30 days.
+const HIT_RECENCY_HALF_LIFE_DAYS = 30;
+const HIT_RECENCY_MAX_BOOST = 1.4;
+
+// Hit-count boost: dampened by log to prevent runaway dominance by popular entries.
+const HIT_COUNT_DAMPENING_FACTOR = 0.15;
+
+/**
+ * Pure function: compute a layer-aware freshness score for an experience.
+ *
+ * Formula:
+ *   decay         = 0.5 ^ (daysSinceActivity / halfLife(layer))
+ *   recencyBoost  = 1 + HIT_RECENCY_MAX_BOOST * 0.5^(daysSinceHit / HIT_RECENCY_HALF_LIFE_DAYS)
+ *   countBoost    = 1 + log2(1 + hitCount) * HIT_COUNT_DAMPENING_FACTOR
+ *   freshness     = decay * recencyBoost * countBoost
+ *
+ * If any input is malformed, returns 1.0 (neutral) — never throws, never returns NaN/Infinity.
+ *
+ * @param {object} exp        Experience record (needs category, updatedAt or createdAt; optional lastHitAt, hitCount)
+ * @param {object} [opts]
+ * @param {number} [opts.nowMs]      Current timestamp in ms (injected for testability)
+ * @param {object} [opts.halfLifeMap] Override default half-life map (testing/config)
+ * @returns {number} freshness score in [0, ~3.24]
+ */
+function calculateFreshnessScore(exp, opts = {}) {
+  if (!exp || typeof exp !== 'object') return 1.0;
+  const nowMs = typeof opts.nowMs === 'number' ? opts.nowMs : Date.now();
+  const halfLifeMap = opts.halfLifeMap || DEFAULT_HALF_LIFE_MAP;
+
+  const activityRaw = exp.updatedAt || exp.createdAt;
+  const activityTs = activityRaw ? new Date(activityRaw).getTime() : NaN;
+  if (!Number.isFinite(activityTs)) return 1.0;
+
+  const layer = getLayerForCategory(exp.category);
+  const halfLife = halfLifeMap[layer] || halfLifeMap.domain || 60;
+
+  const daysSinceActivity = Math.max(0, (nowMs - activityTs) / 86400_000);
+  const decay = Math.pow(0.5, daysSinceActivity / halfLife);
+
+  let recencyBoost = 1;
+  const lastHitRaw = exp.lastHitAt;
+  if (lastHitRaw) {
+    const lastHitTs = new Date(lastHitRaw).getTime();
+    if (Number.isFinite(lastHitTs)) {
+      const daysSinceHit = Math.max(0, (nowMs - lastHitTs) / 86400_000);
+      recencyBoost = 1 + HIT_RECENCY_MAX_BOOST * Math.pow(0.5, daysSinceHit / HIT_RECENCY_HALF_LIFE_DAYS);
+    }
+  }
+
+  const hitCount = Number.isFinite(exp.hitCount) ? exp.hitCount : 0;
+  const countBoost = 1 + Math.log2(1 + Math.max(0, hitCount)) * HIT_COUNT_DAMPENING_FACTOR;
+
+  const result = decay * recencyBoost * countBoost;
+  return Number.isFinite(result) ? result : 1.0;
+}
+
+// Lazy SemanticCompressor for experience context block compression (P1-3).
+// Mirrors enrichment-budget-guard.js lazy-singleton pattern.
+let _expCompressorInstance = null;
+let _expCompressorCheapLlm = null;
+
+function _getExpCompressor() {
+  if (!_expCompressorInstance) {
+    _expCompressorInstance = new SemanticCompressor({ targetRatio: 0.6 });
+    if (_expCompressorCheapLlm) {
+      _expCompressorInstance.setCheapLlmCall(_expCompressorCheapLlm);
+    }
+  }
+  return _expCompressorInstance;
+}
+
+function setExperienceCompressorCheapLlm(cheapLlmCall) {
+  _expCompressorCheapLlm = cheapLlmCall;
+  _expCompressorInstance = null;
+}
+
+async function _compressExperienceBlock(raw, maxChars) {
+  if (process.env.EXPERIENCE_COMPRESS_ENABLED === 'false') {
+    return raw.slice(0, maxChars) + '\n\n_... (experience context truncated to stay within token budget)_';
+  }
+  try {
+    const compressor = _getExpCompressor();
+    const result = await compressor.compress(raw, { contentType: 'text', targetRatio: 0.6 });
+    if (result && result.saved > 100 && result.ratio < 0.85) {
+      console.error(`[ExperienceQuery] 🗜️  compressed: ${raw.length}→${result.content.length} chars (ratio=${result.ratio.toFixed(2)}, strategy=${result.strategy})`);
+      return result.content + `\n\n_[compressed via ${result.strategy}, saved ${result.saved} chars]_`;
+    }
+  } catch (err) {
+    console.error(`[ExperienceQuery] ⚠️  compression failed (non-fatal): ${err.message}`);
+  }
+  return raw.slice(0, maxChars) + '\n\n_... (experience context truncated to stay within token budget)_';
+}
+
 // ─── ExperienceQuery Mixin ──────────────────────────────────────────────────
 // These methods are designed to be mixed into ExperienceStore.prototype.
 // They reference `this.experiences`, `this._synonymTable`, `this._llmCall`, etc.
@@ -106,7 +213,6 @@ const ExperienceQueryMixin = {
     }
 
     const ZOMBIE_RETRIEVAL_THRESHOLD = 5;
-    const HALF_LIFE_DAYS = 60;
     const nowMs = now;
 
     if (keyword) {
@@ -122,11 +228,8 @@ const ExperienceQueryMixin = {
             if (tagsLower.some(t => t.includes(kw))) score += 6;
             if (contentLower.includes(kw)) score += 2;
           }
-          const lastActivity = e._lastActivityTs || (e._lastActivityTs = new Date(e.updatedAt || e.createdAt).getTime());
-          const daysSinceActivity = (nowMs - lastActivity) / 86400_000;
-          const recencyMultiplier = 1 / (1 + daysSinceActivity / HALF_LIFE_DAYS);
-          const hitBoost = Math.log2(1 + (e.hitCount || 0));
-          const finalScore = score * recencyMultiplier * (1 + hitBoost * 0.2);
+          const freshness = calculateFreshnessScore(e, { nowMs });
+          const finalScore = score * freshness;
           const isZombie = (e.retrievalCount || 0) >= ZOMBIE_RETRIEVAL_THRESHOLD && e.hitCount === 0;
           return { exp: e, score: isZombie ? finalScore * 0.1 : finalScore, rawScore: score };
         })
@@ -156,10 +259,8 @@ const ExperienceQueryMixin = {
     } else {
       results = results
         .map(e => {
-          const lastActivity = e._lastActivityTs || (e._lastActivityTs = new Date(e.updatedAt || e.createdAt).getTime());
-          const daysSinceActivity = (nowMs - lastActivity) / 86400_000;
-          const recencyMultiplier = 1 / (1 + daysSinceActivity / HALF_LIFE_DAYS);
-          const decayedScore = (e.hitCount || 0) * recencyMultiplier;
+          const freshness = calculateFreshnessScore(e, { nowMs });
+          const decayedScore = (e.hitCount || 0) * freshness;
           const isZombie = (e.retrievalCount || 0) >= ZOMBIE_RETRIEVAL_THRESHOLD && e.hitCount === 0;
           return { exp: e, decayedScore: isZombie ? decayedScore * 0.1 : decayedScore };
         })
@@ -247,7 +348,7 @@ const ExperienceQueryMixin = {
     const MAX_CONTEXT_CHARS = 6000;
     const raw = lines.join('\n');
     const block = raw.length > MAX_CONTEXT_CHARS
-      ? raw.slice(0, MAX_CONTEXT_CHARS) + '\n\n_... (experience context truncated to stay within token budget)_'
+      ? await _compressExperienceBlock(raw, MAX_CONTEXT_CHARS)
       : raw;
 
     return { block, ids };
@@ -524,6 +625,11 @@ module.exports = {
   ExperienceQueryMixin,
   STOPWORDS,
   SHORT_WORD_WHITELIST,
+  // T-4: Layer-aware freshness (exported for testing/override)
+  calculateFreshnessScore,
+  DEFAULT_HALF_LIFE_MAP,
+  // P1-3: Experience block compression (cheap-LLM injection)
+  setExperienceCompressorCheapLlm,
   // Multilingual exports
   MULTILANG_STOPWORDS,
   detectLanguage,

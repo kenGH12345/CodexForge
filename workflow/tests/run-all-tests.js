@@ -47,6 +47,8 @@ const TEST_SUITES = {
       'workflow/core/integration-agent-fusion.test.js',
       'workflow/core/integration-framework-fusion.test.js',
       'workflow/tests/dual-mode-e2e.test.js',
+      'workflow/tests/test-experience-compression.js',
+      'workflow/tests/experience-freshness.test.js',
     ],
   },
 };
@@ -203,6 +205,8 @@ for (const { file, type } of testsToRun) {
     'integration-framework-fusion.test.js',
     'integration-agent-fusion.test.js',
     'resume-engine.test.js',
+    'test-experience-compression.js',
+    'experience-freshness.test.js',
   ];
   const isCustomFormat = CUSTOM_FORMAT_FILES.some(f => file.endsWith(f));
 
