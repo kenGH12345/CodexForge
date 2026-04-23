@@ -41,6 +41,7 @@ const {
 const { SemanticCompressor } = require('./semantic-compressor');
 
 const { getLayerForCategory } = require('./experience-types');
+const { EXPERIENCE } = require('./constants');
 
 // T-4: Layer-aware freshness. Different knowledge layers age at different rates:
 // PLATFORM (frameworks/APIs) = 180d, DOMAIN (business rules) = 60d, PRACTICE (pitfalls) = 14d.
@@ -73,13 +74,13 @@ const HIT_COUNT_DAMPENING_FACTOR = 0.15;
  * @param {object} exp        Experience record (needs category, updatedAt or createdAt; optional lastHitAt, hitCount)
  * @param {object} [opts]
  * @param {number} [opts.nowMs]      Current timestamp in ms (injected for testability)
- * @param {object} [opts.halfLifeMap] Override default half-life map (testing/config)
+ * @param {object} [opts.halfLifeMap] Override half-life map; if absent falls back to workflow.config.js experience.halfLife, then to DEFAULT_HALF_LIFE_MAP
  * @returns {number} freshness score in [0, ~3.24]
  */
 function calculateFreshnessScore(exp, opts = {}) {
   if (!exp || typeof exp !== 'object') return 1.0;
   const nowMs = typeof opts.nowMs === 'number' ? opts.nowMs : Date.now();
-  const halfLifeMap = opts.halfLifeMap || DEFAULT_HALF_LIFE_MAP;
+  const halfLifeMap = opts.halfLifeMap || EXPERIENCE.HALF_LIFE_MAP || DEFAULT_HALF_LIFE_MAP;
 
   const activityRaw = exp.updatedAt || exp.createdAt;
   const activityTs = activityRaw ? new Date(activityRaw).getTime() : NaN;

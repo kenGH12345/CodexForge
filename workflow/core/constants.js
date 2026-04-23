@@ -152,6 +152,32 @@ const EXPERIENCE = {
     } catch (_) { /* config not loaded yet — use default */ }
     return _EXPERIENCE_DEFAULTS.MAX_CAPACITY;
   },
+
+  /**
+   * T-5: Layer-aware half-life map for experience freshness decay.
+   * Returns a frozen {platform, domain, practice} map (days) from config, or null
+   * when no config exists. Callers (experience-query.js) should treat null as
+   * "use built-in default map" to preserve T-4 behavior unchanged.
+   *
+   * Only recognised keys are picked; unknown keys are silently ignored to keep
+   * the schema stable. Non-number values are skipped (falls back to callers default).
+   */
+  get HALF_LIFE_MAP() {
+    try {
+      const { getConfig } = require('./config-loader');
+      const cfg = getConfig();
+      const raw = cfg && cfg.experience && cfg.experience.halfLife;
+      if (!raw || typeof raw !== 'object') return null;
+      const picked = {};
+      for (const key of ['platform', 'domain', 'practice']) {
+        if (typeof raw[key] === 'number' && Number.isFinite(raw[key]) && raw[key] > 0) {
+          picked[key] = raw[key];
+        }
+      }
+      return Object.keys(picked).length ? Object.freeze(picked) : null;
+    } catch (_) { /* config not loaded yet — use default */ }
+    return null;
+  },
 };
 
 // ─── Project Scale Thresholds ─────────────────────────────────────────────────

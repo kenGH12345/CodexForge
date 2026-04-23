@@ -247,6 +247,22 @@ module.exports = {
     ],
   },
 
+  // ─── Experience Freshness (T-5: Layer-Aware Half-Life) ────────────────────
+  // Half-life in days per knowledge layer. Used by calculateFreshnessScore()
+  // in experience-query.js. Omitting keys falls back to T-4 defaults:
+  //   PLATFORM=180 (OS/shell/lang — rarely changes)
+  //   DOMAIN=60    (frameworks/APIs — moderate decay)
+  //   PRACTICE=14  (project patterns — fast decay)
+  // Only positive integers take effect; invalid values (0, negative, non-number)
+  // are silently ignored and the corresponding layer falls back to the T-4 default.
+  experience: {
+    halfLife: {
+      platform: 180,
+      domain:   60,
+      practice: 14,
+    },
+  },
+
   // ─── Blind Spot Gate (Cross-Stage Tracking) ───────────────────────────────
   // Controls how blind spots are detected, persisted, and consumed across stages.
   // Mode "advisory" = blind spots injected as pendingBlindSpots in REQUIRED_OBSERVATION

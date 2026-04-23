@@ -144,6 +144,42 @@ test('DEFAULT_HALF_LIFE_MAP exports correct values', () => {
   assert.strictEqual(DEFAULT_HALF_LIFE_MAP.practice, 14);
 });
 
+// ─── T-5: Layer-Aware Half-Life Config Wiring ────────────────────────────────
+
+test('T-5.1: EXPERIENCE.HALF_LIFE_MAP returns picked {platform,domain,practice} from config', () => {
+  const { EXPERIENCE } = require('../core/constants');
+  const m = EXPERIENCE.HALF_LIFE_MAP;
+  // Current workflow.config.js ships all three keys; verify they flow through.
+  assert.ok(m, 'expected HALF_LIFE_MAP to be populated from workflow.config.js');
+  assert.strictEqual(m.platform, 180);
+  assert.strictEqual(m.domain, 60);
+  assert.strictEqual(m.practice, 14);
+  assert.ok(Object.isFrozen(m), 'HALF_LIFE_MAP should be frozen to prevent tampering');
+});
+
+test('T-5.2: opts.halfLifeMap takes priority over config and defaults', () => {
+  // Age = 5 days, custom halfLife=5 → decay=0.5. No lastHitAt, hitCount=0 → boosts=1.0.
+  const exp = {
+    category: 'pitfall',
+    createdAt: new Date(NOW - 5 * DAY).toISOString(),
+  };
+  const f = calculateFreshnessScore(exp, {
+    nowMs: NOW,
+    halfLifeMap: { practice: 5 },
+  });
+  approx(f, 0.5, 0.05, 'opts.halfLifeMap override/5d');
+});
+
+test('T-5.3: config values round-trip through calculateFreshnessScore (PLATFORM=180d)', () => {
+  // PLATFORM layer at half-life (180d) → decay≈0.5. Category 'engine_api' maps to PLATFORM.
+  const exp = {
+    category: 'engine_api',
+    createdAt: new Date(NOW - 180 * DAY).toISOString(),
+  };
+  const f = calculateFreshnessScore(exp, { nowMs: NOW });
+  approx(f, 0.5, 0.05, 'PLATFORM 180d half-life from config');
+});
+
 (async function run() {
   let passed = 0;
   let failed = 0;
