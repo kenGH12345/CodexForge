@@ -3183,12 +3183,13 @@ async function runGenSkill(args) {
     const qualityRubric = {
       language: 'zh-CN',
       minWordCount: 3000,
-      targetWordCount: 5000,
-      minSections: 14,
+      targetWordCount: 6000,
+      minSections: 17,
       requiredDimensions: [
         '项目概览', '项目流程', '模块管理', '设计模式', '架构框架',
         '事件系统', '状态管理', '配置数据驱动', '持久化存档',
         '网络通信', '日志系统', '公共组件',
+        'MVC数据流', '模块间通讯', '协议契约',
         '错误处理', '修改影响半径', 'Onboarding路径',
       ],
       mustIncludeEvidence: ['hotspots', 'callEdges', 'reusableSymbols', 'entryPoints'],

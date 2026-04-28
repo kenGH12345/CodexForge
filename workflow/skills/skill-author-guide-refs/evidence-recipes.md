@@ -275,6 +275,186 @@ metrics.degradeM2 = metrics.totalCallEdges < 50;
 
 ---
 
+---
+
+## 配方 6：按命名模式发现协议/消息文件 [D4-c] ✨
+
+**目标**：在项目里定位所有协议定义文件、消息类、DTO 集群 — 用于 §15 协议契约章节。
+
+**输入**：`code-graph.json.filePaths[]` + 文件大小元数据（可用 `fs.statSync`）
+
+**步骤**：
+
+```js
+const fs = require('fs');
+const path = require('path');
+
+// 1. 按命名模式扫描
+const cg = JSON.parse(fs.readFileSync('output/code-graph.json', 'utf-8'));
+const protocolPatterns = /(?:Proto|Protocol|Msg|Message|Packet|Request|Response|DTO|Schema)/i;
+
+const protocolFiles = cg.filePaths
+  .filter(fp => protocolPatterns.test(fp))
+  .map(fp => {
+    let size = 0;
+    try { size = fs.statSync(path.join(PROJECT_ROOT, fp)).size; } catch (_) {}
+    return { fp, sizeKB: Math.round(size / 1024) };
+  })
+  .sort((a, b) => b.sizeKB - a.sizeKB);
+
+console.log('Top-10 协议文件（按大小）:', protocolFiles.slice(0, 10));
+
+// 2. 按文件大小 Top-5（即使命名不含 Proto 也要看）
+const allFiles = cg.filePaths
+  .map(fp => ({ fp, sizeKB: Math.round(fs.statSync(path.join(PROJECT_ROOT, fp)).size / 1024) }))
+  .sort((a, b) => b.sizeKB - a.sizeKB);
+console.log('Top-5 最大文件:', allFiles.slice(0, 5));
+// ↑ 经常能发现自动生成的协议代码（WePop 案例中 cs_proto.cs 1.36 MB 排第 3）
+
+// 3. 按外部工具链扩展名扫描
+const idlFiles = cg.filePaths.filter(fp =>
+  /\.(proto|thrift|fbs|graphql)$/.test(fp) ||
+  /openapi\.(ya?ml|json)|swagger\./i.test(fp)
+);
+console.log('IDL/Schema 文件:', idlFiles);
+```
+
+**输出**：三组清单 — 按命名找到的 + 按大小发现的 + IDL 文件
+
+**实战要点**：
+- **1.36 MB 文件必查**：大概率是协议代码生成产物
+- **合并三组清单**：有些项目既有 `.proto` 又有手写 `*Msg.cs`
+- **跳过条件**：三组都为空 → 项目确实无外部协议，可在 §15 合法跳过
+
+---
+
+## 配方 7：按接口/抽象类密度发现契约集群 [D4-a] ✨
+
+**目标**：定位"契约定义集群"（interface / abstract class 高密度目录），用于 §15 接口契约部分。
+
+**输入**：`code-graph.json.symbols[]` + 各符号的 `k`（kind）/ `n`（name）/ `f`（filePath index）
+
+**步骤**：
+
+```js
+const cg = JSON.parse(fs.readFileSync('output/code-graph.json', 'utf-8'));
+
+// 1. 识别接口/抽象类符号
+// 注：不同语言约定不同
+//   C#: kind='interface' 或 name 以 I 开头的 class
+//   TS/Java: kind='interface'
+//   Python: class 继承 ABC
+//   Go: interface 关键字
+const contracts = cg.symbols.filter(s => {
+  return s.k === 'interface' ||
+         s.k === 'abstract' ||
+         (s.k === 'class' && /^I[A-Z]/.test(s.n)) ||  // C# IXxx 约定
+         (s.k === 'class' && /Abstract|Base/.test(s.n));
+});
+
+// 2. 按目录聚合密度
+const dirDensity = new Map();
+for (const c of contracts) {
+  const dir = cg.filePaths[c.f].split('/').slice(0, 3).join('/');
+  dirDensity.set(dir, (dirDensity.get(dir) || 0) + 1);
+}
+
+const topDirs = [...dirDensity.entries()]
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 10);
+console.log('契约密度 Top-10 目录:', topDirs);
+
+// 3. 找出"契约清单"（每个接口名 + 文件 + 被实现次数）
+const contractImplCount = new Map();
+for (const c of contracts) {
+  // 粗略：用名字前缀匹配所有 class 作为 "implements X" 的近似
+  const implCount = cg.symbols.filter(s =>
+    s.k === 'class' && s.n !== c.n && new RegExp(c.n.replace(/^I/, '')).test(s.n)
+  ).length;
+  contractImplCount.set(c.n, { file: cg.filePaths[c.f], implCount });
+}
+```
+
+**输出**：契约目录清单 + 每接口的实现数
+
+**实战要点**：
+- **C# 项目**：看 `I*` 命名 + `abstract class *Base`
+- **TS/Java**：`interface` 关键字更可靠
+- **Go**：需要单独 AST parse（非 class-based）
+- **高实现数 = 重要契约**：如果一个接口有 20 个实现，它就是系统关键 seam
+
+---
+
+## 配方 8：按模块边权推导通讯拓扑 [D3-a] ✨
+
+**目标**：从 callEdges 聚合出"模块间通讯图"，识别每条边用的是什么通讯手段 — 用于 §14 模块间通讯章节。
+
+**输入**：`code-graph.json.callEdges{}` + `code-graph.json.symbols[]`
+
+**步骤**：
+
+```js
+const cg = JSON.parse(fs.readFileSync('output/code-graph.json', 'utf-8'));
+
+// 1. 建立 symbol index -> module 的映射
+function inferModule(fp) {
+  const parts = fp.split(/[\\/]/);
+  // 可按项目定制；以下为游戏项目示例
+  if (parts[0] === 'Assets' && parts[1] === 'Scripts' && parts[2]) {
+    return 'Scripts/' + parts[2];
+  }
+  return parts[0] || 'root';
+}
+
+// 2. 聚合跨模块 callEdges + 识别通讯手段
+const modEdges = new Map();  // "fromMod -> toMod" => { count, patterns: Set }
+for (const [caller, callees] of Object.entries(cg.callEdges || {})) {
+  const [fIdx, _] = caller.split('::');
+  const fromFp = cg.filePaths[+fIdx];
+  if (!fromFp) continue;
+  const fromMod = inferModule(fromFp);
+
+  for (const ce of callees) {
+    const [cfIdx, calleeName] = ce.split('::');
+    const toFp = cg.filePaths[+cfIdx];
+    if (!toFp) continue;
+    const toMod = inferModule(toFp);
+    if (fromMod === toMod) continue;
+
+    const key = fromMod + ' -> ' + toMod;
+    if (!modEdges.has(key)) modEdges.set(key, { count: 0, patterns: new Set() });
+    const edge = modEdges.get(key);
+    edge.count++;
+
+    // 识别通讯手段（按 callee 名字）
+    if (/Fire|Emit|Publish|Dispatch/.test(calleeName)) edge.patterns.add('event');
+    else if (/\.Instance|getInstance|Singleton/.test(calleeName)) edge.patterns.add('singleton');
+    else if (/Subscribe|addListener|On[A-Z]/.test(calleeName)) edge.patterns.add('callback');
+    else if (/StartCoroutine|yield/.test(calleeName)) edge.patterns.add('coroutine');
+    else if (/await|then|Promise/.test(calleeName)) edge.patterns.add('async');
+    else edge.patterns.add('direct-call');
+  }
+}
+
+// 3. 输出 Top-10 通讯边 + 手段
+const top10 = [...modEdges.entries()]
+  .sort((a, b) => b[1].count - a[1].count)
+  .slice(0, 10)
+  .map(([key, v]) => ({ edge: key, count: v.count, patterns: [...v.patterns] }));
+
+console.log('模块通讯 Top-10:', top10);
+```
+
+**输出**：Top-10 模块间通讯边 + 每条边的通讯手段（直接调用/事件/单例/回调/协程/异步）
+
+**实战要点**：
+- **命名推断不完美**：`Fire` 可能是业务方法名（如 `FireCannon`），不要单一依据
+- **交叉验证**：对 Top-5 的边，额外 `read_file` 几个真实调用点确认
+- **总 callEdges < 50 时降级**：直接写"本项目模块通讯强度低，不展开通讯拓扑图"（对应 M-2 的降级规则）
+- **模块命名规则要和 §3 模块管理一致**：否则输出的拓扑和 §3 模块清单对不上
+
+---
+
 ## 使用提醒
 
 1. **以上 JS 是伪代码**：IDE Agent 不需要真执行，只需理解语义并在心里（或临时脚本）做等价抽取

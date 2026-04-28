@@ -1,26 +1,36 @@
 # P0 维度详细 Rubric
 
 > 本文件是 `skill-author-guide.md` 的附属资料。
-> 包含 11 个 P0 业务维度 + 3 个 P0 元维度，共 14 节 rubric。
+> 包含 14 个 P0 业务维度 + 3 个 P0 元维度，共 17 节 rubric。
 > 每节统一 4 段式：📋 调研配方 / ✅ 最低证据 / 📐 输出 Schema / ❌ 反模式
+>
+> **⚠️ 象限归属**：每节标题末的 `[D1]/[D2]/[D3]/[D4]` 徽章代表该维度所属的象限。
+> 四维定义详见 `dimension-framework.md`：
+> - **D1 结构**（静态·内部）：代码如何组织 — 目录/模块/类/可复用符号
+> - **D2 行为**（动态·内部）：运行时发生什么 — 入口/流程/状态/日志
+> - **D3 通讯**（动态·边界）：组件间如何交换数据 — 事件/网络/数据流/模块间调用
+> - **D4 契约**（静态·边界）：组件间约定 — 接口/协议/DTO/错误码
 
 ## 目录索引
 
-- [§1 项目概览](#1-项目概览)
-- [§2 项目流程与生命周期](#2-项目流程与生命周期)
-- [§3 模块管理](#3-模块管理)
-- [§4 设计模式](#4-设计模式)
-- [§5 架构框架 MVC/分层](#5-架构框架-mvc分层)
-- [§6 事件系统](#6-事件系统)
-- [§7 状态管理](#7-状态管理)
-- [§8 配置与数据驱动](#8-配置与数据驱动)
-- [§9 持久化与存档](#9-持久化与存档)
-- [§10 网络通信](#10-网络通信)
-- [§11 日志系统](#11-日志系统)
-- [§12 公共组件与工具库](#12-公共组件与工具库)
-- [§M-1 错误处理与容错策略](#m-1-错误处理与容错策略)
-- [§M-2 修改影响半径速查表](#m-2-修改影响半径速查表-带降级规则)
-- [§M-3 新人 Onboarding 路径](#m-3-新人-onboarding-路径)
+- [§1 项目概览](#1-项目概览) — 综合
+- [§2 项目流程与生命周期 \[D2\]](#2-项目流程与生命周期-d2)
+- [§3 模块管理 \[D1\]](#3-模块管理-d1)
+- [§4 设计模式 \[D2\]](#4-设计模式-d2)
+- [§5 架构框架 MVC/分层 \[D1\]](#5-架构框架-mvc分层-d1)
+- [§6 事件系统 \[D3\]](#6-事件系统-d3)
+- [§7 状态管理 \[D2\]](#7-状态管理-d2)
+- [§8 配置与数据驱动 \[D4\]](#8-配置与数据驱动-d4)
+- [§9 持久化与存档 \[D4\]](#9-持久化与存档-d4)
+- [§10 网络通信 \[D3\]](#10-网络通信-d3)
+- [§11 日志系统 \[D2\]](#11-日志系统-d2)
+- [§12 公共组件与工具库 \[D1\]](#12-公共组件与工具库-d1)
+- [§13 MVC 数据流与绑定 \[D3\]](#13-mvc-数据流与绑定-d3) ✨ **新增**
+- [§14 模块间通讯契约 \[D3\]](#14-模块间通讯契约-d3) ✨ **新增**
+- [§15 协议与契约定义 \[D4\]](#15-协议与契约定义-d4) ✨ **新增**
+- [§M-1 错误处理与容错策略 \[D4\]](#m-1-错误处理与容错策略-d4)
+- [§M-2 修改影响半径速查表 \[D3\]](#m-2-修改影响半径速查表-d3-带降级规则)
+- [§M-3 新人 Onboarding 路径 \[元\]](#m-3-新人-onboarding-路径-元)
 
 ---
 
@@ -53,7 +63,7 @@
 
 ---
 
-## §2 项目流程与生命周期
+## §2 项目流程与生命周期 [D2]
 
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找名字包含 `main` / `start` / `init` / `bootstrap` / `run` 的 function/method
@@ -81,7 +91,7 @@
 
 ---
 
-## §3 模块管理
+## §3 模块管理 [D1]
 
 ### 📋 调研配方
 - 从 `codeGraph.filePaths[]` 分组：按前 2 级目录（`workflow/core/*` → `workflow/core`）
@@ -109,7 +119,7 @@
 
 ---
 
-## §4 设计模式
+## §4 设计模式 [D2]
 
 ### 📋 调研配方
 - 从 `codeGraph.hotspots[]` 过滤名字含模式关键词的 Top-20：Factory / Builder / Observer / Registry / Singleton / Adapter / Proxy / Command / Strategy / State / Pipeline / Decorator / Facade
@@ -138,7 +148,7 @@
 
 ---
 
-## §5 架构框架 MVC/分层
+## §5 架构框架 MVC/分层 [D1]
 
 ### 📋 调研配方
 - 从 `codeGraph.filePaths[]` 找分层关键词目录：`controllers/` `services/` `models/` `views/` `handlers/` `routes/` `layers/` `domain/` `infra/` `ui/`
@@ -167,7 +177,7 @@
 
 ---
 
-## §6 事件系统
+## §6 事件系统 [D3]
 
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`EventBus` / `EventEmitter` / `emit` / `publish` / `subscribe` / `dispatch` / `on[A-Z]` / `Listen*`
@@ -197,7 +207,7 @@
 
 ---
 
-## §7 状态管理
+## §7 状态管理 [D2]
 
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`*State` `*Store` `*Context` `*Reducer` `StateMachine` `FSM`
@@ -226,7 +236,7 @@
 
 ---
 
-## §8 配置与数据驱动
+## §8 配置与数据驱动 [D4]
 
 ### 📋 调研配方
 - 从 `codeGraph.filePaths[]` 找：`*.json` / `*.yaml` / `*.toml` / `*.ini` / `config/` / `configs/` / `constants/`
@@ -255,7 +265,7 @@
 
 ---
 
-## §9 持久化与存档
+## §9 持久化与存档 [D4]
 
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`save` / `load` / `serialize` / `deserialize` / `Persist*` / `Storage*` / `*Repository`
@@ -284,7 +294,7 @@
 
 ---
 
-## §10 网络通信
+## §10 网络通信 [D3]
 
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`*Client` / `*Request` / `*Response` / `fetch` / `http` / `Socket` / `*Api`
@@ -314,7 +324,7 @@
 
 ---
 
-## §11 日志系统
+## §11 日志系统 [D2]
 
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`Logger` / `log` / `*Log*`
@@ -344,7 +354,7 @@
 
 ---
 
-## §12 公共组件与工具库
+## §12 公共组件与工具库 [D1]
 
 ### 📋 调研配方
 - **直接使用 `codeGraph.reusableSymbols[]`**：这是官方认证的高频复用符号
@@ -378,7 +388,208 @@
 
 ---
 
-## §M-1 错误处理与容错策略
+---
+
+## §13 MVC 数据流与绑定 [D3]
+
+> **象限归属**：D3 通讯·进程内数据流（详见 `dimension-framework.md` §4.1 D3-b）
+> **本节解答**：数据层 ↔ 视图层如何绑定？数据改变如何驱动视图刷新？
+
+### 🚦 跳过条件（必须显式声明）
+
+若项目满足以下任一条件，可在 SKILL.md 中用一句话跳过本节，但**必须说明理由**：
+- 纯 CLI 工具或纯后端服务，无独立视图层
+- 单文件脚本或工具库
+
+❌ 不允许静默省略；✅ 合法跳过示例："§13 不适用：本项目为纯 HTTP API 后端服务，无客户端视图层。"
+
+### 📋 调研配方
+
+- 命名扫描：`grep -r "Model\|ViewModel\|observable\|reactive"` 定位数据绑定集群
+- `codebase_search`: "data binding" / "property changed" / "数据绑定" / "响应式"
+- 识别响应式框架：
+  - **自研**：`*Model*.addXxxListener` / `ModelsBinder` / `SyncProcess`
+  - **前端**：Vuex/Pinia state + mutations / Redux reducers / MobX observable / RxJS Subject
+  - **游戏**：自研 Model-View 监听 / UniRx / ReactiveX
+- 从 `callEdges` 抽取：`addModelListener` / `observe` / `subscribe` / `PropertyChanged` 的调用者集群
+- `read_file` 核心数据层类的实现（如 `CommonModel.cs` / `store/index.ts`）深读生命周期
+
+### ✅ 最低证据
+
+- 真实文件路径：≥ 3 个（数据层入口 / 视图绑定基类 / 具体业务场景实例）
+- 代码片段：≥ 1 段完整的"数据变 → 视图更"示例（≥ 20 行）
+- 生命周期表：≥ 2 种绑定时机（如 alive/active、mounted/beforeDestroy、Start/Destroy）
+
+### 📐 输出 Schema
+
+该节必须回答：
+1. 数据层入口类是什么？（`CommonModel` / `Store` / `Vuex store`）
+2. 视图层绑定基类是什么？（`ModelViewBehaviour` / `Vue component` / `connect(mapStateToProps)`）
+3. 数据变更的事件类型有哪些？（Add/Update/Remove/Clear/BatchXxx）
+4. 绑定的生命周期管理规则？（绑定何时建立、何时解除？）
+5. 提供一个"数据改变 → 视图刷新"的完整代码示例（从触发到显示）
+6. 有哪些**反模式**（新人常写错的数据流方向，如直接改视图跳过 Model）
+
+### ❌ 反模式
+
+- "数据层和视图层解耦" —— 没说怎么解耦
+- "视图会自动响应数据变化" —— 没说响应机制的类型和实现
+- 只写 Model 层不写 View 层（半条数据流）
+- 代码示例用伪代码而不用项目真实代码
+
+### 📐 跨项目类型示例
+
+| 项目类型 | §13 具体化 |
+|---|---|
+| 游戏（Unity） | CommonModel (MonoBehaviour) + ModelListener 事件 + ModelViewBehaviour.Bind |
+| 前端 SPA (Vue) | Pinia store + `storeToRefs` + `watch` + v-model 双向绑定 |
+| 前端 SPA (React) | Redux store + useSelector + useDispatch + 组件重渲染 |
+| 桌面 (WPF/WinUI) | INotifyPropertyChanged + Binding + XAML DataContext |
+
+---
+
+## §14 模块间通讯契约 [D3]
+
+> **象限归属**：D3 通讯·模块间调用方式（详见 `dimension-framework.md` §4.1 D3-a）
+> **本节解答**：A 模块要用 B 模块的功能时，用哪种通讯手段？选型依据是什么？
+
+### 🚦 跳过条件（必须显式声明）
+
+- 单模块项目（所有代码在一个文件夹下）
+- 极简脚本（< 500 行代码）
+
+合法跳过示例："§14 不适用：本项目仅含一个主模块，无跨模块通讯需求。"
+
+### 📋 调研配方
+
+- 从 `code-graph.json.callEdges` 聚合跨模块调用：
+  ```js
+  // 按模块前缀分组聚合 callEdges
+  const modEdges = new Map();
+  for (const [caller, callees] of Object.entries(cg.callEdges)) {
+    const fromMod = getModule(cg.filePaths[caller.split('::')[0]]);
+    for (const ce of callees) {
+      const toMod = getModule(cg.filePaths[ce.split('::')[0]]);
+      if (fromMod !== toMod) {
+        modEdges.set(fromMod+'->'+toMod, (modEdges.get(fromMod+'->'+toMod)||0)+1);
+      }
+    }
+  }
+  ```
+- 通讯手段识别（按 callee 符号命名）：
+  - **直接调用**：`XxxSystem.Method()` / `module.Function()` 类名+方法
+  - **事件**：callee 含 `Fire` / `Emit` / `Publish` / `Dispatch`
+  - **单例**：callee 前缀 `Singleton<T>.Instance` / `XxxSys.I` / `Manager.Instance`
+  - **DI 注入**：构造函数参数 / `@Inject` / `Autowired`
+  - **回调/Promise**：`await` / `.then()` / `callback` 参数
+  - **全局总线**：`MessageCenter` / `EventBus.send`
+- 命名模式扫描："Controller" / "Bridge" / "Facade" 等中介类
+
+### ✅ 最低证据
+
+- 跨模块 callEdges Top-10（`fromMod -> toMod (callCount)`）
+- 至少 3 种项目实际使用的通讯手段 + 各自代表文件路径
+- 通讯选型决策表（≥ 3 行）
+- 至少 1 条"禁止/推荐"规则（如"UI 禁止直接调 Net，必须走 Controller"）
+
+### 📐 输出 Schema
+
+该节必须回答：
+1. 项目有多少个主要模块？（引用 §3 模块管理）
+2. 跨模块调用 Top-10 是什么？每条边的含义？
+3. 项目中**实际在用**的通讯手段清单（按使用频率排序）
+4. 通讯选型决策表（什么场景用什么手段）：
+   | 场景 | 推荐手段 | 理由 | 示例位置 |
+   |---|---|---|---|
+   | 业务逻辑调用纯工具 | 直接调用 | 简单、无状态 | ... |
+   | 跨层解耦（UI → Business） | 事件总线 | 松耦合、易替换 | ... |
+   | 全局状态访问 | 单例 | 避免传递 | ... |
+5. 跨模块调用的规则与约束（什么被禁止，为什么）
+6. 有没有可观测的**反模式**（例如循环依赖、跨层穿透）
+
+### ❌ 反模式
+
+- "模块间通过事件解耦" —— 没说哪些事件、几种事件类型
+- 只列跨模块边数字不解释通讯手段
+- 决策表只写推荐不写理由
+- 与 §M-2 修改影响半径内容完全重复（本节侧重**选型**，M-2 侧重**影响范围**）
+
+### 📐 与 §M-2 的区分
+
+- **§14（本节）**：讲"**如何**通讯" — 用哪种手段？为什么？
+- **§M-2 修改影响半径**：讲"**改了会影响谁**" — 具体修改传染范围
+
+---
+
+## §15 协议与契约定义 [D4]
+
+> **象限归属**：D4 契约·协议契约（详见 `dimension-framework.md` §5.1 D4-c）
+> **本节解答**：与外部世界（服务器/其他进程/脚本引擎）交换数据的格式契约是什么？
+
+### 🚦 跳过条件（必须显式声明）
+
+- 纯本地工具/脚本，无外部数据交换
+- 仅使用标准 HTTP + 无自定义 schema 的项目
+
+合法跳过示例："§15 不适用：本项目为纯本地 CLI 工具，无跨进程协议。"
+
+### 📋 调研配方
+
+- 命名模式扫描：
+  - `grep -r -l "Proto\|Protocol\|Packet\|Msg\|DTO\|Request\|Response"` 按文件名
+  - `*.proto` / `*.thrift` / `*.fbs` / `*.graphql` / `openapi.yaml` / `swagger.json` 按扩展名
+- 按文件大小 Top-5 排序，检查是否含 "auto-generated" 头部（协议代码生成产物通常极大）
+- 识别工具链：
+  - **ProtoBuf**：`protoc` / `.proto` / `google.protobuf.Message`
+  - **Thrift**：`.thrift` / `TBase`
+  - **FlatBuffers**：`.fbs`
+  - **腾讯 TDR**：`cs_proto.cs` / `TdrMetaDef` / `tdr_metalib`
+  - **REST/OpenAPI**：`swagger.json` / `openapi.yaml` / `@Api` / `@ApiModel`
+  - **GraphQL**：`.graphql` / `typeDefs` / `resolvers`
+  - **自研二进制**：`BinaryReader` / `BinaryWriter` / custom codec
+- DTO 集群识别：纯字段无逻辑的类（通过 AST 或 categoryStats）
+
+### ✅ 最低证据
+
+- 协议文件清单（≥ 1 条或显式跳过）
+- 工具链说明（协议 IDL → 代码生成 → 使用的完整链路）
+- 至少 1 段编解码示例代码
+- 版本兼容策略文字描述（新增字段/废弃字段规则）
+
+### 📐 输出 Schema
+
+该节必须回答：
+1. 项目是否有正式协议定义？在哪里？（文件路径 + 大小）
+2. 使用的协议工具链是什么？（手写 / ProtoBuf / TDR / OpenAPI 等）
+3. 协议从定义到代码使用的完整链路（IDL → 生成代码 → 注册 → 编解码）
+4. 消息类型有哪些？枚举清单（如 `ESendMsgType: Normal/Reliable/Unreliable/...`）
+5. 版本兼容策略：
+   - 新增字段如何处理？（默认值？Optional？）
+   - 废弃字段如何处理？（保留位占？重命名？）
+   - 客户端/服务器版本不匹配时的行为？
+6. 序列化/反序列化的性能约束（如是否禁止在主线程做、最大消息大小）
+7. 安全相关约定（加密？签名？CRC？）
+
+### ❌ 反模式
+
+- "用 JSON 传输" —— 没说 schema 在哪定义
+- "有协议定义" —— 没列出文件
+- 只写编码不写解码
+- 跳过版本兼容策略（最容易被忽视但线上问题最多的地方）
+
+### 📐 跨项目类型示例
+
+| 项目类型 | §15 具体化 |
+|---|---|
+| 游戏（腾讯系） | TDR `cs_proto.cs` + `TDRHelper` 编解码 + 版本字段 |
+| Web 后端 (REST) | OpenAPI yaml + 代码生成 + HTTP + JSON + 状态码 |
+| Web 后端 (gRPC) | `.proto` + protoc-gen-go + gRPC + 二进制 |
+| 前端 SPA | OpenAPI client 生成 / tRPC type-safe / GraphQL codegen |
+| 桌面 / IPC | COM interface / DBus / MessagePack + Named Pipe |
+
+---
+
+## §M-1 错误处理与容错策略 [D4]
 
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`*Error` / `*Exception` / `handle*` / `catch*` / `try*`
@@ -407,7 +618,7 @@
 
 ---
 
-## §M-2 修改影响半径速查表 (带降级规则)
+## §M-2 修改影响半径速查表 [D3] (带降级规则)
 
 ### 📋 调研配方
 - **主路径**：从 `codeGraph.callEdges{}` 反向聚合，每个模块被哪些模块调用
@@ -453,7 +664,7 @@ const useDegraded = totalCallEdges < 50;
 
 ---
 
-## §M-3 新人 Onboarding 路径
+## §M-3 新人 Onboarding 路径 [元]
 
 ### 📋 调研配方
 - 综合前面所有维度，选出"最基础的 5-7 个文件"
