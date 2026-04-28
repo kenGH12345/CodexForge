@@ -86,34 +86,68 @@ module.exports = {
       "analysisMs": 6
   },  // Will be populated by init-project.js → ProjectProfiler
 
-  // ─── Built-in Skills ─────────────────────────────────────────────────────
+  // ─── Built-in Skills (auto-extracted from workflow/skills/*.md frontmatters)
+  // On '2026-04-27': 47 skills registered
+  //   P0 dedup: removed architecture-design, coding-standards, code-development (-3)
+  //   P1 consolidation: renamed standards → project-conventions (JS coding rules migrated to javascript-dev v1.2.0)
   builtinSkills: [
-    {
-        name: "workflow-orchestration",
-        description: "Multi-agent workflow orchestration SOP",
-        domains: [
-            "workflow",
-            "orchestration"
-        ]
-    },
-    {
-        name: "code-review",
-        description: "Code review checklist and best practices",
-        domains: [
-            "quality",
-            "review"
-        ]
-    },
-    {
-        name: "javascript-dev",
-        description: "JavaScript development patterns",
-        domains: [
-            "frontend",
-            "backend",
-            "javascript"
-        ]
-    }
-],
+    { name: "android-dev", description: "Android/Kotlin native development with Jetpack Compose patterns", domains: ["android", "mobile", "kotlin"] },
+    { name: "api-design", description: "REST/RPC API design rules and patterns", domains: ["backend", "api"] },
+    { name: "backend-patterns", description: "Backend architecture patterns, API design principles, and server-side best practices", domains: ["architecture", "backend", "design-patterns"] },
+    { name: "bp-architecture-design", description: "提供架构设计原则，包括模块划分、依赖管理、数据架构、接口设计。在系统设计阶段讨论方案概览时使用，或在 code review 中评估架构合理性时使用", domains: ["bp"] },
+    { name: "bp-coding-best-practices", description: "通用编码最佳实践。在编写 review 代码时使用。涵盖可读性、命名、函数设计、控制流、资源安全、注释规范", domains: ["bp"] },
+    { name: "bp-component-design", description: "提供组件级设计原则，包括模块设计、接口设计、数据模型、并发模型、错误处理。在系统设计阶段讨论组件详细设计时使用，或在 code review 中评估组件质量时使用", domains: ["bp"] },
+    { name: "bp-distributed-systems", description: "提供分布式系统设计和 best practices（对应常见 fallacies）及 SDLC 阶段 checklist。当需求涉及网络通信、多节点协调、数据一致性、故障恢复时使用", domains: ["bp"] },
+    { name: "bp-performance-optimization", description: "提供性能优化方法论、设计原则和具体优化规则。在编写代码、优化性能瓶颈、进行 code review 时使用，涵盖 CPU、内存、I/O、并发等维度", domains: ["bp"] },
+    { name: "bp-token-compression", description: "输入 Token 压缩决策规则。当上下文接近预算限制、需要选择保留/丢弃/压缩哪些内容时加载。覆盖 L0-L3 四层压缩管线和降级策略。", domains: ["bp"] },
+    { name: "code-modularity-refactoring", description: "代码模块化评估与安全重构决策框架。在面临代码拆分/合并决策、技术债清理、架构演进时加载，提供拆分时机判断、异味识别和安全重构方法。", domains: ["refactoring", "modularity", "code-quality", "architecture", "bp"] },
+    { name: "code-review", description: "Two-stage code review (RuleChecker + ReviewFilter), anti-hallucination rules, data flywheel, and security audit best practices. Inspired by BitsAI-CR (ByteDance).", domains: ["quality", "review", "security"] },
+    { name: "database-design", description: "Database design, query optimization, migration safety, and data modeling best practices", domains: ["database", "data-modeling", "persistence"] },
+    { name: "documentation-generation", description: "Documentation generation skill covering API docs, changelogs, migration guides, README files, and inline code documentation. Ensures consistency, completeness, and audience-appropriate writing.", domains: ["documentation", "writing", "api-docs", "changelog"] },
+    { name: "eval-harness", description: "Evaluation framework for measuring agent capabilities, tracking regressions, and ensuring quality through eval-driven development", domains: ["evaluation", "testing", "quality-assurance", "benchmark"] },
+    { name: "flutter-dev", description: "Flutter/Dart development patterns", domains: ["flutter", "dart", "mobile"] },
+    { name: "frontend-patterns", description: "Frontend design patterns and component architecture guidelines", domains: ["architecture", "frontend"] },
+    { name: "frontend-review", description: "Frontend-specific code review covering component design, accessibility, performance, security (XSS/CSRF/CSP), and state management", domains: ["frontend", "review", "accessibility", "ux"] },
+    { name: "game-ai-patterns", description: "Game AI design patterns: behavior trees, state machines, and pathfinding", domains: ["game", "ai"] },
+    { name: "game-architecture", description: "Game architecture patterns: ECS, game loop, and entity systems", domains: ["game", "architecture"] },
+    { name: "game-testing", description: "Game testing patterns: frame rate validation, physics consistency, AI behavior verification, and deterministic testing", domains: ["testing", "game", "qa"] },
+    { name: "git-conventions", description: "Git commit conventions based on Conventional Commits spec and Angular standards", domains: ["git", "version-control", "commit"] },
+    { name: "go-crud", description: "Go language CRUD implementation patterns", domains: ["backend", "go", "database"] },
+    { name: "ios-dev", description: "iOS/Swift native development patterns and best practices", domains: ["ios", "mobile", "swift"] },
+    { name: "java-dev", description: "Java development patterns", domains: ["backend", "java"] },
+    { name: "javascript-dev", description: "JavaScript development patterns", domains: ["frontend", "backend", "javascript"] },
+    { name: "lua-scripting", description: "Lua scripting patterns for game engines", domains: ["lua", "game", "scripting"] },
+    { name: "mobile-testing", description: "Mobile app testing patterns: UI automation, device compatibility, and platform-specific testing strategies", domains: ["testing", "mobile", "qa"] },
+    { name: "observability-engineering", description: "系统可观测性与诊断决策框架。在 TEST 阶段失败、生产环境问题排查、系统健康评估时加载，提供信号解读、根因定位和健康度量方法。", domains: ["observability", "monitoring", "debugging", "diagnostics", "bp"] },
+    { name: "pitfall-recorder", description: "Four-section structured pitfall recording methodology for capturing lessons learned with context, symptom, root cause, and fix", domains: ["quality", "learning", "pitfall"] },
+    { name: "problem-solving", description: "Problem-solving methodology — define → scope → analyze → solve → execute → retrospect. Based on the 10-step framework.", domains: ["analysis", "problem-solving", "retrospective", "decision-making"] },
+    { name: "project-onboarding", description: "Legacy project onboarding: familiarise, distil, execute", domains: ["onboarding", "legacy"] },
+    { name: "python-dev", description: "Python development best practices (OpenCV, EasyOCR, automation)", domains: ["python", "automation", "computer-vision"] },
+    { name: "requirements-analysis", description: "Requirements analysis methodology skill — 5 Whys, user story mapping, MoSCoW, INVEST, acceptance criteria", domains: ["analysis", "requirements", "elicitation"] },
+    { name: "resilience-engineering", description: "系统弹性与故障容忍决策框架。在设计容错机制、处理依赖故障、预防级联故障时加载，提供重试策略、降级方案、熔断模式和故障隔离方法。", domains: ["resilience", "fault-tolerance", "reliability", "bp"] },
+    { name: "review-interface-contract", description: "Interface-contract review pack with breaking change taxonomy and SemVer alignment", domains: ["interface", "contract", "api", "code-review"] },
+    { name: "review-performance", description: "Performance-focused review pack with systematic anti-pattern detection", domains: ["performance", "code-review"] },
+    { name: "review-security", description: "Security-focused review pack based on OWASP Top 10 and CWE", domains: ["security", "code-review"] },
+    { name: "security-audit", description: "Security audit skill covering OWASP Top 10, language-specific vulnerability patterns, supply chain security, and threat modeling", domains: ["security", "audit", "review"] },
+    { name: "self-refinement", description: "将纠错经验沉淀为持久化 Rules/Skills 更新，构建反馈闭环。当被用户纠正且错误具有模式性时自动触发，或通过 /reflect 命令手动触发回顾", domains: ["self"] },
+    { name: "spec-template", description: "Feature specification template for design document creation", domains: ["general"] },
+    { name: "stable-pattern-long-term-memory", description: "Long-term stable pattern memory and persistent knowledge retention strategies for reusable solutions", domains: ["stable", "pattern", "memory"] },
+    { name: "project-conventions", description: "Language-agnostic project conventions: naming, directory structure, git workflows, and cross-language standards", domains: ["general", "conventions", "project-setup"] },
+    { name: "structured-output", description: "Structured output formatting, JSON schema enforcement, and response templating best practices", domains: ["structured", "output", "formatting"] },
+    { name: "technology-decision-making", description: "技术选型与架构决策框架。在面临技术选型、框架对比、升级vs重写、引入新依赖等决策时加载，提供结构化决策矩阵和ROI评估方法。", domains: ["decision-making", "architecture", "technology-selection", "bp"] },
+    { name: "concurrency-patterns", description: "并发与并行模式决策框架。在设计异步架构、处理竞态条件、选择同步原语、评估并行策略时加载，提供 async 决策方法、锁模式、Actor 模型和背压策略。", domains: ["concurrency", "parallelism", "async", "performance", "bp"] },
+    { name: "context-engineering", description: "上下文工程与Token管理决策框架。在管理LLM上下文窗口、决定保留/丢弃/压缩哪些内容、设计多轮对话状态、优化Token使用时加载，提供三层压缩管线和相关性评分方法。", domains: ["context-management", "token-optimization", "llm", "bp"] },
+    { name: "data-modeling-state", description: "数据建模与状态管理决策框架。在设计数据架构、选择缓存策略、处理分布式一致性、构建状态机时加载，提供状态建模方法、缓存模式、一致性模型和事件溯源策略。", domains: ["data-modeling", "state-management", "caching", "consistency", "bp"] },
+    { name: "test-generation", description: "Systematic test case design methodology: equivalence partitioning, boundary value analysis, state transition, cause-effect graphing, and diff-driven test generation", domains: ["testing", "qa", "test-design", "test-generation"] },
+    { name: "test-report", description: "Test report writing standards and quality assurance patterns", domains: ["testing", "qa"] },
+    { name: "troubleshooting", description: "Common errors, root causes, and fix recipes accumulated from complaint resolutions", domains: ["general", "debugging", "error-handling"] },
+    { name: "typescript-dev", description: "TypeScript development patterns", domains: ["frontend", "backend", "typescript"] },
+    { name: "unity-csharp", description: "Unity C# development patterns and pitfalls", domains: ["unity", "csharp", "game"] },
+    { name: "wepop-trunk", description: "AI-refined domain skill for WePop Unity racing game project (64K+ symbols). Covers XLua integration, Command/Observer/Pipeline patterns, Core vs LiteCore architecture, memory management, and kart-racing-specific conventions.", domains: ["unity", "csharp", "game", "xlua", "racing-game", "wepop"], skillPath: "D:/WePop_trunk/.workflow/skills/wepop_trunk/SKILL.md" },
+    { name: "web-access", description: "Web access strategy skill: when to search, how to construct queries,", domains: ["web", "search", "research", "documentation"] },
+    { name: "WePop_trunk-domain", description: "Domain-specific skill for WePop mobile racing game (Unity 2020.3, C#). State-machine, int-key event bus, XLua, custom GC-friendly collections.", domains: ["unity", "csharp", "game", "xlua", "racing-game", "wepop"] },
+    { name: "workflow-orchestration", description: "Multi-agent workflow orchestration SOP", domains: ["workflow", "orchestration"] },
+  ],
 
   // ─── Default Skills ───────────────────────────────────────────────────────
   defaultSkills: {
@@ -198,6 +232,35 @@ module.exports = {
       lowScoreThreshold: 75,
       maxHistoryEntries: 200,
     },
+  },
+
+  // ─── LLM Token Budget Optimization (Quick Wins) ────────────────────────────
+  // Dynamic budget: adjusts context injection based on task complexity (triage score).
+  // When enabled, maxInjectTokens shrinks for simple tasks (saving ~30-50% tokens)
+  // and expands for complex tasks (improving output quality).
+  //
+  // Triage score ranges (0-100):
+  //   Low    (0-30)  → lowBudgetRatio  (e.g. 0.5 = 1400 tokens)
+  //   Medium (31-70) → default budget (2800 tokens)
+  //   High   (71-100)→ highBudgetRatio (e.g. 1.5 = 4200 tokens)
+  llm: {
+    dynamicBudget: {
+      enabled: true,
+      defaultMaxInjectTokens: 2800,
+      lowBudgetRatio: 0.5,
+      highBudgetRatio: 1.5,
+    },
+  },
+
+  // ─── Prompt Auto-Optimization (Quick Wins) ─────────────────────────────────
+  // Feedback-driven prompt improvement. After minFeedbackForAnalysis feedback
+  // records are collected, the system generates evidence-based optimization
+  // suggestions. When autoApply is true, high-confidence optimizations (≥85%)
+  // are applied automatically; otherwise they are queued for manual review.
+  promptAutoOptimization: {
+    enabled: true,
+    autoApply: true,
+    minFeedbackForAnalysis: 5,
   },
 
   // ─── Legacy Projection Outputs (manifest.json + workflow-status.json) ──────

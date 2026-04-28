@@ -24,9 +24,9 @@ while RequestTriage remains advisory-only for diagnostics and prioritization.
 ## Project Context
 
 - **Project**: WorkFlowAgent
-- **Tech Stack**: Node.js
+- **Tech Stack**: JavaScript + Node.js
 - **Frameworks**: auto-detected at runtime
-- **Architecture**: see output/project-profile.md
+- **Architecture**: Unknown
 - **Workflow Root**: workflow
 
 ## Core Principle: IDE-First, Self-Built Fallback (ADR-37)
@@ -202,16 +202,6 @@ At the START of every task, you MUST load dynamic context using **`read_file`** 
 - **Architecture Constraints**: Read `architecture-constraints.md` for hard guardrails (e.g. "no new dependencies without approval")
 - **Feature List**: Check `output/feature-list.json` to know which features are done (`passes: true`) and which remain (`passes: false`). Work on the highest-priority incomplete feature.
 
-
-### Known Issues (Self-Reflection)
-## ⚠️ Known Issues (Self-Reflection)
-
-### 🟠 High Priority
-- Quality gate breached: minTestPassRate → Review failed test cases, debug implementation, ensure requirements alignment
-- Quality gate breached: minTestPassRate → Review failed test cases, debug implementation, ensure requirements alignment
-- Quality gate breached: minTestPassRate → Review failed test cases, debug implementation, ensure requirements alignment
-- Quality gate breached: maxLlmCalls → Review retry logic, implement exponential backoff, set max retry limits, check for circular dependencies in reasoning
-- Quality gate breached: minTestPassRate → Review failed test cases, debug implementation, ensure requirements alignment
 
 
 ## Negative Examples (what NOT to do — across ALL stages)
@@ -913,6 +903,16 @@ You MUST output a structured completion summary. This is NOT optional:
 ## Acceptance Criteria Status
 - ✅ <criteria 1> — verified
 - ✅ <criteria 2> — verified
+
+## 复盘 / Retrospective
+
+| Layer | Question | Answer |
+|-------|----------|--------|
+| **Prevention** (预防层) | How did this problem arise? What process/check would have caught it earlier? | |
+| **Capability** (能力层) | What pattern or technique did you learn? How do you encode it for reuse? | |
+| **Efficiency** (效率层) | What slowed you down most? What would make the next similar task 2x faster? | |
+
+> ⚠️ Each row MUST be filled with a specific answer. "N/A" or blank = incomplete retrospective.
 ```
 
 > ⚠️ The **Modified Files** table is CRITICAL. Users must see exactly which files were changed.
@@ -1177,7 +1177,39 @@ During the CODE stage, after each file modification, output:
 
 ## Architecture Knowledge Cache
 
-> Auto-distilled. Last updated: 2026-04-12T23:39:05.894Z
+> Auto-distilled. Last updated: 2026-04-24T14:21:17.568Z
+
+### Module Map
+
+| Module | Files | Classes | Functions |
+|--------|-------|---------|-----------|
+| `workflow/core` | 271 | 161 | 3315 |
+| `workflow/tools` | 16 | 4 | 321 |
+| `workflow/hooks/adapters` | 16 | 17 | 232 |
+| `workflow/tests` | 34 | 1 | 211 |
+| `workflow/core/runtime` | 12 | 12 | 183 |
+| `workflow/core/teardown-steps` | 31 | 30 | 67 |
+| `workflow/agents` | 9 | 8 | 74 |
+| `workflow/commands` | 14 | 1 | 60 |
+> 5059 symbols total
+
+### 🔥 Hotspots
+
+- **filter** ← 3633 refs, 29 calls [utility]
+- **entries** ← 2516 refs, 24 calls [utility]
+- **parse** ← 2215 refs, 18 calls [utility]
+- **process** ← 2016 refs, 18 calls [utility]
+- **lines** ← 1984 refs, 27 calls [utility]
+- **summary** ← 1975 refs, 63 calls [utility]
+- **outputDir** ← 1943 refs, 14 calls [utility]
+- **projectRoot** ← 1734 refs, 19 calls [utility]
+- **stage** ← 1697 refs, 27 calls [utility]
+- **score** ← 1474 refs, 6 calls [utility]
+
+### Tech Stack
+
+- Architecture: Unknown
+- Testing: unittest, XCTest
 
 ### 🧩 Capability Index
 
@@ -1248,20 +1280,20 @@ During the CODE stage, after each file modification, output:
 
 ### 📖 Recent Tasks
 
-✅ [2026-04-02] health log quick validation — completed
-✅ [2026-04-02] Validate confidence scoring pipeline after P0-P2 rollout — completed
-✅ [2026-04-02] health-log-prod-default-regression — completed
-✅ [2026-04-02] p1 p2 transparency smoke — completed
-✅ [2026-04-02] health log smoke test — completed
+✅ [2026-04-24] AI-Driven Skill Generation System: build skill-packager, capability-mapper, skill-ai-generator, inte — completed
+✅ [2026-04-24] Unified Skill Generator: Continue DEVELOP stage — fix syntax errors in skill-generator.js, add runSk — completed
+✅ [2026-04-24] T-8 FINISHED integration + health-report: consolidated Phase 1+2 delivery into output/phase1-2-deliv — completed
+✅ [2026-04-24] Phase 1+2 closure: confirm 5 T-tasks + 2 upstream integration tasks + Phase 1/Phase 2 integration ve — completed
+✅ [2026-04-23] Phase 2 integration verification: confirm T-4 freshness scoring + T-5 layer-aware half-life config t — completed
 
 > _Maintain continuity: avoid repeating completed work._
 ### 📖 Recent Tasks
 
-✅ [2026-04-02] health log quick validation — completed
-✅ [2026-04-02] Validate confidence scoring pipeline after P0-P2 rollout — completed
-✅ [2026-04-02] health-log-prod-default-regression — completed
-✅ [2026-04-02] p1 p2 transparency smoke — completed
-✅ [2026-04-02] health log smoke test — completed
+✅ [2026-04-24] AI-Driven Skill Generation System: build skill-packager, capability-mapper, skill-ai-generator, inte — completed
+✅ [2026-04-24] Unified Skill Generator: Continue DEVELOP stage — fix syntax errors in skill-generator.js, add runSk — completed
+✅ [2026-04-24] T-8 FINISHED integration + health-report: consolidated Phase 1+2 delivery into output/phase1-2-deliv — completed
+✅ [2026-04-24] Phase 1+2 closure: confirm 5 T-tasks + 2 upstream integration tasks + Phase 1/Phase 2 integration ve — completed
+✅ [2026-04-23] Phase 2 integration verification: confirm T-4 freshness scoring + T-5 layer-aware half-life config t — completed
 
 > _Maintain continuity: avoid repeating completed work._
 

@@ -213,7 +213,7 @@ function testQuantitativeMetrics() {
   const stagePatterns = {
     'requirement.md': [/#{1,3}\s*[^\n]*?(需求|Requirements|概述|Overview)/i, /#{1,3}\s*[^\n]*?(用户|User Stories)/i, /#{1,3}\s*[^\n]*?(验收|Acceptance)/i],
     'architecture.md': [/#{1,3}\s*[^\n]*?(架构|Architecture)/i, /#{1,3}\s*[^\n]*?(组件|Components)/i, /#{1,3}\s*[^\n]*?(技术栈|Tech Stack)/i, /#{1,3}\s*[^\n]*?(数据流|Data Flow)/i],
-    'execution-plan.md': [/#{1,3}\s*[^\n]*?(任务|Tasks)/i, /#{1,3}\s*[^\n]*?(阶段|Phases)/i, /#{1,3}\s*[^\n]*?(依赖|Dependencies)/i],
+    'execution-plan.md': [/#{1,3}\s*[^\n]*?(任务|Tasks|Task Breakdown)/i, /#{1,3}\s*[^\n]*?(阶段|Phases|Phase)/i, /#{1,3}\s*[^\n]*?(依赖|Dependencies|Execution)/i],
     'code.diff': [/^\+\+\+/m, /^---/m, /^@@/m],
     'test-report.md': [/#{1,3}\s*[^\n]*?(测试|Test)/i, /#{1,3}\s*[^\n]*?(结果|Results)/i],
   };

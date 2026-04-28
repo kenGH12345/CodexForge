@@ -815,6 +815,130 @@ try {
   }
 } catch { /* skip */ }
 
+// [Phase 3] ── MAPE Self-Healing Metrics Panel ───────────────────────────────
+// Reads from mape-analysis.jsonl and mape-failure-counters.json to surface
+// MAPE engine health: execution summary, failure patterns, and auto-heal triggers.
+(function addMAPEPanel() {
+  try {
+    const mapeAnalysisPath   = path.join(outputDir, 'mape-analysis.jsonl');
+    const mapeCountersPath   = path.join(outputDir, 'mape-failure-counters.json');
+    const mapeHealthPath     = path.join(outputDir, 'mape-health-report.json');
+
+    let mapeEntries = [];
+    if (fs.existsSync(mapeAnalysisPath)) {
+      mapeEntries = fs.readFileSync(mapeAnalysisPath, 'utf-8')
+        .trim().split('\n')
+        .map(line => { try { return JSON.parse(line); } catch { return null; } })
+        .filter(Boolean)
+        .slice(-10); // last 10 MAPE cycles
+    }
+
+    let counters = {};
+    if (fs.existsSync(mapeCountersPath)) {
+      counters = JSON.parse(fs.readFileSync(mapeCountersPath, 'utf-8'));
+    }
+
+    if (mapeEntries.length === 0 && Object.keys(counters).length === 0) {
+      return; // MAPE has not run yet — skip panel
+    }
+
+    lines.push(`## 🔧 MAPE Self-Healing Metrics`);
+    lines.push(``);
+
+    // 1. Execution Summary
+    const totalCycles     = mapeEntries.length;
+    const totalActions    = mapeEntries.reduce((sum, e) => sum + (e.execute?.executed || 0), 0);
+    const totalSkipped    = mapeEntries.reduce((sum, e) => sum + (e.execute?.skipped || 0), 0);
+    const totalErrors     = mapeEntries.reduce((sum, e) => {
+      return sum + (e.execute?.results || []).filter(r => r.status === 'error').length;
+    }, 0);
+    const successRate     = totalActions > 0 ? (((totalActions - totalErrors) / totalActions) * 100).toFixed(1) : 'N/A';
+
+    lines.push(`### Execution Summary (Last ${totalCycles} Cycles)`);
+    lines.push(``);
+    lines.push(`| Metric | Value |`);
+    lines.push(`|--------|-------|`);
+    lines.push(`| MAPE Cycles | ${totalCycles} |`);
+    lines.push(`| Actions Executed | ${totalActions} |`);
+    lines.push(`| Actions Skipped | ${totalSkipped} |`);
+    lines.push(`| Execution Errors | ${totalErrors} |`);
+    lines.push(`| Success Rate | ${successRate !== 'N/A' ? successRate + '%' : 'N/A'} |`);
+    lines.push(``);
+
+    // 2. Failure Patterns
+    const activeCounters = Object.entries(counters).filter(([, v]) => v > 0);
+    if (activeCounters.length > 0) {
+      lines.push(`### Failure Patterns (Current Counters)`);
+      lines.push(``);
+      lines.push(`| Action Type | Consecutive Failures | Status |`);
+      lines.push(`|-------------|----------------------|--------|`);
+      activeCounters.forEach(([actionType, count]) => {
+        const status = count >= 3 ? '🔴 Will trigger auto-heal' : count >= 2 ? '🟡 Warning' : '🟢 Mild';
+        lines.push(`| ${actionType} | ${count} | ${status} |`);
+      });
+      lines.push(``);
+    }
+
+    // 3. Auto-Heal Triggers
+    let autoHealHistory = [];
+    if (fs.existsSync(mapeHealthPath)) {
+      autoHealHistory = JSON.parse(fs.readFileSync(mapeHealthPath, 'utf-8'));
+    }
+    const recentHeals = Array.isArray(autoHealHistory) ? autoHealHistory.slice(-5) : [];
+    if (recentHeals.length > 0) {
+      lines.push(`### Recent Auto-Heal Triggers`);
+      lines.push(``);
+      lines.push(`| Time | Action Type | Skill Evolved | Reason |`);
+      lines.push(`|------|-------------|---------------|--------|`);
+      recentHeals.forEach(h => {
+        const time = h.timestamp ? new Date(h.timestamp).toISOString().slice(11, 19) : 'N/A';
+        lines.push(`| ${time} | ${h.actionType || '-'} | ${h.skillName || '-'} | ${h.reason || '-'} |`);
+      });
+      lines.push(``);
+    }
+
+    // 4. Analysis Insight (last cycle)
+    const lastEntry = mapeEntries[mapeEntries.length - 1];
+    if (lastEntry?.analysis) {
+      lines.push(`### Last Analysis Insight`);
+      lines.push(``);
+      lines.push(`| Metric | Value |`);
+      lines.push(`|--------|-------|`);
+      lines.push(`| Root Causes | ${lastEntry.analysis.rootCauses?.length || 0} |`);
+      lines.push(`| Correlations | ${lastEntry.analysis.correlations?.length || 0} |`);
+      lines.push(`| Dry Run | ${lastEntry.dryRun ? 'Yes' : 'No'} |`);
+      lines.push(`| Elapsed | ${lastEntry.elapsed || 'N/A'}ms |`);
+      lines.push(``);
+    }
+
+    lines.push(`---`);
+    lines.push(``);
+  } catch (err) {
+    console.error(`[HealthReport] ⚠️ MAPE panel error: ${err.message}`);
+  }
+})();
+
+// ── Quality Gate ──────────────────────────────────────────────────────────────
+try {
+  if (fs.existsSync(qualityReportPath)) {
+    const qualityContent = fs.readFileSync(qualityReportPath, 'utf-8');
+    const scoreMatch     = qualityContent.match(/\*\*(\d+)\*\* \(([A-F])\)/);
+    const signalsMatch   = qualityContent.match(/\*\*Total Signals\*\* \| (\d+)/);
+
+    if (scoreMatch || signalsMatch) {
+      lines.push(`## 🚦 Quality Gate Results`);
+      lines.push(``);
+      lines.push(`| Metric | Value |`);
+      lines.push(`|--------|-------|`);
+      if (scoreMatch) lines.push(`| Quality Score | **${scoreMatch[1]}** (${scoreMatch[2]}) |`);
+      if (signalsMatch) lines.push(`| Total Signals | ${signalsMatch[1]} |`);
+      lines.push(``);
+      lines.push(`---`);
+      lines.push(``);
+    }
+  }
+} catch { /* skip */ }
+
 // ── Verification Evidence Protocol ───────────────────────────────────────────
 lines.push(`## 🧾 Verification Evidence Protocol`);
 lines.push(``);

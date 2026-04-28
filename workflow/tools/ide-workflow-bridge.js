@@ -43,6 +43,8 @@ console.log = console.error;
  *   skill-refine-check  — Identify skills that need refinement/fix (candidates for IDE Agent LLM)
  *   contract-check      — Validate core module interface contracts (IExperienceStore, ICodeGraph)
  *   skill-discover      — Auto-discover project conventions from config files (zero LLM)
+ *   skill-generate      — Generate a source-code-level skill from project source (zero LLM)
+ *   gen-skill           — (IDE Agent) Two-step skill: signal discovery + preview for LLM generation confirmation
  *   experience-transfer  — Cross-project experience discovery, export, and import
  *   task-history         — Cross-session task recall memory (record/recall/stats)
  *   arch-cache           — Architecture Knowledge Cache (rebuild/summary/capability-index)
@@ -75,6 +77,8 @@ console.log = console.error;
  *   node workflow/tools/ide-workflow-bridge.js rollback-check --stage ARCHITECT --file output/architecture.md --project-root .
  *   node workflow/tools/ide-workflow-bridge.js quality-gate --error-count 2 --test-pass-rate 0.85 --duration-ms 120000 --project-root .
  *   node workflow/tools/ide-workflow-bridge.js quality-gate --diagnostic-mode --project-root .  # EvoSkill: Record-only mode for new projects
+ *   node workflow/tools/ide-workflow-bridge.js gen-skill --path ./my-project
+ *   node workflow/tools/ide-workflow-bridge.js gen-skill  # defaults to current project
  *
  * Output: Structured JSON to stdout (parseable by the IDE Agent).
  *
@@ -262,6 +266,12 @@ function parseArgs(argv) {
     category: '',
     title: '',
     content: '',
+    // four-section pitfall recording (ADR-2026)
+    fourSection: false,
+    phenomenon: '',
+    rootCause: '',
+    solution: '',
+    verification: '',
     files: [],
     limit: 5,
     role: 'developer',
@@ -353,6 +363,9 @@ function parseArgs(argv) {
       case '-p':
         args.projectRoot = argv[++i] || '.';
         break;
+      case '--path':
+        args.projectRoot = argv[++i] || '.';
+        break;
       case '--stage':
         args.stage = argv[++i] || '';
         break;
@@ -392,6 +405,23 @@ function parseArgs(argv) {
       case '--content':
         args.content = argv[++i] || '';
         break;
+      // ---- Four-Section Pitfall Recording (ADR-2026) ----
+      case '--four-section':
+        args.fourSection = true;
+        break;
+      case '--phenomenon':
+        args.phenomenon = argv[++i] || '';
+        break;
+      case '--root-cause':
+        args.rootCause = argv[++i] || '';
+        break;
+      case '--solution':
+        args.solution = argv[++i] || '';
+        break;
+      case '--verification':
+        args.verification = argv[++i] || '';
+        break;
+      // ---------------------------------------------------
       case '--files':
         args.files = (argv[++i] || '').split(',').map(f => f.trim()).filter(Boolean);
         break;
@@ -433,6 +463,9 @@ function parseArgs(argv) {
         break;
       case '--dry-run':
         args.dryRun = true;
+        break;
+      case '--force':
+        args.force = true;
         break;
       case '--max-actions':
         args.maxActions = argv[++i] || '5';
@@ -478,6 +511,9 @@ function parseArgs(argv) {
         break;
       case '--skill-name':
         args.skillName = argv[++i] || '';
+        break;
+      case '--threshold':
+        args.threshold = parseInt(argv[++i], 10) || 40;
         break;
       case '--section':
         args.section = argv[++i] || '';
@@ -941,19 +977,36 @@ function runExperienceRecord(args) {
     if (!args.title) {
       return { success: false, subcommand: 'experience-record', error: 'Missing --title' };
     }
-    if (!args.content) {
-      return { success: false, subcommand: 'experience-record', error: 'Missing --content' };
+
+    // ---- Four-Section Pitfall Auto-Assembly (ADR-2026) ----
+    let content = args.content;
+    const hasFourSection = args.fourSection || args.phenomenon || args.rootCause || args.solution || args.verification;
+    if (hasFourSection) {
+      const parts = [];
+      if (args.phenomenon) parts.push(` ## 现象 (Phenomenon)\n${args.phenomenon}`);
+      if (args.rootCause) parts.push(` ## 根因 (Root Cause)\n${args.rootCause}`);
+      if (args.solution) parts.push(` ## 方案 (Solution)\n${args.solution}`);
+      if (args.verification) parts.push(` ## 验证 (Verification)\n${args.verification}`);
+      if (parts.length === 0) {
+        return { success: false, subcommand: 'experience-record', error: '--four-section requires at least one of --phenomenon, --root-cause, --solution, --verification' };
+      }
+      content = parts.join('\n\n');
     }
+    if (!content) {
+      return { success: false, subcommand: 'experience-record', error: 'Missing --content (or use --four-section with at least one section)' };
+    }
+    // --------------------------------------------------------
 
     const type = args.type === 'NEGATIVE' ? ExperienceType.NEGATIVE : ExperienceType.POSITIVE;
-    const category = args.category || 'general';
+    // Auto-default category to 'pitfall' when four-section or explicit pitfall tag is used
+    const category = args.category || (hasFourSection ? 'pitfall' : 'general');
 
     // Use content-based dedup to avoid duplicates
     const exp = store.recordWithContentCheck({
       type,
       category,
       title: args.title,
-      content: args.content,
+      content: content,
       skill: args.skill || null,
       tags: args.tags.length > 0 ? args.tags : [],
     });
@@ -2808,6 +2861,465 @@ async function runSkillDiscover(args) {
     };
   } catch (err) {
     return { success: false, subcommand: 'skill-discover', error: err.message };
+  }
+}
+
+// ─── Sub-command: skill-generate (NEW) ───────────────────────────────────────
+
+/**
+ * Generate a source-code-level skill for a project.
+ * Triggers the full pipeline: scan → extract → format → register.
+ * Zero LLM calls by default — all extraction is rule/regex based.
+ */
+async function runSkillGenerate(args) {
+  try {
+    const { generate } = require('../core/skill-generator-facade');
+    const { SkillEvolutionEngine } = require('../core/skill-evolution');
+
+    const projectRoot = args.projectRoot || args['project-root'] || process.cwd();
+    const skillName = args['skill-name'] || args.skillName || null;
+    const includeLanguages = (args.languages || '').split(',').filter(Boolean);
+    const maxFiles = parseInt(args['max-files'], 10) || 1000;
+    const dryRun = args['dry-run'] === 'true' || args['dry-run'] === true || args.dryRun === true;
+    const force = args.force === 'true' || args.force === true;
+
+    const skillEvolution = new SkillEvolutionEngine();
+
+    const result = await generate(projectRoot, {
+      skillName,
+      maxFiles,
+      includeLanguages,
+      dryRun,
+      force,
+      skillEvolution,
+    });
+
+    if (result.error) {
+      return {
+        success: false,
+        subcommand: 'skill-generate',
+        error: result.error,
+        hint: result.hint,
+        data: {
+          projectRoot,
+          fileCount: result.scanResult?.fileCount,
+          primaryLanguage: result.scanResult?.primaryLanguage,
+        },
+      };
+    }
+
+    return {
+      success: true,
+      subcommand: 'skill-generate',
+      data: {
+        skillName: result.skillName,
+        skillPath: result.skillPath,
+        signalCount: result.signalCount,
+        registered: result.registered,
+        dryRun: result.dryRun,
+        confidenceSummary: result.confidenceSummary,
+        scanSummary: result.scanSummary,
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'skill-generate', error: err.message };
+  }
+}
+
+async function runSkillGenerateAI(args) {
+  try {
+    const { generateSkillFromPackaged } = require('../core/skill-ai-generator');
+
+    const projectRoot = args.projectRoot || args['project-root'] || process.cwd();
+    const skillName = args['skill-name'] || args.skillName || null;
+    const maxFiles = parseInt(args['max-files'], 10) || 200;
+    const maxTokens = parseInt(args['max-tokens'], 10) || 8192;
+    const dryRun = args['dry-run'] === 'true' || args['dry-run'] === true || args.dryRun === true;
+    const force = args.force === 'true' || args.force === true;
+
+    // Load code-graph.json for refined signal extraction
+    let codeGraph = {};
+    try {
+      const cgPath = path.join(projectRoot, 'output', 'code-graph.json');
+      if (fs.existsSync(cgPath)) {
+        codeGraph = JSON.parse(fs.readFileSync(cgPath, 'utf-8'));
+      }
+    } catch (cgErr) {
+      console.error(`[skill-generate-ai] Could not load code-graph.json: ${cgErr.message}`);
+    }
+
+    // Build lightweight packaged context
+    const modules = [];
+    const seen = new Set();
+    const projectFiles = [];
+    try {
+      const walk = (dir, depth = 0) => {
+        if (depth > 6) return;
+        for (const entry of fs.readdirSync(dir)) {
+          if (entry.startsWith('.') || entry === 'node_modules' || entry === 'output') continue;
+          const full = path.join(dir, entry);
+          const stat = fs.statSync(full);
+          if (stat.isDirectory()) {
+            walk(full, depth + 1);
+          } else if (/\.(js|ts|jsx|tsx|py|go|java|cs|cpp|c|h|rs|rb|php)$/.test(entry) && projectFiles.length < maxFiles) {
+            projectFiles.push(path.relative(projectRoot, full));
+          }
+        }
+      };
+      walk(projectRoot);
+    } catch (walkErr) {
+      console.error(`[skill-generate-ai] File walk failed: ${walkErr.message}`);
+    }
+
+    for (const fp of projectFiles) {
+      const dir = path.dirname(fp).split(/[\\/]/).pop() || 'root';
+      if (!seen.has(dir)) {
+        seen.add(dir);
+        modules.push({ name: dir, files: [fp] });
+      } else {
+        const m = modules.find(x => x.name === dir);
+        if (m) m.files.push(fp);
+      }
+    }
+    const packaged = { modules, contextString: '', projectType: 'unknown' };
+
+    // Support --llm-module for external LLM adapter (Scheme C)
+    let llmAdapterPath = args.llmModule || args['llm-module'] || null;
+    // Support --ide-agent-callback for IDE Agent direct LLM mode (Scheme C enhanced)
+    let ideAgentCallback = null;
+    if (args.ideAgentCallback && typeof args.ideAgentCallback === 'function') {
+      ideAgentCallback = args.ideAgentCallback;
+    }
+
+    const result = await generateSkillFromPackaged(packaged, codeGraph, {
+      maxFiles,
+      maxTokensTotal: maxTokens,
+      dryRun,
+      force,
+      llmAdapterPath,
+      ideAgentCallback,
+      outputDir: args['output-dir'] || '.workflow/skills',
+      returnContent: dryRun
+    });
+
+    const skillDir = path.join(projectRoot, '.workflow', 'skills', (skillName || path.basename(projectRoot)).toLowerCase());
+    const skillPath = path.join(skillDir, 'SKILL.md');
+
+    // Write SKILL.md if not dryRun
+    if (!dryRun && result.skillMarkdown) {
+      if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(skillPath, result.skillMarkdown, 'utf-8');
+    }
+
+    return {
+      success: true,
+      subcommand: 'skill-generate-ai',
+      data: {
+        skillName: skillName || path.basename(projectRoot),
+        skillPath: dryRun ? null : skillPath,
+        tokenUsage: result.metadata && result.metadata.tokenEstimate,
+        sectionCount: (result.skillMarkdown || '').split('##').length - 1,
+        generationTimeMs: Date.now(),
+        usedFallback: !(result.metadata && result.metadata.llmPowered),
+        dryRun,
+        ...(dryRun && result.skillMarkdown ? { skillContent: result.skillMarkdown.slice(0, 2000) + (result.skillMarkdown.length > 2000 ? '\n... (truncated)' : '') } : {}),
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'skill-generate-ai', error: err.message };
+  }
+}
+
+// ─── Sub-command: gen-skill (IDE Agent two-step) ─────────────────────────────
+
+/**
+ * Two-step skill generation for IDE Agent mode:
+ *   Step 1 (this command): Signal discovery + coverage assessment (zero LLM)
+ *   Step 2 (IDE Agent LLM): On user confirmation, the IDE Agent reads source files
+ *                            and synthesizes a SKILL.md using its own LLM capacity.
+ *
+ * --path: target project directory (defaults to current project if omitted)
+ */
+async function runGenSkill(args) {
+  try {
+    const targetProjectRoot = args.projectRoot || args['project-root'] || process.cwd();
+    const { scanProjectConventions, formatSignalsForLLM } = require('../core/skill-discovery');
+    const { discoverProjectSkills } = require('../core/skill-discovery');
+
+    // 1. Run config-based signal discovery (package.json, tsconfig, eslint, etc.)
+    const configSignals = scanProjectConventions(targetProjectRoot);
+
+    // 2. Run source-code signal discovery (primary: actual source patterns)
+    let codeSignals = [];
+    try {
+      const { scanSourceCodeSignals } = require('../core/skill-discovery');
+      const maxFiles = parseInt(args.maxFiles || args['max-files'] || args.files || 5000, 10);
+      codeSignals = scanSourceCodeSignals(targetProjectRoot, { maxFiles, maxDepth: args['max-depth'] || 6 });
+    } catch (codeErr) {
+      console.error(`[gen-skill] Source code scan skipped: ${codeErr.message}`);
+    }
+
+    // 3. Merge and deduplicate signals (code signals take priority)
+    const seen = new Set();
+    const allSignals = [...codeSignals, ...configSignals].filter(s => {
+      const key = `${s.source || s.type || 'unknown'}|${s.category || s.signal || ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    // 4. Categorize signals
+    const byCategory = {};
+    for (const s of allSignals) {
+      const cat = s.category || s.type || 'general';
+      byCategory[cat] = (byCategory[cat] || 0) + 1;
+    }
+
+    // 5. Check if skill already exists
+    const projectName = path.basename(path.resolve(targetProjectRoot));
+    const skillDir = path.join(targetProjectRoot, '.workflow', 'skills', projectName.toLowerCase());
+    const skillPath = path.join(skillDir, 'SKILL.md');
+    const skillExists = fs.existsSync(skillPath);
+
+    // 6. Estimate coverage (weighted toward code-scanned dimensions)
+    const codeSignalCount = codeSignals.length;
+    const hasEntryPoints = allSignals.some(s =>
+      (s.category || '').toLowerCase() === 'entrypoints' ||
+      (s.signal || '').toLowerCase().includes('entry')
+    );
+    const hasArchitecture = allSignals.some(s =>
+      (s.category || '').toLowerCase() === 'architecture' ||
+      (s.category || '').toLowerCase() === 'structure'
+    );
+    const hasPatterns = allSignals.some(s =>
+      (s.category || '').toLowerCase() === 'patterns'
+    );
+    // Coverage score: config signals alone cap at 1/3 (low), code signals required for medium+
+    const coverageScore = [hasEntryPoints, hasArchitecture, hasPatterns].filter(Boolean).length;
+    const hasCode = codeSignalCount > 0;
+    const coverageLevel = hasCode
+      ? (coverageScore >= 3 ? 'high' : coverageScore >= 2 ? 'medium' : 'low')
+      : 'low';
+
+    // 7. Top signals preview (prioritize code-scanned signals in preview)
+    const codeTop = codeSignals.slice(0, 12);
+    const configTop = configSignals
+      .filter(cs => !codeTop.some(ct => ct.signal === cs.signal))
+      .slice(0, 3);
+    const topSignals = [...codeTop, ...configTop].map(s => ({
+      source: s.source || s.type || 'unknown',
+      category: s.category || s.type || 'general',
+      signal: (s.signal || '').length > 120 ? (s.signal || '').slice(0, 120) + '...' : (s.signal || ''),
+    }));
+
+    // 8. Recommendation
+    let recommendation = '';
+    if (skillExists) {
+      recommendation = `Skill already exists at ${skillPath}. Use --force to overwrite, or review existing skill before regenerating.`;
+    } else if (!hasCode) {
+      recommendation = 'No source code signals found. The project may lack a recognizable src/ directory or source files. Recommend verifying project structure before generating skill.';
+    } else if (coverageLevel === 'low') {
+      recommendation = `Low coverage (${allSignals.length} signals). Source code scanned (${codeSignalCount} code signals + ${configSignals.length} config signals). Recommend reading key source files (engines, API routes, core types) before generating skill.`;
+    } else {
+      recommendation = `Good signal coverage. Source code scanned: ${codeSignalCount} code signals + ${configSignals.length} config signals. Ready for Step 2: IDE Agent reads source files and synthesizes SKILL.md.`;
+    }
+
+    // ── Production-First: R2 Observability ──
+    // After successful gen-skill, append a trace event so health-report reflects real usage.
+    // This mirrors the trace-append pattern used by workflow-stage / stage-complete.
+    try {
+      const genTraceResult = runTraceAppend({
+        projectRoot: targetProjectRoot,
+        event: 'gen_skill_completed',
+        stage: null,
+        seq: 1,
+        summary: `gen-skill: ${allSignals.length} signals, coverage=${coverageLevel}`,
+        metadata: {
+          subcommand: 'gen-skill',
+          signalCount: allSignals.length,
+          codeSignalCount,
+          configSignalCount: configSignals.length,
+          coverageLevel,
+          coverageScore,
+          skillExists,
+          skillPath,
+          projectName,
+        },
+      });
+      if (!genTraceResult.success) {
+        console.error(`[gen-skill] Trace append failed (non-fatal): ${genTraceResult.error}`);
+      }
+    } catch (traceErr) {
+      console.error(`[gen-skill] Trace append error (non-fatal): ${traceErr.message}`);
+    }
+
+    // ── Resolve skill-author-guide meta-skill (see ADR: gen-skill quality enhancement) ──
+    // Path anchored to __dirname so it follows WorkFlowAgent installation, not the target project.
+    let skillAuthorGuide = null;
+    try {
+      const metaGuideAbsPath = path.join(__dirname, '..', 'skills', 'skill-author-guide.md');
+      const metaRefsDir = path.join(__dirname, '..', 'skills', 'skill-author-guide-refs');
+      if (fs.existsSync(metaGuideAbsPath)) {
+        let referenceFiles = [];
+        try {
+          if (fs.existsSync(metaRefsDir)) {
+            referenceFiles = fs.readdirSync(metaRefsDir)
+              .filter(f => f.endsWith('.md'))
+              .map(f => `workflow/skills/skill-author-guide-refs/${f}`);
+          }
+        } catch (refErr) {
+          console.error(`[gen-skill] References dir scan skipped: ${refErr.message}`);
+        }
+        skillAuthorGuide = {
+          path: 'workflow/skills/skill-author-guide.md',
+          references: referenceFiles,
+          purpose: '指导 IDE Agent 生成高质量项目专家 skill 的 rubric + 调研清单 + 反模式 + 自检表',
+        };
+      }
+    } catch (metaErr) {
+      console.error(`[gen-skill] Meta-skill resolve skipped: ${metaErr.message}`);
+    }
+
+    const shouldGenerate = !skillExists || args.force;
+    const qualityRubric = {
+      language: 'zh-CN',
+      minWordCount: 3000,
+      targetWordCount: 5000,
+      minSections: 14,
+      requiredDimensions: [
+        '项目概览', '项目流程', '模块管理', '设计模式', '架构框架',
+        '事件系统', '状态管理', '配置数据驱动', '持久化存档',
+        '网络通信', '日志系统', '公共组件',
+        '错误处理', '修改影响半径', 'Onboarding路径',
+      ],
+      mustIncludeEvidence: ['hotspots', 'callEdges', 'reusableSymbols', 'entryPoints'],
+      minFilePathsPerDimension: 3,
+      minCodeSnippetsPerDimension: 1,
+      forbiddenContent: ['通用软件工程建议', '未验证的文件路径', '空章节', 'TODO 占位'],
+    };
+
+    const mandatoryNextAction = (shouldGenerate && skillAuthorGuide) ? {
+      type: 'READ_META_SKILL_FIRST',
+      instruction: [
+        '⛔ 在生成 SKILL.md 之前，你 MUST 按顺序执行：',
+        `1. read_file ${skillAuthorGuide.path}`,
+        '2. read_file output/code-graph.json',
+        '3. read_file output/business-logic.json (如存在)',
+        '4. read_file output/api-endpoints.json (如存在)',
+        '5. 按 meta-skill §1 完成 4 个 read_file + 5 个源文件深读',
+        '6. 按 meta-skill §3 的 14 节模板落笔，每节参考 p0-dimensions.md 对应 rubric',
+        '7. 落盘前按 meta-skill §8 完成 6 问自检',
+        '',
+        '❌ 不要跳过 meta-skill 直接生成——这是 skill 质量单薄的根因。',
+        '✅ 产出要求：中文、≥3000字、≥14节、每节≥3个真实文件路径+1段代码证据。',
+      ].join('\n'),
+      readOrder: [
+        skillAuthorGuide.path,
+        'output/code-graph.json',
+        'output/business-logic.json',
+        'output/api-endpoints.json',
+      ],
+      rubricReferences: skillAuthorGuide.references,
+    } : null;
+
+    return {
+      success: true,
+      subcommand: 'gen-skill',
+      dryRun: false,
+      data: {
+        projectRoot: targetProjectRoot,
+        projectName,
+        signalCount: allSignals.length,
+        configSignalCount: configSignals.length,
+        codeSignalCount,
+        coverageLevel,
+        coverageScore,
+        byCategory,
+        hasEntryPoints,
+        hasArchitecture,
+        hasPatterns,
+        skillExists,
+        skillPath,
+        skillDir,
+        topSignals,
+        signalsSummary: formatSignalsForLLM ? formatSignalsForLLM(allSignals) : null,
+        recommendation,
+        nextStep: skillExists && !args.force
+          ? 'USER_CONFIRM_OVERWRITE'
+          : coverageLevel === 'low'
+            ? 'USER_CONFIRM_LOW_COVERAGE'
+            : 'USER_CONFIRM_GENERATE',
+        skillAuthorGuide,
+        mandatoryReadBeforeGenerate: [
+          'output/code-graph.json',
+          'output/business-logic.json',
+          'output/api-endpoints.json',
+          ...(skillAuthorGuide ? [skillAuthorGuide.path] : []),
+        ],
+        qualityRubric,
+      },
+      MANDATORY_NEXT_ACTION: mandatoryNextAction,
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'gen-skill', error: err.message };
+  }
+}
+
+// ─── Sub-command: skill-freshness-check ─────────────────────────────────────
+
+/**
+ * Check skill freshness by scanning code changes and scoring affected skills.
+ * Returns a JSON report with freshness scores, status, and suggestions.
+ */
+async function runSkillFreshnessCheck(args) {
+  try {
+    const { SkillChangeAwareness } = require('../core/skill-change-awareness');
+
+    const projectRoot = args.projectRoot || args['project-root'] || process.cwd();
+    const skillName = args['skill-name'] || args.skillName || null;
+    const threshold = parseInt(args.threshold, 10) || 40;
+
+    const awareness = new SkillChangeAwareness({
+      projectRoot,
+      config: { STALE_THRESHOLD: threshold },
+    });
+
+    // Build index
+    await awareness.buildIndex();
+
+    // Check changes for all skills or specific skill
+    const { affectedSkills, unchangedSkills } = await awareness.checkChanges();
+
+    // Filter by skill-name if specified
+    let filteredSkills = affectedSkills;
+    if (skillName) {
+      filteredSkills = affectedSkills.filter(s => s.name === skillName);
+    }
+
+    const staleCount = filteredSkills.filter(s => s.status === 'stale' || s.status === 'critical').length;
+    const criticalCount = filteredSkills.filter(s => s.status === 'critical').length;
+
+    const result = {
+      success: true,
+      subcommand: 'skill-freshness-check',
+      data: {
+        skills: filteredSkills,
+        staleCount,
+        criticalCount,
+        totalChecked: affectedSkills.length + unchangedSkills.length,
+        unchangedCount: unchangedSkills.length,
+        threshold,
+        projectRoot,
+      },
+    };
+
+    return result;
+  } catch (err) {
+    return {
+      success: false,
+      subcommand: 'skill-freshness-check',
+      error: err.message,
+      stack: err.stack,
+    };
   }
 }
 
@@ -5507,9 +6019,14 @@ function printHelp() {
           example: 'node workflow/tools/ide-workflow-bridge.js experience-context --skill "code-development" --task "refactor auth"',
         },
         'experience-record': {
-          description: 'Record a new experience with content-based dedup',
+          description: 'Record a new experience with content-based dedup. Supports --four-section mode for structured pitfall recording.',
           args: '--type POSITIVE|NEGATIVE --category <cat> --title <text> --content <text> [--skill <name>] [--tags <t1,t2>]',
           example: 'node workflow/tools/ide-workflow-bridge.js experience-record --type POSITIVE --category stable_pattern --title "JWT best practice" --content "Always validate..."',
+        },
+        'experience-record-four-section': {
+          description: 'Record a structured four-section pitfall (phenomenon, root-cause, solution, verification). Auto-assembles --content from sections.',
+          args: '--type NEGATIVE --title <text> (--content <text> | --four-section [--phenomenon <t>] [--root-cause <t>] [--solution <t>] [--verification <t>]) [--skill <name>] [--tags <t1,t2>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js experience-record --type NEGATIVE --category pitfall --title "XLua泛型方法限制" --four-section --phenomenon "调用泛型方法报错" --root-cause "xLua不支持C#泛型方法直接调用" --solution "使用EventHelper转发" --verification "运行时不再报错"',
         },
         'staleness-check': {
           description: 'Check if project artifacts are outdated',
@@ -5575,6 +6092,21 @@ function printHelp() {
           description: 'Auto-discover project conventions from config files (zero LLM, rule-scan)',
           args: '[--project-root <dir>]',
           example: 'node workflow/tools/ide-workflow-bridge.js skill-discover --project-root .',
+        },
+        'skill-generate': {
+          description: 'Generate a source-code-level skill from project source (scan + extract + register)',
+          args: '[--project-root <dir>] [--skill-name <name>] [--languages <lang1,lang2>] [--max-files <n>] [--dry-run] [--force]',
+          example: 'node workflow/tools/ide-workflow-bridge.js skill-generate --project-root . --skill-name myproject-dev --languages js,ts',
+        },
+        'skill-generate-ai': {
+          description: 'AI-driven skill generation via LLM (supports --llm-module for IDE Agent mode)',
+          args: '[--project-root <dir>] [--skill-name <name>] [--max-files <n>] [--max-tokens <n>] [--llm-module <path>] [--dry-run] [--force]',
+          example: 'node workflow/tools/ide-workflow-bridge.js skill-generate-ai --project-root . --skill-name myapp --llm-module workflow/tools/ide-llm-adapter.js',
+        },
+        'gen-skill': {
+          description: '(IDE Agent) Two-step skill generation: signal discovery (zero LLM) + preview for user confirmation',
+          args: '[--path <dir>] [--project-root <dir>] [--force]',
+          example: 'node workflow/tools/ide-workflow-bridge.js gen-skill --path ./my-project',
         },
         'experience-transfer': {
           description: 'Cross-project experience discovery, export, and import',
@@ -6053,7 +6585,7 @@ async function runWorkflowStage(args) {
 
         // (b) Skill Discovery — auto-discover project conventions (rule-based, zero LLM)
         try {
-          const { SkillEvolutionEngine } = require('../core/skill-evolution-engine');
+          const { SkillEvolutionEngine } = require('../core/skill-evolution');
           const _skillEvo = new SkillEvolutionEngine({ projectRoot: args.projectRoot || process.cwd() });
           const { discoverProjectSkills } = require('../core/skill-discovery');
           discoverProjectSkills({
@@ -9992,6 +10524,15 @@ async function main() {
           break;
         case 'skill-discover':
           innerResult = await runSkillDiscover(args);
+          break;
+        case 'skill-generate':
+          innerResult = await runSkillGenerate(args);
+          break;
+        case 'skill-generate-ai':
+          innerResult = await runSkillGenerateAI(args);
+          break;
+        case 'gen-skill':
+          innerResult = await runGenSkill(args);
           break;
         case 'experience-transfer':
           innerResult = runExperienceTransfer(args);

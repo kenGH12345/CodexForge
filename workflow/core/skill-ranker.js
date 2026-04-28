@@ -33,6 +33,8 @@
 
 // ─── BM25 Constants ───────────────────────────────────────────────────────────
 
+const { SkillEmbeddingCache } = require('./skill-embedding-cache');
+
 const BM25_K1 = 1.5;
 const BM25_B  = 0.75;
 
@@ -65,22 +67,17 @@ class SkillRanker {
    * @param {number} [options.topK=5] - Number of BM25 candidates to pass to embedding reranking
    */
   constructor(options = {}) {
-    /** @type {import('./embedding-service').EmbeddingService|null} */
     this._embeddingService = options.embeddingService || null;
     this._alpha = options.alpha ?? 0.6;
     this._minScore = options.minScore ?? 0.1;
     this._topK = options.topK ?? 5;
+    this._skillEmbeddingCache = options.skillEmbeddingCache || SkillEmbeddingCache.create();
 
-    // ── BM25 Corpus ───────────────────────────────────────────────────────
-    /** @type {Map<string, { tokens: string[], length: number, text: string }>} skillName → document */
+    // BM25 Corpus
     this._corpus = new Map();
-    /** @type {Map<string, number>} term → document frequency (number of docs containing term) */
     this._df = new Map();
-    /** @type {number} Average document length across corpus */
     this._avgdl = 0;
-    /** @type {number} Total number of documents */
     this._N = 0;
-    /** @type {boolean} Whether the corpus needs rebuilding */
     this._dirty = true;
   }
 
@@ -253,6 +250,17 @@ class SkillRanker {
 
     if (this._embeddingService && this._embeddingService.isReady()) {
       try {
+        // T-1: Inject persistent cached embeddings into memory cache
+        // to avoid re-computing skill embeddings on every rank() call
+        for (const [name, doc] of this._corpus) {
+          const cached = this._skillEmbeddingCache.getEmbedding(name, doc.text);
+          if (!cached) continue;
+          const cacheKey = doc.text.trim().toLowerCase();
+          if (!this._embeddingService._cache.has(cacheKey)) {
+            this._embeddingService._cache.set(cacheKey, cached);
+          }
+        }
+
         // Build candidate texts for embedding comparison
         const candidates = topCandidates.map(c => ({
           name: c.name,
@@ -263,7 +271,7 @@ class SkillRanker {
           query,
           candidates,
           this._topK,
-          0.0, // No minimum — we'll use the hybrid score for filtering
+          0.0,
         );
 
         // Build embedding score map
@@ -316,7 +324,37 @@ class SkillRanker {
     return bm25Only;
   }
 
-  // ─── Utility ────────────────────────────────────────────────────────────────
+  // Persistent Embedding Cache (T-1)
+
+  async preheat() {
+    if (!this._embeddingService || !this._embeddingService.isReady()) {
+      return { skipped: true, reason: 'embedding service not ready' };
+    }
+
+    let computed = 0;
+    let cached = 0;
+
+    for (const [name, doc] of this._corpus) {
+      if (this._skillEmbeddingCache.getEmbedding(name, doc.text)) {
+        cached++;
+        continue;
+      }
+
+      try {
+        const embedding = await this._embeddingService.embed(doc.text);
+        if (embedding) {
+          this._skillEmbeddingCache.setEmbedding(name, doc.text, embedding);
+          computed++;
+        }
+      } catch (err) {
+        // skip failed embeddings, they'll be retried on next rank()
+      }
+    }
+
+    return { computed, cached, total: this._corpus.size };
+  }
+
+  // Utility
 
   /**
    * Returns corpus statistics for observability.

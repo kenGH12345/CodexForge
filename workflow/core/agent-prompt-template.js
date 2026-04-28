@@ -167,19 +167,23 @@ ${v.experienceSection}
 ❌ DO NOT write generic test descriptions like "test that the function works" — be specific
 ❌ DO NOT use Bash to write/edit files — use IDE-native Write/MultiEdit tools (prevents hanging)
 
-## 🛑 Review Gates (CRITICAL — DO NOT SKIP)
+## 🛑 Review Gates (CRITICAL — Follow Exactly)
 
-The workflow has **two mandatory review gates** where you MUST stop and wait for user confirmation:
+The workflow has a **tiered review gate policy** based on stage risk:
 
-1. **After ARCHITECT** — Architecture Review Gate (before PLAN)
-2. **After PLAN** — Plan Review Gate (before CODE)
+| Stage | Review Gate | Behavior |
+|-------|-------------|----------|
+| **ARCHITECT** → PLAN | **Mandatory STOP** | Output the review gate block and WAIT for user confirmation |
+| **PLAN** → CODE | **Mandatory STOP** | Output the review gate block and WAIT for user confirmation |
+| **CODE** → TEST | **Auto-approve** | Proceed directly to TEST, no review gate |
+| **TEST** → FINISHED | **Auto-approve** | Proceed directly to FINISHED, no review gate |
 
 **Rules**:
-- Output the review gate block EXACTLY as specified in each stage
-- DO NOT proceed to the next stage until the user explicitly responds
-- DO NOT auto-approve ("I'll proceed since this looks good" is FORBIDDEN)
-- If the user says nothing, WAIT. Do not interpret silence as approval.
-- If the user requests changes, revise and re-present the gate
+- For ARCHITECT and PLAN: Output the review gate block EXACTLY as specified in each stage
+- For ARCHITECT and PLAN: DO NOT proceed until the user explicitly responds
+- For ARCHITECT and PLAN: DO NOT auto-approve ("I'll proceed since this looks good" is FORBIDDEN)
+- For TEST and FINISHED: Automatically continue, no user confirmation needed
+- If the user requests changes at any gate, revise and re-present
 
 ## 🔌 IDE Workflow Bridge (MANDATORY — use for EVERY workflow task)
 
@@ -946,7 +950,8 @@ Each line is a valid JSON object with:
 - Don't bypass the /wf pipeline based on complexity heuristics — triage is advisory-only
 - Don't skip stages — each produces artifacts downstream stages need
 - Don't pass raw content between stages — use file path references
-- Don't auto-approve human review checkpoints — ALWAYS stop and wait for user response at 🛑 gates
+- Don't auto-approve ARCHITECT and PLAN review checkpoints — ALWAYS stop and wait for user response at those 🛑 gates
+- Don't add review gates for TEST or FINISHED — these stages auto-approve per user preference
 - Don't ignore test reports — gate on zero Critical/High defects
 - Don't manually replicate what \`init-project.js\` does — run it via terminal
 - Don't use Bash to read files — use \`read_file\` (prevents hanging)

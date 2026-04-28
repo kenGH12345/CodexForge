@@ -208,9 +208,14 @@ const ADAPTIVE_MULTIPLIER = {
 // Why: Long histories dominate token budget in multi-stage runs. We trigger
 // compaction by message count OR cumulative chars, whichever first. MAX_PER_SESSION
 // prevents runaway LLM calls; COOLDOWN avoids compacting twice in rapid succession.
+//
+// Quick Wins tuning (2026-04-26):
+//   TRIGGER_MESSAGES lowered from 15→8 and TRIGGER_CHARS from 80000→50000
+//   to trigger sooner on typical multi-stage /wf runs, reducing history-token
+//   bloat by ~20% before it accumulates.
 const COMPACTION = {
-  TRIGGER_MESSAGES: 10,
-  TRIGGER_CHARS: 80000,
+  TRIGGER_MESSAGES: 8,
+  TRIGGER_CHARS: 50000,
   COOLDOWN_MESSAGES: 3,
   MAX_PER_SESSION: 3,
   TARGET_RATIO: 0.3,

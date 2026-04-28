@@ -10,6 +10,9 @@ module.exports = {
   // Token Management
   ...require('./token-budget'),
   ...require('./prompt-builder'),
+
+  // Context Decision Signals (T-0: shared by G3/G4/G5/G6 context engineering)
+  ...require('./context-decision-signals'),
   
   // Compression (P0 Enhancements)
   ...require('./block-compressor'),

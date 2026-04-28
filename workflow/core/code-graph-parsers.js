@@ -154,6 +154,32 @@ const CodeGraphParsersMixin = {
   // ─── Symbol Extraction (dispatcher) ───────────────────────────────────────
 
   _extractSymbols(content, relPath, ext) {
+    // Phase 1 (T-1): Try Tree-sitter AST parser first (conservative activation)
+    if (this.enableASTParser !== false) {
+      try {
+        const { parseFile } = require('./ast-parsers/tree-sitter-adapter');
+        const astResult = parseFile(content, relPath, ext);
+        if (astResult.usedAST && astResult.symbols && astResult.symbols.length > 0) {
+          for (const sym of astResult.symbols) {
+            this._addSymbol(
+              sym.kind,
+              sym.name,
+              relPath,
+              sym.line,
+              sym.signature ? sym.signature.slice(0, 40) : '',
+              sym.summary || '',
+              sym.endLine,
+            );
+          }
+          this._astParserStatus = { used: true, parser: 'tree-sitter', symbolCount: astResult.symbols.length };
+          return;
+        }
+      } catch (err) {
+        // Silently fall back to regex — Tree-sitter not installed or failed
+        this._astParserStatus = { used: false, parser: 'regex', reason: err.message };
+      }
+    }
+
     // P1: Pre-process content to strip comments and string literals,
     // preventing false-positive matches inside quoted/commented-out code.
     const stripped = stripCommentsAndStrings(content, ext);
@@ -170,10 +196,30 @@ const CodeGraphParsersMixin = {
     }
   },
 
-  _addSymbol(kind, name, file, line, signature = '', summary = '') {
+  _addSymbol(kind, name, file, line, signature = '', summary = '', endLine = undefined) {
     const id = `${file}::${name}`;
     if (!this._symbols.has(id)) {
-      this._symbols.set(id, { id, kind, name, file, line, signature, summary });
+      this._symbols.set(id, { id, kind, name, file, line, signature, summary, endLine });
+    }
+  },
+
+  /**
+   * Set endLine for symbols in a given file by using the next symbol's start line
+   * as the boundary. The last symbol gets endLine = totalLines (EOF).
+   * Call after all symbols for a file have been extracted.
+   * Operates directly on this._symbols for robustness (works with AST + regex paths).
+   */
+  _setEndLinesForFile(relPath, totalLines) {
+    const fileSymbols = [];
+    for (const sym of this._symbols.values()) {
+      if (sym.file === relPath) fileSymbols.push(sym);
+    }
+    if (fileSymbols.length === 0) return;
+    fileSymbols.sort((a, b) => a.line - b.line);
+    for (let i = 0; i < fileSymbols.length; i++) {
+      const sym = fileSymbols[i];
+      if (sym.endLine !== undefined) continue;
+      sym.endLine = (i + 1 < fileSymbols.length) ? fileSymbols[i + 1].line - 1 : totalLines;
     }
   },
 
@@ -526,9 +572,68 @@ const CodeGraphParsersMixin = {
    * pre-extracted token sets (where raw content is unavailable), we still filter out
    * the NOISY_SYMBOL_NAMES set and require the callee to be a function/method.
    */
-  _extractCallEdges(content, relPath, ext, preExtractedTokens) {
+  _extractCallEdges(content, relPath, ext, preExtractedTokens, options = {}) {
     const fileSymbols = this.getFileSymbols(relPath);
     if (fileSymbols.length === 0) return;
+
+    // ── Attempt 1: Tree-sitter AST call-edge extraction (ADR-XX P0) ──
+    // High-precision path: AST-level call detection with per-function grouping.
+    // Falls back to regex on any failure (no tree-sitter, parse error, no edges).
+    let astUsed = false;
+    // Lazy-load tree-sitter adapter if not already attached to this instance
+    let tsAdapter = this.treeSitterAdapter;
+    if (!tsAdapter && content) {
+      try {
+        tsAdapter = require('./ast-parsers/tree-sitter-adapter');
+      } catch (_) {
+        // tree-sitter not installed — will fall through to regex
+      }
+    }
+    if (content && tsAdapter?.extractCallEdges) {
+      try {
+        const astEdges = tsAdapter.extractCallEdges(content, ext);
+        if (astEdges && astEdges.length > 0) {
+          // Build name → symbolId map for AST edge resolution
+          const nameToId = new Map();
+          for (const sym of this._symbols.values()) {
+            const existing = nameToId.get(sym.name);
+            if (!existing || sym.file === relPath) {
+              nameToId.set(sym.name, sym.id);
+            }
+          }
+
+          // Map AST functionName → file symbol; calleeNames → callee symbol IDs
+          for (const { functionName, calleeNames } of astEdges) {
+            const callerSym = fileSymbols.find(s => s.name === functionName);
+            if (!callerSym) continue;
+
+            const calleeIds = [];
+            for (const callee of calleeNames) {
+              if (callee === functionName) continue;
+              const calleeId = nameToId.get(callee);
+              if (calleeId && calleeId !== callerSym.id) {
+                calleeIds.push(calleeId);
+              }
+            }
+            if (calleeIds.length > 0) {
+              this._callEdges.set(callerSym.id, [...new Set(calleeIds)]);
+            }
+          }
+
+          astUsed = true;
+          if (options.parserUsed !== undefined) {
+            options.parserUsed = 'tree-sitter';
+          }
+        }
+      } catch (err) {
+        // Intentionally fall through to regex fallback
+      }
+    }
+
+    if (astUsed) return;
+    if (options.parserUsed !== undefined) {
+      options.parserUsed = 'regex';
+    }
 
     // Build name → symbolId map, preferring same-file symbols
     const nameToId = new Map();
@@ -541,67 +646,76 @@ const CodeGraphParsersMixin = {
       }
     }
 
-    // P0-2: Build a Set of confirmed call tokens using function-call syntax.
-    // A call requires `name(` pattern in source code (not just token presence).
-    // Note: `this` is the CodeGraph instance (mixin is applied via Object.assign).
     const isNoisyName = (name) => {
-      // Inline the noisy name check to avoid circular require.
-      // Short names (<= 3 chars) are always noise.
       const baseName = name.includes(':') ? name.split(':').pop() : name;
       if (baseName.length <= 3) return true;
-      // Use the CodeGraph static method if available (mixed-in context)
       if (this.constructor && this.constructor.isNoisyName) {
         return this.constructor.isNoisyName(name);
       }
       return false;
     };
-    let confirmedCallTokens;
+
+    const keywordBlocklist = new Set([
+      'if', 'for', 'while', 'switch', 'catch', 'return', 'throw',
+      'new', 'typeof', 'instanceof', 'function', 'class',
+      'require', 'import', 'await', 'void', 'delete', 'yield',
+    ]);
+
+    const extractCallTokensFromText = (text) => {
+      const tokens = new Set();
+      const callPattern = /\b(\w+)\s*\(/g;
+      let match;
+      while ((match = callPattern.exec(text)) !== null) {
+        const name = match[1];
+        if (keywordBlocklist.has(name)) continue;
+        tokens.add(name);
+      }
+      return tokens;
+    };
+
+    // ── Build per-symbol range-aware call tokens or global fallback ──
+    const rangeAwareTokens = new Map(); // sym.id -> Set of tokens
+    let globalCallTokens = null;
+    let hasContent = !!content;
 
     if (content) {
-      confirmedCallTokens = new Set();
+      const lines = content.split('\n');
 
-      // AST path: precise call extraction, avoids false positives from regex
-      let astEdges = null;
-      try {
-        const tsAdapter = require('./ast-parsers/tree-sitter-adapter');
-        astEdges = tsAdapter.extractCallEdges(content, ext);
-      } catch (_) { /* tree-sitter not installed */ }
-
-      if (astEdges) {
-        for (const edge of astEdges) {
-          confirmedCallTokens.add(edge.callee);
+      for (const sym of fileSymbols) {
+        // If endLine is available, restrict scanning to the symbol's line range
+        if (sym.endLine !== undefined && sym.line > 0) {
+          const startIdx = sym.line - 1;
+          const endIdx = Math.min(sym.endLine, lines.length);
+          if (startIdx < endIdx) {
+            const rangeText = lines.slice(startIdx, endIdx).join('\n');
+            rangeAwareTokens.set(sym.id, extractCallTokensFromText(rangeText));
+          }
         }
-      } else {
-        // Regex fallback when AST unavailable
-        const callPattern = /\b(\w+)\s*\(/g;
-        let match;
-        while ((match = callPattern.exec(content)) !== null) {
-          const name = match[1];
-          if (['if', 'for', 'while', 'switch', 'catch', 'return', 'throw',
-               'new', 'typeof', 'instanceof', 'function', 'class',
-               'require', 'import'].includes(name)) continue;
-          confirmedCallTokens.add(name);
-        }
+        // Symbols without endLine will fallback to global scanning below
       }
+
+      // Global fallback: scan entire file for symbols without endLine or as safety net
+      globalCallTokens = extractCallTokensFromText(content);
     } else if (preExtractedTokens) {
-      // Fallback: when only word tokens are available (e.g. incremental build),
-      // filter to only function/method symbols and exclude noisy names.
-      confirmedCallTokens = new Set();
+      // Legacy path: no content available, use pre-extracted word tokens
+      globalCallTokens = new Set();
       for (const token of preExtractedTokens) {
         if (isNoisyName(token)) continue;
         const kind = nameToKind.get(token);
-        // Only consider tokens that map to function/method/class symbols
         if (kind === 'function' || kind === 'method' || kind === 'class') {
-          confirmedCallTokens.add(token);
+          globalCallTokens.add(token);
         }
       }
-    } else {
-      return; // No source data available
     }
+
+    if (!globalCallTokens && rangeAwareTokens.size === 0) return;
 
     for (const sym of fileSymbols) {
       const calls = [];
-      for (const token of confirmedCallTokens) {
+      const symTokens = rangeAwareTokens.get(sym.id) || globalCallTokens;
+      if (!symTokens || symTokens.size === 0) continue;
+
+      for (const token of symTokens) {
         if (token === sym.name) continue;
         if (nameToId.has(token)) {
           const calleeId = nameToId.get(token);
@@ -940,6 +1054,17 @@ function extractImportPathsStandalone(content, ext) {
       const dep = m[1] || m[2];
       const topLevel = dep.split('.')[0];
       if (!PY_STDLIB.has(topLevel)) imports.push(dep);
+    }
+  } else if (ext === '.cs') {
+    // C# using statements: using Namespace.SubNamespace;
+    // Multi-line blocks: using (Namespace1;\n  Namespace2;)
+    const matches = content.matchAll(/\busing\s+([^;]+);/g);
+    for (const m of matches) {
+      const ns = m[1].trim();
+      // Filter out common C# system namespaces to reduce noise
+      if (ns && !ns.startsWith('System.')) {
+        imports.push(ns);
+      }
     }
   }
   return imports;

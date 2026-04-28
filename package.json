@@ -51,5 +51,10 @@
   "bugs": {
     "url": "https://github.com/kenGH12345/CodexForge/issues"
   },
-  "homepage": "https://github.com/kenGH12345/CodexForge#readme"
+  "homepage": "https://github.com/kenGH12345/CodexForge#readme",
+  "dependencies": {
+    "node-addon-api": "^8.7.0",
+    "node-gyp-build": "^4.8.4"
+  },
+  "devDependencies": {}
 }

@@ -35,7 +35,7 @@ const { generateIDEAgents } = require('./core/agent-generator');
 // ─── CLI Args ─────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { path: null, validate: false, help: false, dryRun: false, linkTo: null };
+  const args = { path: null, validate: false, help: false, dryRun: false, linkTo: null, skill: true };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--help':     case '-h': args.help     = true; break;
@@ -43,6 +43,7 @@ function parseArgs(argv) {
       case '--dry-run':             args.dryRun   = true; break;
       case '--path':     case '-p': args.path = argv[++i]; break;
       case '--link-to':             args.linkTo = argv[++i]; break;
+      case '--no-skill':            args.skill    = false; break;
     }
   }
   return args;
@@ -435,17 +436,20 @@ Options:
                      (generates .claude/settings.json + AGENTS.md snippet)
   --validate, -v     Only validate config, do not run initialisation
   --dry-run          Show what would be done without writing any files
+  --no-skill         Skip project-specific skill generation in Step 6.5
   --help, -h         Show this help
 
 Examples:
-  node workflow/init-project.js                        # Init current project (fully automatic)
+  node workflow/init-project.js                        # Init current project (fully automatic + skill)
   node workflow/init-project.js --path D:\\MyProject   # Init a specific project
+  node workflow/init-project.js --no-skill             # Init without auto-generating skill
   node workflow/init-project.js --validate             # Validate config only
   node workflow/init-project.js --link-to D:\\OtherProject  # Link another project
 
 How it works:
   1. If workflow.config.js exists  → use it directly
   2. If not found                  → auto-detect tech stack, generate config, then init
+  3. Skill generation uses code-graph file list — no re-scan, language-complete
   No manual steps required.
 `);
     process.exit(0);
@@ -667,6 +671,48 @@ How it works:
   }
   console.log('');
 
+  // ── Shared: Initialise LLM router for skill generation & auto-distillation ─
+  let cheapLlmCall = null;
+  try {
+    const { LlmRouter } = require('./core/llm-router');
+    // Only create cheapLlmCall if a real LLM is configured
+    if (config && config.llm && config.llm.apiKey) {
+      const defaultLlm = async (prompt) => {
+        try {
+          const apiKey = config.llm.apiKey;
+          const model = config.llm.model || 'gpt-3.5-turbo';
+          const axios = require('axios');
+          const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+            model,
+            messages: [
+              { role: 'system', content: 'You are a technical documentation specialist.' },
+              { role: 'user', content: prompt }
+            ],
+            max_tokens: 12000,
+            temperature: 0.3
+          }, {
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            timeout: 300000
+          });
+          return response.data.choices[0].message.content;
+        } catch (e) {
+          console.error('[InitProject] Default LLM call failed:', e.message);
+          return '';
+        }
+      };
+      const router = new LlmRouter(defaultLlm);
+      cheapLlmCall = async (prompt) => {
+        const result = await router.call('system', prompt);
+        return typeof result === 'string' ? result : (result && result.content) || '';
+      };
+      console.error('[InitProject] LLM configured for skill generation');
+    } else {
+      console.error('[InitProject] No LLM configured (set workflow.config.js llm.apiKey for AI refinement); skill will be rule-based only');
+    }
+  } catch (err) {
+    console.error(`[InitProject] LLM router unavailable: ${err.message}`);
+  }
+
   // ── Step 1: Build AGENTS.md ────────────────────────────────────────────────
   console.log(`[3/10] Building AGENTS.md (global project context)...`);
   if (!args.dryRun) {
@@ -729,9 +775,10 @@ How it works:
 
   // ── Step 3: Register built-in skills ──────────────────────────────────────
   console.log(`[4.5/10] Registering built-in skills...`);
+  let skillEngine = null;
   if (!args.dryRun) {
     try {
-      const skillEngine = new SkillEvolutionEngine();
+      skillEngine = new SkillEvolutionEngine();
       let registered = 0;
       for (const skill of config.builtinSkills) {
         try {
@@ -886,6 +933,18 @@ How it works:
 
   // ── Step 6: Build initial code graph ──────────────────────────────────────
   console.log(`[6/10] Building initial code graph (symbol index + call relationships)...`);
+
+  // Phase 1 (T-3): Tree-sitter availability diagnostic
+  let tsAvailable = false;
+  try {
+    const { testAvailability } = require('./core/ast-parsers/tree-sitter-adapter');
+    tsAvailable = testAvailability();
+    console.log(`      ${tsAvailable ? '✅' : '⚠️'}  AST parser: ${tsAvailable ? 'Tree-sitter active' : 'regex fallback (tree-sitter not installed)'}`);
+  } catch (err) {
+    console.log(`      ⚠️  AST parser: regex fallback (${err.message})`);
+  }
+
+  let codeGraphResult = null;
   if (!args.dryRun) {
     try {
       const { CodeGraph } = require('./core/code-graph');
@@ -907,8 +966,15 @@ How it works:
         ignoreDirs:     cfg.ignoreDirs,
         scopeDirs:      cfg.codeGraph?.scopeDirs,
       });
-      const result = await graph.build({ incremental: true, force: false });
-      console.log(`      ✅ Code graph built: ${result.symbolCount} symbols, ${result.edgeCount} call edges, ${result.fileCount} files`);
+      codeGraphResult = await graph.build({ incremental: true, force: true });
+      const ps = codeGraphResult.parserStats;
+      if (ps && ps.astParsed > 0) {
+        console.log(`      ✅ Code graph built: ${codeGraphResult.symbolCount} symbols, ${codeGraphResult.edgeCount} call edges, ${codeGraphResult.fileCount} files`);
+        console.log(`      🌲 AST parsed: ${ps.astParsed} symbols (${ps.astCoveragePercent}% coverage)`);
+      } else {
+        console.log(`      ✅ Code graph built: ${codeGraphResult.symbolCount} symbols, ${codeGraphResult.edgeCount} call edges, ${codeGraphResult.fileCount} files`);
+        console.log(`      ⚠️  AST parsing: 0 symbols — tree-sitter may not be active for this file set`);
+      }
       console.log(`      📄 Index: ${path.join(outputDir, 'code-graph.json')}`);
       console.log(`      📄 Summary: ${path.join(outputDir, 'code-graph.md')}\n`);
     } catch (err) {
@@ -916,6 +982,54 @@ How it works:
     }
   } else {
     console.log(`      [dry-run] Would build code graph for: ${projectRoot}\n`);
+  }
+
+  // ── Step 6.5: Generate project-specific skill ──────────────────────────────
+  if (args.skill) {
+    console.log(`[6.5/10] Generating project-specific skill...`);
+    if (!args.dryRun) {
+      try {
+        const { generate } = require('./core/skill-generator-facade');
+        const skillResult = await generate(projectRoot, {
+          maxFiles: 1000,
+          fileList: codeGraphResult?.fileList,
+          force: false,
+          skillEvolution: skillEngine,
+          cheapLlmCall,
+        });
+        if (skillResult.error === 'SKILL_EXISTS') {
+          console.log(`      ⏭️  Skill already exists, skipping (use --force to regenerate)\n`);
+        } else if (skillResult.error) {
+          console.warn(`      ⚠️  Skill generation warning: ${skillResult.error}\n`);
+        } else {
+          console.log(`      ✅ Skill generated: ${skillResult.skillName}`);
+          console.log(`      📄 ${skillResult.skillPath}`);
+          console.log(`      📊 ${skillResult.signalCount} signals, confidence: ${skillResult.confidenceSummary?.overall?.toFixed(2) || 'N/A'}\n`);
+
+          // ── Skill Refinement Reminder ────────────────────────
+          if (skillResult.wasFallback) {
+            console.log('');
+            console.log('      ┌─────────────────────────────────────────────────────────────────┐');
+            console.log('      │  ⚠️  Skill generated as RULE-ONLY (no LLM configured)            │');
+            console.log('      │                                                                 │');
+            console.log('      │  To get AI-refined skill with architecture insights:            │');
+            console.log('      │  1. Set llm.apiKey in workflow.config.js                        │');
+            console.log('      │  2. Re-run: node workflow/init-project.js --path <dir>          │');
+            console.log('      │                                                                 │');
+            console.log('      │  Or manually refine: /wf skill-refine --skill-path <path>       │');
+            console.log('      └─────────────────────────────────────────────────────────────────┘');
+            console.log('');
+          }
+        }
+      } catch (err) {
+        console.warn(`      ⚠️  Skill generation warning (non-fatal): ${err.message}\n`);
+      }
+    } else {
+      console.log(`      [dry-run] Would generate project skill for: ${projectRoot}\n`);
+    }
+  } else {
+    console.log(`[6.5/10] ⏭️  Skill generation skipped (--no-skill)`);
+    console.log(`         Re-run without --no-skill later, or call gen-skill manually\n`);
   }
 
   // ── Step 7: Extract business logic patterns ────────────────────────────────
@@ -1177,19 +1291,6 @@ How it works:
       }
 
       // Then, attempt auto-distillation from analysis artifacts
-      // We need a cheap LLM call — try to get one from the environment
-      let cheapLlmCall = null;
-      try {
-        const { LLMRouter } = require('./core/llm-router');
-        const router = new LLMRouter();
-        cheapLlmCall = async (prompt) => {
-          const result = await router.call('system', prompt, { tier: 'fast' });
-          return typeof result === 'string' ? result : (result && result.content) || '';
-        };
-      } catch (_) {
-        // LLM not available — skip auto-distillation
-      }
-
       if (cheapLlmCall) {
         const distillResult = await autoDistillExpertKnowledge({
           projectRoot,
@@ -1316,7 +1417,10 @@ How it works:
     const tsAdapter = require('./core/ast-parsers/tree-sitter-adapter');
     treeSitterAvailable = tsAdapter.testAvailability();
   } catch (_) { /* not installed */ }
-  if (treeSitterAvailable) {
+  const ps = codeGraphResult?.parserStats;
+  if (ps && ps.astCoveragePercent > 0) {
+    console.log(`    ✅ tree-sitter: active — ${ps.astParsed}/${codeGraphResult?.symbolCount || '?'} symbols parsed via AST (${ps.astCoveragePercent}% coverage)`);
+  } else if (treeSitterAvailable) {
     console.log(`    ✅ tree-sitter: installed (AST-level code parsing enabled)`);
   } else {
     console.log(`    💡 tree-sitter: not installed (using regex fallback for CodeGraph)`);

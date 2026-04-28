@@ -11,6 +11,10 @@
  * Design: Zero-LLM, pure file-system analysis.
  * Usage: Run via `/agents-validate` command or auto-check on `/wf init`.
  *
+ * @production-exempt reserved – P2 feature awaiting CLI wiring into
+ *   ide-workflow-bridge.js `agents-validate` subcommand. Once wired, remove
+ *   this tag and add integration test to lift into production-ready bucket.
+ *
  * @module agents-md-validator
  */
 

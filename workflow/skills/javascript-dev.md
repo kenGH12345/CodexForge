@@ -1,11 +1,11 @@
 ---
 name: javascript-dev
-version: 1.1.0
+version: 1.2.0
 type: domain-skill
 domains: [frontend, backend, javascript]
 dependencies: []
 load_level: task
-max_tokens: 800
+max_tokens: 1200
 triggers:
   keywords: [javascript, js, node, npm, typescript, ts, react, vue, express]
   roles: [developer]
@@ -14,8 +14,8 @@ description: "JavaScript development patterns"
 # Skill: javascript-dev
 
 > **Type**: Domain Skill
-> **Version**: 1.0.2
-> **Description**: JavaScript development patterns
+> **Version**: 1.2.0
+> **Description**: JavaScript and Node.js development patterns
 > **Domains**: frontend, backend, javascript
 
 ---
@@ -33,6 +33,93 @@ description: "JavaScript development patterns"
 
 5. **Never mutate function arguments** — Create new objects/arrays instead of modifying inputs. Mutations cause action-at-a-distance bugs that are extremely difficult to trace in async codebases.
 
+6. **Use early returns and guard clauses** — Prefer returning early for error/edge cases over deeply nested if/else blocks. This reduces nesting depth and makes the happy path visually prominent:
+   ```js
+   // Wrong: nested pyramid
+   function process(user) {
+     if (user) {
+       if (user.isActive) {
+         return user.data;
+       }
+     }
+     return null;
+   }
+   // Right: early return
+   function process(user) {
+     if (!user) return null;
+     if (!user.isActive) return null;
+     return user.data;
+   }
+   ```
+
+7. **All public methods must have JSDoc with `@param` and `@returns`** — IDEs and documentation generators depend on this. Even internal helpers benefit from return type annotations for IDE inference.
+   ```js
+   /**
+    * Calculate the discounted price.
+    * @param {number} price - Original price in cents.
+    * @param {number} discount - Discount percentage (0-100).
+    * @returns {number} Final price in cents.
+    */
+   function calculateDiscount(price, discount) { ... }
+   ```
+
+8. **No magic numbers or strings** — Extract all numeric/string literals to named constants declared at module scope:
+   ```js
+   // Wrong
+   if (status === 404) setTimeout(retry, 3000);
+   // Right
+   const STATUS_NOT_FOUND = 404;
+   const RETRY_DELAY_MS = 3000;
+   if (status === STATUS_NOT_FOUND) setTimeout(retry, RETRY_DELAY_MS);
+   ```
+
+9. **Prefer arrow functions for inline callbacks** — Arrow functions preserve lexical `this` and reduce visual noise for one-shot callbacks. Use regular `function` for named top-level definitions:
+   ```js
+   // Right: arrow for inline callback
+   items.filter(item => item.isActive).map(item => item.name);
+   // Right: function declaration for named export
+   function validateInput(input) { ... }
+   ```
+
+10. **Use destructuring when accessing 2+ object properties** — Destructuring at the top of a function makes the data contract explicit:
+    ```js
+    // Wrong
+    function createUser(config) {
+      const name = config.name;
+      const email = config.email;
+    }
+    // Right
+    function createUser({ name, email }) { ... }
+    ```
+
+11. **Use template literals for multi-part string assembly** — Template literals (`backticks`) eliminate concatenation errors and support interpolation:
+    ```js
+    // Wrong
+    const url = 'https://' + host + ':' + port + '/api/v' + version;
+    // Right
+    const url = `https://${host}:${port}/api/v${version}`;
+    ```
+
+12. **Never nest ternaries** — Single-level ternary is readable; nested ternaries must be refactored to if/else or early returns:
+    ```js
+    // Wrong: nested ternary
+    const icon = isError ? (isCritical ? '🔴' : '⚠️') : '✅';
+    // Right: early returns
+    if (!isError) return '✅';
+    if (isCritical) return '🔴';
+    return '⚠️';
+    ```
+
+13. **Use atomic writes for crash-safe file writes** — Write to a temp file then rename. On crash, the target file remains intact:
+    ```js
+    const fs = require('fs');
+    function writeFileAtomic(path, data) {
+      const tmpPath = path + '.tmp.' + process.pid;
+      fs.writeFileSync(tmpPath, data);
+      fs.renameSync(tmpPath, path);
+    }
+    ```
+
 ## SOP (Standard Operating Procedure)
 <!-- PURPOSE: Step-by-step workflow for the skill's domain. Numbered phases with clear entry/exit criteria. An agent following this SOP should produce consistent, high-quality output regardless of the specific project. -->
 
@@ -49,6 +136,11 @@ description: "JavaScript development patterns"
 - [ ] ESLint configured with `no-unused-vars`, `no-implicit-globals`
 - [ ] `package-lock.json` committed to version control
 - [ ] Node.js version pinned in `.nvmrc` or `package.json` `engines` field
+- [ ] No `var` declarations anywhere (use `const` or `let`)
+- [ ] No nested ternaries (single-level only)
+- [ ] No magic numbers or strings (all extracted to named constants)
+- [ ] All public functions have JSDoc with `@param` and `@returns`
+- [ ] Promise rejections handled (`.catch()` or `try/catch`)
 
 ## Best Practices
 <!-- PURPOSE: Recommended patterns that SHOULD be followed. Unlike Rules (which are mandatory), Best Practices are advisory — they can be overridden with justification. Each entry explains WHAT to do and WHY it helps. -->
@@ -228,3 +320,4 @@ description: "JavaScript development patterns"
 | v1.1.0 | 2026-03-19 | External knowledge enrichment: added Rules, SOP, Checklist, Best Practices, Anti-Patterns, Context Hints |
 | v1.0.1 | 2026-04-01 | High-frequency pattern (hitCount=8) – validated by ANALYSE stage success |
 | v1.0.2 | 2026-04-02 | High-frequency pattern (hitCount=6) – validated by ANALYSE stage success |
+| v1.2.0 | 2026-04-27 | Merged JS-specific coding conventions from `standards` skill: early returns, JSDoc requirements, magic number ban, arrow/destructuring/template literals, no nested ternaries, atomic writes. Standards skill refactored to pure project conventions. |

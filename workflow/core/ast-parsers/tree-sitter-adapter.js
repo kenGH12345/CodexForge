@@ -142,7 +142,7 @@ function generateFingerprint(content, ext) {
     
     // Combined fingerprint: content may change but structure stays same
     const structureFingerprint = `${contentHash.slice(0, 8)}:${astHash.slice(0, 8)}`;
-    
+
     return {
       contentHash,
       astHash,
@@ -151,7 +151,9 @@ function generateFingerprint(content, ext) {
       parserUsed: 'tree-sitter',
     };
   } catch (err) {
-    console.warn(`[TreeSitterAdapter] AST parsing failed: ${err.message}`);
+    if (process.env.WF_DEBUG || globalThis._verbose) {
+      console.warn(`[TreeSitterAdapter] AST parsing failed: ${err.message}`);
+    }
     return {
       contentHash,
       astHash: null,
@@ -357,6 +359,7 @@ function extractFunctionSymbol(node, lines, kind = 'function') {
     decorators,
     isAsync: node.text.includes('async'),
     isExport: false,
+    endLine: node.endPosition.row + 1,
   };
 }
 
@@ -395,6 +398,7 @@ function extractClassSymbol(node, lines, kind = 'class') {
     line,
     signature,
     summary,
+    endLine: node.endPosition.row + 1,
   };
 }
 
@@ -520,55 +524,118 @@ function testAvailability() {
 }
 
 /**
- * Extract call edges from source using AST.
+ * Resolve callee identifier from a call expression node.
+ * Handles: identifier(), member.expr(), generic<T>(), qualified::name(), etc.
+ *
+ * @param {SyntaxNode} callNode - A call_expression / method_invocation / invocation_expression node
+ * @returns {string|null} - The resolved callee name (last segment) or null
+ */
+function _getCalleeName(callNode) {
+  if (!callNode) return null;
+
+  switch (callNode.type) {
+    case 'call_expression': {
+      const fn = callNode.childForFieldName('function');
+      if (!fn) return null;
+      if (fn.type === 'identifier') {
+        return fn.text;
+      }
+      if (fn.type === 'member_expression') {
+        const prop = fn.childForFieldName('property');
+        if (prop) return prop.text;
+      }
+      if (fn.type === 'qualified_identifier' || fn.type === 'scoped_identifier') {
+        return fn.text.split(/::|\./).pop();
+      }
+      return fn.text.split(/\.|::/).pop();
+    }
+    case 'method_invocation': {
+      const nameNode = callNode.childForFieldName('name');
+      if (nameNode) return nameNode.text;
+      return null;
+    }
+    case 'invocation_expression': {
+      // C#: invocation_expression → member_access or identifier
+      const expr = callNode.childForFieldName('expression');
+      if (!expr) return null;
+      if (expr.type === 'identifier') return expr.text;
+      if (expr.type === 'member_access_expression') {
+        const name = expr.childForFieldName('name');
+        if (name) return name.text;
+      }
+      return expr.text.split('.').pop();
+    }
+    default:
+      return callNode.text.split(/\.|::/).pop();
+  }
+}
+
+/**
+ * Find which function/method definition contains a given node.
+ * Walks upward through parent nodes to find the nearest function container.
+ *
+ * @param {SyntaxNode} node - The AST node to find container for
+ * @returns {SyntaxNode|null} - The containing function node, or null if at top level
+ */
+function _findContainingFunction(node) {
+  let current = node.parent;
+  while (current) {
+    if (
+      current.type === 'function_declaration' ||
+      current.type === 'function_definition' ||
+      current.type === 'method_definition' ||
+      current.type === 'class_method' ||
+      current.type === 'method_declaration' ||
+      current.type === 'function_item' ||
+      current.type === 'arrow_function' ||
+      current.type === 'generator_function' ||
+      current.type === 'constructor_declaration'
+    ) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+/**
+ * Extract call edges from source using AST, grouped by containing function.
  * Returns null when tree-sitter is unavailable (caller should fall back to regex).
  *
  * @param {string} content - File source code
  * @param {string} ext - File extension (e.g. '.js')
- * @returns {Array<{callee: string, receiver: string|null, method: string|null, type: 'call'|'method'}>|null}
+ * @returns {Array<{functionName: string, calleeNames: string[]}>|null}
  */
 function extractCallEdges(content, ext) {
   const parser = getLanguageParser(ext);
   if (!parser) return null;
 
+  // Call expression node types by language family
+  const CALL_NODE_TYPES = new Set([
+    'call_expression',      // JS/TS, Python, Go, Rust, C, C++, Ruby
+    'method_invocation',    // Java, C# (legacy)
+    'invocation_expression', // C#
+    'function_call',        // Pascal, Elixir
+    'call',                 // Ruby, Haskell, Erlang
+  ]);
+
   try {
     const tree = parser.parse(content);
-    const edges = [];
-    const seen = new Set();
+    const functionCalls = new Map(); // functionName -> Set(calleeNames)
 
     function walk(node) {
-      if (node.type === 'call_expression') {
-        const fn = node.childForFieldName('function');
-        if (fn) {
-          if (fn.type === 'identifier') {
-            const callee = fn.text;
-            if (!seen.has(callee)) {
-              seen.add(callee);
-              edges.push({ callee, receiver: null, method: null, type: 'call' });
-            }
-          } else if (fn.type === 'member_expression') {
-            const obj = fn.childForFieldName('object');
-            const prop = fn.childForFieldName('property');
-            if (obj && prop) {
-              const key = `${obj.text}.${prop.text}`;
-              if (!seen.has(key)) {
-                seen.add(key);
-                edges.push({ callee: prop.text, receiver: obj.text, method: prop.text, type: 'method' });
-              }
-            }
+      if (CALL_NODE_TYPES.has(node.type)) {
+        const callee = _getCalleeName(node);
+        if (callee) {
+          const container = _findContainingFunction(node);
+          const containerName = container
+            ? (container.childForFieldName('name')?.text || '<anonymous>')
+            : '<global>';
+
+          if (!functionCalls.has(containerName)) {
+            functionCalls.set(containerName, new Set());
           }
-        }
-      } else if (node.type === 'method_invocation') {
-        const nameNode = node.childForFieldName('name');
-        const objNode = node.childForFieldName('object');
-        if (nameNode) {
-          const callee = nameNode.text;
-          const receiver = objNode ? objNode.text : null;
-          const key = receiver ? `${receiver}.${callee}` : callee;
-          if (!seen.has(key)) {
-            seen.add(key);
-            edges.push({ callee, receiver, method: callee, type: receiver ? 'method' : 'call' });
-          }
+          functionCalls.get(containerName).add(callee);
         }
       }
       for (let i = 0; i < node.childCount; i++) {
@@ -577,7 +644,13 @@ function extractCallEdges(content, ext) {
     }
 
     walk(tree.rootNode);
-    return edges;
+
+    // Convert to array format
+    const result = [];
+    for (const [functionName, calleeSet] of functionCalls) {
+      result.push({ functionName, calleeNames: Array.from(calleeSet) });
+    }
+    return result.length > 0 ? result : null;
   } catch (err) {
     return null;
   }

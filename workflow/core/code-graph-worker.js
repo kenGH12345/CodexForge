@@ -16,6 +16,13 @@
  * functions exported from code-graph-parsers.js. This eliminates ~250 lines
  * of duplicated regex patterns that previously had to be maintained in sync.
  *
+ * @production-exempt reserved – Node Worker Thread script. Cannot be directly
+ *   required by the require-index (loaded via `new Worker(path.join(__dirname,
+ *   'code-graph-worker.js'))` in code-graph-builder.js:38). Cannot carry R2
+ *   observability (worker stdout is consumed by the host thread, not routed
+ *   to logger). Cannot be integration-tested directly (the host module's tests
+ *   cover the worker contract via message-passing).
+ *
  * Design: zero external dependencies, pure Node.js.
  */
 
@@ -37,6 +44,15 @@ if (isMainThread || !workerData) {
 // to the Mixin methods used by the main thread, ensuring quality parity.
 const { extractSymbolsStandalone, extractImportPathsStandalone, stripCommentsAndStrings } = require('./code-graph-parsers');
 
+// P0: Tree-sitter AST parsing in Worker threads.
+// Each Worker initializes its own Parser instances (no sharing across Workers).
+let tsAdapter = null;
+try {
+  tsAdapter = require('./ast-parsers/tree-sitter-adapter');
+} catch (_) {
+  // tree-sitter not installed or incompatible — silently fall back to regex
+}
+
 // ─── Main worker logic ────────────────────────────────────────────────────────
 
 const { filePaths, projectRoot } = workerData;
@@ -49,9 +65,50 @@ for (const filePath of filePaths) {
     const ext     = path.extname(filePath);
     const lines   = content.split('\n');
 
-    // P1: Pass raw content to standalone extractor for pre-processing
-    // (comment/string stripping, multi-line joining, indentation filtering)
-    const symbols    = extractSymbolsStandalone(lines, ext, content);
+    let symbols = [];
+    let parser = 'regex';
+
+    // P0: Try tree-sitter AST first, fallback to regex
+    if (tsAdapter && tsAdapter.parseFile) {
+      try {
+        const astResult = tsAdapter.parseFile(content, relPath, ext);
+        if (astResult.usedAST && astResult.symbols.length > 0) {
+          symbols = astResult.symbols.map(s => ({
+            name: s.name,
+            kind: s.kind,
+            line: s.line || 1,
+            endLine: s.endLine,
+            signature: s.signature || '',
+            summary: s.summary || '',
+            parser: 'tree-sitter',
+          }));
+          parser = 'tree-sitter';
+        }
+      } catch (_) {
+        // AST failed — will fall through to regex
+      }
+    }
+
+    // Fallback to regex extraction if AST didn't produce symbols
+    if (symbols.length === 0) {
+      symbols = extractSymbolsStandalone(lines, ext, content).map(s => ({
+        ...s,
+        parser: 'regex',
+      }));
+    }
+
+    // Derive endLine for all symbols (AST may have it, regex definitely doesn't)
+    const allHaveEndLine = symbols.every(s => typeof s.endLine === 'number' && s.endLine >= s.line);
+    if (!allHaveEndLine) {
+      symbols.sort((a, b) => a.line - b.line);
+      const strippedLines = strippedContent.split('\n');
+      for (let i = 0; i < symbols.length; i++) {
+        const sym = symbols[i];
+        if (typeof sym.endLine === 'number' && sym.endLine >= sym.line) continue;
+        sym.endLine = (i + 1 < symbols.length) ? symbols[i + 1].line - 1 : strippedLines.length;
+      }
+    }
+
     // P1: Strip comments/strings before import extraction to avoid false imports
     // from commented-out require/import statements
     const strippedContent = stripCommentsAndStrings(content, ext);
@@ -64,7 +121,9 @@ for (const filePath of filePaths) {
       symbols,
       imports,
       wordTokens,
+      strippedContent,
       lineCount: lines.length,
+      parser,
     });
   } catch (err) {
     // Skip unreadable files – report back with null

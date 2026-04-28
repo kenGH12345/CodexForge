@@ -73,7 +73,7 @@ class CodeGraph {
     projectRoot,
     outputDir,
     extensions = ['.js', '.ts', '.cs', '.lua', '.go', '.py', '.dart'],
-    ignoreDirs = ['node_modules', '.git', 'build', 'dist', 'output', 'Library', 'Temp', 'obj', 'Packages', '.dart_tool'],
+    ignoreDirs = ['node_modules', '.git', 'build', 'dist', 'output', 'Library', 'Temp', 'obj', 'Packages', '.dart_tool', '.codebuddy', '.cursor', '.claude', '.aider', '.workflow'],
     llmCall        = null,
     scopeDirs      = [],
     techProfile    = null,

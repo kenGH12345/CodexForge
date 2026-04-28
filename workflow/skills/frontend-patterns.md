@@ -3,7 +3,7 @@ name: frontend-patterns
 version: 1.0.0
 type: pattern-skill
 domains: [architecture, frontend]
-dependencies: [frontend-review, ui-design]
+dependencies: [frontend-review]
 load_level: on-demand
 max_tokens: 800
 triggers:

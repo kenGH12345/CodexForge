@@ -21,6 +21,7 @@ const fs   = require('fs');
 const path = require('path');
 const { PATHS } = require('./constants');
 const { estimateTokens } = require('../tools/thin-tools');
+const UnifiedSkillComposer = require('./unified-skill-composer');
 
 // ─── Configuration (extracted to context-loader-config.js) ──────────────────
 
@@ -42,6 +43,7 @@ const {
   ROLE_MANDATORY_DOCS,
   ROLE_CONSTRAINT_SECTIONS,
   SKILL_ROLE_FILTER,
+  INCREMENTAL_LOAD_ENABLED,
 } = require('./context-loader-config');
 
 // ─── Skill Loading (extracted to context-loader-skills.js) ──────────────────
@@ -436,10 +438,33 @@ class ContextLoader {
                 budget -= digestTokens;
               }
             }
-          } catch (err) {
-            console.warn(`[ContextLoader] Hotspot analysis failed: ${err?.message || err}`);
-          }
+        } catch (err) {
+          console.warn(`[ContextLoader] Hotspot analysis failed: ${err?.message || err}`);
         }
+        // Inject unified project-knowledge excerpt for developer roles.
+        // Extracts conventions + components (developer) or architecture + components (architect)
+        // from project-knowledge.md. Budget capped per mode.
+        try {
+          const excerpt = this._getSkillExcerpt(role, this._projectRoot);
+          if (excerpt) {
+            const excerptTokens = estimateTokens(excerpt);
+            if (excerptTokens <= budget) {
+              sections.push(excerpt);
+              sources.push('project-knowledge (skill excerpt)');
+              budget -= excerptTokens;
+            } else {
+              const truncatedExcerpt = this._truncate(excerpt, budget);
+              if (truncatedExcerpt) {
+                sections.push(truncatedExcerpt);
+                sources.push('project-knowledge (skill excerpt, truncated)');
+                budget -= estimateTokens(truncatedExcerpt);
+              }
+            }
+          }
+        } catch (injectErr) {
+          console.warn(`[ContextLoader] Skill excerpt injection skipped: ${injectErr?.message || injectErr}`);
+        }
+      }
       } else if (docName === 'architecture-constraints.md') {
         // Per-role section filtering: inject only the sections relevant to this role.
         // This saves ~6-9K tokens per pipeline run (architect gets full doc, others get subsets).
@@ -546,7 +571,7 @@ class ContextLoader {
     if (budget < taskSkillReserve) {
       budget = Math.min(taskSkillReserve, effectiveBudget);
     }
-    const matchedSkills = this._matchSkills(taskText, role);
+    const matchedSkills = await this._matchSkillsAsync(taskText, role);
     const admitted = [];
     const demoted = [];
     for (const skillName of matchedSkills) {
@@ -1278,6 +1303,7 @@ _loadSkill(skillName, tokenBudget, isDep = false) {
       triggerLazyEnrichment: (n) => this._triggerLazyEnrichment(n),
       validateSkillContent: (c, m) => this._validateSkillContent(c, m),
       skillRegistry,
+      incremental: INCREMENTAL_LOAD_ENABLED,
     });
   }
 

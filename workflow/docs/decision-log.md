@@ -2230,6 +2230,9 @@ Enhance the IDE Agent definition (PROMPT_VERSION 2.3.0) with two mechanisms:
 - Each gate outputs a structured review block with numbered options (approve/reject/approve-with-reservations)
 - Triple-reinforced: gate in stage description + top-level "Review Gates" section + DON'T list
 - Explicit prohibition: "DO NOT auto-approve", "DO NOT interpret silence as approval"
+- **Amendment (2026-04-25)**: TEST and FINISHED stages are auto-approved per user preference —
+  only ARCHITECT and PLAN require human review. This reduces friction for low-risk execution stages
+  while preserving architecture-level oversight.
 
 ### 2. Quantified Depth Requirements (📏 per stage)
 - **ANALYSE**: ≥1500 words, ≥3 user stories, ≥5 acceptance criteria, ≥2 risks, visible reasoning

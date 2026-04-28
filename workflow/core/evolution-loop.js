@@ -57,6 +57,10 @@ const EvolutionSignalType = {
   // [T-005] Socratic effect tracking signals
   FOLLOWUP_ANSWERED: 'FOLLOWUP_ANSWERED',       // Socratic follow-up questions were addressed
   FOLLOWUP_IGNORED: 'FOLLOWUP_IGNORED',         // Socratic follow-up questions were ignored
+
+  // [Phase 1] MAPE Engine signals
+  MAPE_ROOT_CAUSE: 'MAPE_ROOT_CAUSE',           // MAPE analysis detected recurring root cause
+  MAPE_CORRELATION: 'MAPE_CORRELATION',         // MAPE analysis detected systematic correlation
 };
 
 const SignalSeverity = {
@@ -521,6 +525,13 @@ class EvolutionLoop {
     // but do NOT trigger full evolution cycle (prevents unnecessary processing)
     if (type === EvolutionSignalType.FOLLOWUP_ANSWERED) {
       return false;
+    }
+
+    // [Phase 1] MAPE signals: conservative trigger — only HIGH/CRITICAL severity
+    // MAPE correlations often indicate systematic issues; root causes indicate
+    // recurring patterns. Both warrant evolution if severity is high enough.
+    if (type === EvolutionSignalType.MAPE_CORRELATION || type === EvolutionSignalType.MAPE_ROOT_CAUSE) {
+      return severity === SignalSeverity.HIGH || severity === SignalSeverity.CRITICAL;
     }
 
     return false;

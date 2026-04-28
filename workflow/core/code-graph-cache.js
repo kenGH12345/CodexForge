@@ -25,6 +25,47 @@ const { translateMdFile } = require('./i18n-translator');
 // This reference is passed in via the mixin setup (see module.exports).
 let _processCache;
 
+// ─── Path-Dictionary Compression Helpers (shared by _writeOutput and _saveCache)
+
+function _buildPathIndex(symbols, importEdges) {
+  const pathSet = new Set();
+  for (const sym of symbols.values()) pathSet.add(sym.file);
+  for (const filePath of importEdges.keys()) pathSet.add(filePath);
+  const filePaths = [...pathSet];
+  const pathToIdx = new Map();
+  for (let i = 0; i < filePaths.length; i++) pathToIdx.set(filePaths[i], i);
+  return { filePaths, pathToIdx };
+}
+
+function _compressSymbolIds(callEdges, pathToIdx) {
+  const compressId = (symbolId) => {
+    const sepIdx = symbolId.indexOf('::');
+    if (sepIdx === -1) return symbolId;
+    const idx = pathToIdx.get(symbolId.substring(0, sepIdx));
+    return idx !== undefined ? `${idx}::${symbolId.substring(sepIdx + 2)}` : symbolId;
+  };
+  const compact = {};
+  for (const [callerId, callees] of callEdges) {
+    compact[compressId(callerId)] = callees.map(compressId);
+  }
+  return compact;
+}
+
+function _decompressSymbolIds(compactCallEdges, filePaths) {
+  const expandId = (compactId) => {
+    const sepIdx = compactId.indexOf('::');
+    if (sepIdx === -1) return compactId;
+    const idx = parseInt(compactId.substring(0, sepIdx), 10);
+    if (isNaN(idx) || idx < 0 || idx >= filePaths.length) return compactId;
+    return `${filePaths[idx]}::${compactId.substring(sepIdx + 2)}`;
+  };
+  const expanded = new Map();
+  for (const [key, val] of Object.entries(compactCallEdges || {})) {
+    expanded.set(expandId(key), val.map(expandId));
+  }
+  return expanded;
+}
+
 // ─── Cache & Serialization Mixin ──────────────────────────────────────────────
 
 const CodeGraphCacheMixin = {
@@ -181,7 +222,7 @@ const CodeGraphCacheMixin = {
       const mtimesPath = cachePath.replace(/\.json$/, '-mtimes.json');
       if (fs.existsSync(mtimesPath)) {
         const raw = JSON.parse(fs.readFileSync(mtimesPath, 'utf-8'));
-        if (raw.version !== 1 || raw.projectRoot !== this._root) {
+        if ((raw.version !== 1 && raw.version !== 2) || raw.projectRoot !== this._root) {
           console.log(`[CodeGraph] ♻️  Cache invalidated (version or root mismatch)`);
           return null;
         }
@@ -191,11 +232,45 @@ const CodeGraphCacheMixin = {
 
       // Fallback: read full cache (legacy or first run)
       const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-      if (raw.version !== 1 || raw.projectRoot !== this._root) {
+      if ((raw.version !== 1 && raw.version !== 2) || raw.projectRoot !== this._root) {
         console.log(`[CodeGraph] ♻️  Cache invalidated (version or root mismatch)`);
         return null;
       }
-      console.log(`[CodeGraph] 📦 Cache loaded: ${Object.keys(raw.fileMtimes || {}).length} files cached`);
+
+      // Decompress v2 path-dict format back to full objects for _restoreFromCache
+      if (raw.version === 2 && raw.filePaths) {
+        const expandSym = (entry) => ({
+          id:        `${raw.filePaths[entry.f]}::${entry.n}`,
+          name:      entry.n,
+          kind:      entry.k,
+          file:      raw.filePaths[entry.f],
+          line:      entry.l,
+          signature: entry.s || '',
+          summary:   entry.m || '',
+          endLine:   entry.e,
+        });
+        const decompressed = {
+          version:     raw.version,
+          projectRoot: raw.projectRoot,
+          fileMtimes:  raw.fileMtimes || {},
+          symbols:     (raw.symbols || []).map(expandSym),
+          callEdges:   _decompressSymbolIds(raw.callEdges, raw.filePaths),
+          importEdges: (() => {
+            const expanded = new Map();
+            for (const [key, val] of Object.entries(raw.importEdges || {})) {
+              const idx = parseInt(key, 10);
+              const fPath = !isNaN(idx) && idx >= 0 && idx < raw.filePaths.length
+                ? raw.filePaths[idx] : key;
+              expanded.set(fPath, val);
+            }
+            return expanded;
+          })(),
+        };
+        console.log(`[CodeGraph] 📦 Cache loaded (v2 decompressed): ${Object.keys(decompressed.fileMtimes).length} files`);
+        return decompressed;
+      }
+
+      console.log(`[CodeGraph] 📦 Cache loaded (v1): ${Object.keys(raw.fileMtimes || {}).length} files cached`);
       return raw;
     } catch (err) {
       console.warn(`[CodeGraph] ⚠️  Cache load failed: ${err.message}`);
@@ -224,14 +299,42 @@ const CodeGraphCacheMixin = {
         }
       }
 
+      // Path-dictionary compression for cache (v2 format)
+      const { filePaths, pathToIdx } = _buildPathIndex(this._symbols, this._importEdges);
+
+      const compactSymbols = [];
+      for (const sym of this._symbols.values()) {
+        const entry = {
+          f: pathToIdx.get(sym.file),
+          k: sym.kind,
+          n: sym.name,
+          l: sym.line,
+        };
+        if (sym.signature) entry.s = sym.signature;
+        if (sym.summary)   entry.m = sym.summary;
+        if (sym.endLine)   entry.e = sym.endLine;
+        compactSymbols.push(entry);
+      }
+
+      const compactCallEdges = _compressSymbolIds(this._callEdges, pathToIdx);
+
+      const compactImportEdges = {};
+      for (const [fPath, imports] of this._importEdges) {
+        const idx = pathToIdx.get(fPath);
+        const key = idx !== undefined ? String(idx) : fPath;
+        compactImportEdges[key] = imports;
+      }
+
       cacheData = {
-        version:     1,
-        projectRoot: this._root,
-        savedAt:     new Date().toISOString(),
+        version:       2,
+        codegraphVersion: '2.2',
+        projectRoot:   this._root,
+        savedAt:       new Date().toISOString(),
         fileMtimes,
-        symbols:     [...this._symbols.values()],
-        callEdges:   Object.fromEntries(this._callEdges),
-        importEdges: Object.fromEntries(this._importEdges),
+        filePaths,
+        symbols:       compactSymbols,
+        callEdges:     compactCallEdges,
+        importEdges:   compactImportEdges,
       };
 
       fs.writeFileSync(cachePath, JSON.stringify(cacheData), 'utf-8');
@@ -284,14 +387,17 @@ const CodeGraphCacheMixin = {
       }
     }
 
-    for (const [symId, callees] of Object.entries(cache.callEdges || {})) {
+    const entriesFrom = (objOrMap) =>
+      objOrMap instanceof Map ? objOrMap.entries() : Object.entries(objOrMap || {});
+
+    for (const [symId, callees] of entriesFrom(cache.callEdges)) {
       const file = symId.split('::')[0];
       if (!excludeSet.has(file)) {
         this._callEdges.set(symId, callees);
       }
     }
 
-    for (const [relPath, imports] of Object.entries(cache.importEdges || {})) {
+    for (const [relPath, imports] of entriesFrom(cache.importEdges)) {
       if (!excludeSet.has(relPath)) {
         this._importEdges.set(relPath, imports);
       }
@@ -385,19 +491,10 @@ const CodeGraphCacheMixin = {
       const stats = await this.getCategoryStats();
 
       // ── Path Dictionary Compression (v2 format) ──
-      const pathSet = new Set();
-      for (const sym of this._symbols.values()) {
-        pathSet.add(sym.file);
-      }
-      for (const filePath of this._importEdges.keys()) {
-        pathSet.add(filePath);
-      }
-      const filePaths = [...pathSet];
-      const pathToIdx = new Map();
-      for (let i = 0; i < filePaths.length; i++) {
-        pathToIdx.set(filePaths[i], i);
-      }
+      const { filePaths, pathToIdx } = _buildPathIndex(this._symbols, this._importEdges);
 
+      // AST coverage counters for CLI visibility
+      let astSymbolCount = 0;
       const compactSymbols = [];
       for (const sym of this._symbols.values()) {
         const entry = {
@@ -406,6 +503,12 @@ const CodeGraphCacheMixin = {
           n: sym.name,
           l: sym.line,
         };
+        if (sym.parser === 'tree-sitter') {
+          entry.p = 1; // tree-sitter AST parsed
+          astSymbolCount++;
+        } else if (sym.parser) {
+          entry.p = 2; // regex fallback
+        }
         const sig = sym._enriched ? (sym._originalSignature || '') : (sym.signature || '');
         if (sig) entry.s = sig;
         if (sym.summary)   entry.m = sym.summary;
@@ -414,24 +517,12 @@ const CodeGraphCacheMixin = {
         compactSymbols.push(entry);
       }
 
-      const compressId = (symbolId) => {
-        const sepIdx = symbolId.indexOf('::');
-        if (sepIdx === -1) return symbolId;
-        const filePath = symbolId.substring(0, sepIdx);
-        const symName  = symbolId.substring(sepIdx + 2);
-        const idx = pathToIdx.get(filePath);
-        return idx !== undefined ? `${idx}::${symName}` : symbolId;
-      };
-
-      const compactCallEdges = {};
-      for (const [callerId, callees] of this._callEdges) {
-        compactCallEdges[compressId(callerId)] = callees.map(compressId);
-      }
+      const compactCallEdges = _compressSymbolIds(this._callEdges, pathToIdx);
 
       const compactImportEdges = {};
-      for (const [filePath, imports] of this._importEdges) {
-        const idx = pathToIdx.get(filePath);
-        const key = idx !== undefined ? String(idx) : filePath;
+      for (const [fPath, imports] of this._importEdges) {
+        const idx = pathToIdx.get(fPath);
+        const key = idx !== undefined ? String(idx) : fPath;
         compactImportEdges[key] = imports;
       }
 
@@ -450,6 +541,13 @@ const CodeGraphCacheMixin = {
         generatedAt:   new Date().toISOString(),
         projectRoot:   this._root,
         symbolCount:   this._symbols.size,
+        parserStats:   {
+          astParsed: astSymbolCount,
+          regexParsed: this._symbols.size - astSymbolCount,
+          astCoveragePercent: this._symbols.size > 0
+            ? Math.round((astSymbolCount / this._symbols.size) * 1000) / 10
+            : 0,
+        },
         filePaths,
         symbols:       compactSymbols,
         callEdges:     compactCallEdges,
@@ -472,7 +570,10 @@ const CodeGraphCacheMixin = {
 
       translateMdFile(mdPath, this._llmCall).catch(() => {});
 
-      console.log(`[CodeGraph] 📄 Written: ${jsonPath} (v2 path-dictionary format, ${filePaths.length} unique paths)`);
+      const astPct = graphData.parserStats.astCoveragePercent;
+      const astIcon = astPct >= 50 ? '🌲' : astPct >= 20 ? '🌱' : '⚠️';
+      console.log(`[CodeGraph] 📄 Written: ${jsonPath} (v2, ${filePaths.length} paths, ${this._symbols.size} symbols)`);
+      console.log(`[CodeGraph] ${astIcon} AST coverage: ${graphData.parserStats.astParsed}/${this._symbols.size} symbols (${astPct}%) via tree-sitter`);
       return jsonPath;
     } catch (err) {
       if (err.message && err.message.includes('Invalid string length') && graphData) {

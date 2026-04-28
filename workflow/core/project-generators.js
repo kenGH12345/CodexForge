@@ -1,5 +1,14 @@
 'use strict';
 
+/**
+ * @module project-generators
+ * @production-exempt reserved – init-project scaffold generator. Awaiting
+ *   wire-up into init-project.js (scaffold pipeline). Retained because the
+ *   TECH_PROFILES-driven config generation logic is non-trivial (~14KB) and
+ *   is the designated migration target for the legacy init flow. Remove tag
+ *   once wired.
+ */
+
 const fs   = require('fs');
 const path = require('path');
 const { TECH_PROFILES, _generateDirectoryTree } = require('./tech-profiles');

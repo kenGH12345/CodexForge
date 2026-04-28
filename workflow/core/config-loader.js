@@ -185,6 +185,7 @@ function loadConfig(startDir) {
           delete require.cache[require.resolve(fullPath)];
           const userConfig = require(fullPath);
           const merged = _mergeConfig(DEFAULT_CONFIG, userConfig);
+          _autoRegisterSkills(merged, fullPath);
           const { config: governedConfig, report } = applyConfigGovernance(merged);
           if (report && Array.isArray(report.warnings) && report.warnings.length > 0) {
             for (const warning of report.warnings.slice(0, 10)) {
@@ -203,7 +204,9 @@ function loadConfig(startDir) {
     }
   }
 
-  const { config: governedDefaultConfig, report } = applyConfigGovernance({ ...DEFAULT_CONFIG });
+  const defaultMerged = { ...DEFAULT_CONFIG };
+  _autoRegisterSkills(defaultMerged, null);
+  const { config: governedDefaultConfig, report } = applyConfigGovernance(defaultMerged);
   if (report && Array.isArray(report.warnings) && report.warnings.length > 0) {
     for (const warning of report.warnings.slice(0, 10)) {
       console.warn(warning);
@@ -267,6 +270,153 @@ function _mergeConfig(defaults, user) {
   }
 
   return result;
+}
+
+// ─── Skill Auto-Discovery ─────────────────────────────────────────────────────
+
+/**
+ * Derives the skills directory path from the loaded config file location.
+ * Falls back to paths relative to this module and process.cwd().
+ */
+function _resolveSkillsDir(configPath) {
+  if (configPath) {
+    const projectRoot = path.dirname(configPath);
+    return path.join(projectRoot, 'workflow', 'skills');
+  }
+
+  const relativeSkills = path.resolve(__dirname, '..', 'skills');
+  if (fs.existsSync(relativeSkills)) {
+    return relativeSkills;
+  }
+
+  const cwdSkills = path.join(process.cwd(), 'workflow', 'skills');
+  if (fs.existsSync(cwdSkills)) {
+    return cwdSkills;
+  }
+
+  return null;
+}
+
+/**
+ * Extracts skill metadata from a skill markdown file.
+ * Supports YAML frontmatter with fields: name, description, domains (array or string).
+ * Falls back to filename-based derivation for missing fields.
+ */
+function _extractSkillMetadata(filePath, fallbackName) {
+  const content = fs.readFileSync(filePath, 'utf8');
+
+  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+  if (!fmMatch) {
+    return _buildFallbackMetadata(fallbackName);
+  }
+
+  const fm = fmMatch[1];
+  const name = _yamlGet(fm, 'name') || fallbackName;
+  const description = _yamlGet(fm, 'description') || `Auto-discovered skill from ${fallbackName}.md`;
+  const rawDomains = _yamlGet(fm, 'domains');
+  const domains = _normalizeDomains(rawDomains, fallbackName);
+
+  return { name, description, domains };
+}
+
+function _yamlGet(frontmatter, key) {
+  const lineRe = new RegExp(`^${key}\\s*:\\s*(.*)$`, 'm');
+  const match = frontmatter.match(lineRe);
+  if (!match) return undefined;
+
+  let value = match[1].trim();
+
+  if (value.startsWith('[') && value.endsWith(']')) {
+    try {
+      return value.slice(1, -1).split(',')
+        .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(s => s.length > 0);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+
+  return value;
+}
+
+function _normalizeDomains(rawDomains, fallbackName) {
+  if (Array.isArray(rawDomains) && rawDomains.length > 0) {
+    return rawDomains;
+  }
+  if (typeof rawDomains === 'string' && rawDomains.length > 0) {
+    return [rawDomains];
+  }
+  return _deriveDomainsFromName(fallbackName);
+}
+
+function _deriveDomainsFromName(name) {
+  const parts = name.split(/[-_]/);
+  const noise = new Set(['bp', 'skill', 'dev', 'test', 'review']);
+  const domains = parts.filter(p => p.length > 2 && !noise.has(p.toLowerCase()));
+  if (domains.length > 0) return domains;
+  const clean = name.replace(/^(bp-|skill-)/i, '');
+  return clean ? [clean] : [name];
+}
+
+function _buildFallbackMetadata(name) {
+  return {
+    name,
+    description: `Auto-discovered skill from ${name}.md`,
+    domains: _deriveDomainsFromName(name),
+  };
+}
+
+/**
+ * Scans the skills directory and registers any skill files not already present
+ * in merged.builtinSkills. User-configured skills take precedence.
+ */
+function _autoRegisterSkills(merged, configPath) {
+  const skillsDir = _resolveSkillsDir(configPath);
+  if (!skillsDir || !fs.existsSync(skillsDir)) {
+    return;
+  }
+
+  if (!Array.isArray(merged.builtinSkills)) {
+    merged.builtinSkills = [];
+  }
+
+  const existingNames = new Set(
+    merged.builtinSkills.map(s => s && s.name).filter(Boolean)
+  );
+
+  let discovered = 0;
+  try {
+    const files = fs.readdirSync(skillsDir);
+    for (const file of files) {
+      if (!file.endsWith('.md')) continue;
+
+      const name = file.slice(0, -3);
+      if (existingNames.has(name)) continue;
+
+      const filePath = path.join(skillsDir, file);
+      try {
+        const metadata = _extractSkillMetadata(filePath, name);
+        if (metadata && metadata.name) {
+          merged.builtinSkills.push(metadata);
+          existingNames.add(metadata.name);
+          discovered++;
+        }
+      } catch (err) {
+        console.warn(`[ConfigLoader][AutoDiscovery] Failed to parse ${file}: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[ConfigLoader][AutoDiscovery] Failed to scan ${skillsDir}: ${err.message}`);
+  }
+
+  if (discovered > 0) {
+    console.log(`[ConfigLoader][AutoDiscovery] Registered ${discovered} skill(s) from ${skillsDir}`);
+  }
 }
 
 // ─── Singleton Cache ──────────────────────────────────────────────────────────

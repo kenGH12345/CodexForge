@@ -38,9 +38,14 @@ class MAPEEngine {
   constructor(opts = {}) {
     this._orch = opts.orchestrator;
     this._verbose = opts.verbose ?? false;
-    this._outputDir = this._orch?._outputDir || path.join(process.cwd(), 'workflow', 'output');
+    this._outputDir = opts.outputDir || this._orch?._outputDir || path.join(process.cwd(), 'workflow', 'output');
     this._microLoopMaxIter = opts.microLoopMaxIter ?? 3;
     this._experimentHistoryPath = path.join(this._outputDir, 'experiment-history.jsonl');
+
+    // [Phase 1+2] Optional EvolutionLoop integration
+    this._evolutionAdapter = opts.evolutionAdapter || null;
+    this._experienceStore = opts.experienceStore || null;
+    this._skillEvolution = opts.skillEvolution || null;
   }
 
   // ─── Full MAPE Cycle ──────────────────────────────────────────────────
@@ -62,6 +67,18 @@ class MAPEEngine {
 
     // Phase 2: Analyze
     const analysis = this.analyze(signals);
+
+    // [Phase 1] Dispatch MAPE analysis signals to EvolutionLoop (optional)
+    if (this._evolutionAdapter) {
+      try {
+        const { dispatched } = this._evolutionAdapter.adaptAndDispatch(analysis, signals);
+        if (this._verbose && dispatched > 0) {
+          console.log(`[MAPE:Analyze] 📡 Dispatched ${dispatched} signal(s) to EvolutionLoop`);
+        }
+      } catch (err) {
+        console.warn(`[MAPE:Analyze] ⚠️ EvolutionAdapter dispatch failed: ${err.message}`);
+      }
+    }
 
     // Phase 3: Plan
     const plan = this.plan(analysis, { maxActions });
@@ -466,11 +483,51 @@ monitor() {
       }
     }
 
+    // [Phase 2] Persist execution results to ExperienceStore (optional feedback loop)
+    if (this._experienceStore) {
+      try {
+        this._persistExecutionResults(results);
+      } catch (err) {
+        console.warn(`[MAPE:Execute] ⚠️ ExperienceStore feedback failed: ${err.message}`);
+      }
+    }
+
+    // [Phase 2] Check for repeated failures and trigger auto-heal (optional)
+    this._checkAutoHeal(results);
+
     return { executed, skipped, results };
   }
 
   /**
-   * Executes a single action based on its type.
+   * Persists MAPE execution results to ExperienceStore.
+   * Successful actions → positive patterns. Failed actions → negative patterns.
+   *
+   * @param {object[]} results — From execute()
+   */
+  _persistExecutionResults(results) {
+    for (const res of results) {
+      const isError = res.status === 'error';
+      const category = 'mape_action';
+      const title = `MAPE ${res.action}: ${res.status}`;
+      const content = isError
+        ? `**Action**: ${res.action}\n**Status**: ${res.status}\n**Error**: ${res.error || 'unknown'}`
+        : `**Action**: ${res.action}\n**Status**: ${res.status}\n**Detail**: ${res.detail || 'N/A'}`;
+
+      this._experienceStore.record({
+        type: isError ? 'negative' : 'positive',
+        category,
+        title,
+        content,
+        tags: ['mape', 'auto-execution', res.status],
+        source: 'mape-execution',
+        ttlDays: isError ? 180 : 90,
+      });
+    }
+  }
+  /**
+   * System heuristic evaluation — logs action as positive or negative
+   * experience based on execution outcome.
+   *
    * All 11 action types have executors (8 original + 3 extensions).
    * @param {object} action
    * @returns {object} Result details
@@ -677,6 +734,183 @@ monitor() {
     }
 
     return { iterations, kept, rolledBack, stopped, convergence, excluded };
+  }
+
+  // ─── Phase 2b: Auto-Heal Trigger ──────────────────────────────────────
+  /**
+   * Tracks per-action-type failure counts and triggers Skill evolution when
+   * a threshold of consecutive failures is reached (self-repair loop).
+   *
+   * Persistence: failure counts stored in experiment-history.jsonl via
+   * _loadFailureCounters() / _saveFailureCounters().
+   *
+   * @param {object[]} results — Execution results
+   */
+  _checkAutoHeal(results) {
+    // Track failure counts regardless of whether skillEvolution is available
+    // (counters feed the health report even if auto-heal cannot trigger).
+    const counters = this._loadFailureCounters();
+    let triggered = 0;
+
+    for (const res of results) {
+      const actionType = this._extractActionType(res.action);
+      if (!actionType) continue;
+
+      if (res.status === 'error') {
+        counters[actionType] = (counters[actionType] || 0) + 1;
+
+        if (counters[actionType] >= 3 && this._skillEvolution) {
+          const skillName = this._actionTypeToSkill(actionType);
+          if (skillName) {
+            this._triggerSkillAutoHeal(skillName, actionType, counters[actionType]);
+            triggered++;
+          }
+          counters[actionType] = 0;
+        }
+      } else {
+        counters[actionType] = 0;
+      }
+    }
+
+    this._saveFailureCounters(counters);
+
+    if (this._verbose && triggered > 0) {
+      console.log(`[MAPE:AutoHeal] 🔧 Triggered ${triggered} auto-heal action(s)`);
+    }
+  }
+
+  /**
+   * Triggers Skill evolution for a repeatedly failing action type.
+   *
+   * @param {string} skillName — Skill to evolve
+   * @param {string} actionType — Failing action type
+   * @param {number} failCount — Consecutive failure count
+   */
+  _triggerSkillAutoHeal(skillName, actionType, failCount) {
+    try {
+      const meta = this._skillEvolution.registry?.get(skillName);
+      if (!meta) {
+        console.warn(`[MAPE:AutoHeal] Skill not found for auto-heal: ${skillName}`);
+        return;
+      }
+
+      // Guard: skip if skill was modified within last 24h
+      const lastModified = meta.lastEvolvedAt ? new Date(meta.lastEvolvedAt) : null;
+      if (lastModified && (Date.now() - lastModified.getTime()) < 24 * 60 * 60 * 1000) {
+        console.log(`[MAPE:AutoHeal] ⏭️ Skipping ${skillName} — evolved <24h ago`);
+        return;
+      }
+
+      this._skillEvolution.evolve(skillName, {
+        section: 'Prevention Rules',
+        title: `[AutoHeal] MAPE action "${actionType}" failed ${failCount}x consecutively`,
+        content: `**Auto-Heal Trigger**: The MAPE action type "${actionType}" has failed ${failCount} consecutive times.\n**Recommended**: Review the action executor and its dependencies. Check for environment changes, missing prerequisites, or outdated logic.`,
+        reason: `MAPE AutoHeal: ${failCount} consecutive failures of ${actionType}`,
+      });
+
+      this._recordAutoHealTrigger({
+        skillName,
+        actionType,
+        reason: `MAPE AutoHeal: ${failCount} consecutive failures`,
+      });
+
+      console.log(`[MAPE:AutoHeal] 🧬 Evolved skill "${skillName}" due to ${failCount}x ${actionType} failures`);
+    } catch (err) {
+      console.warn(`[MAPE:AutoHeal] ⚠️ Auto-heal failed for ${actionType}: ${err.message}`);
+    }
+  }
+
+  /**
+   * Maps action type to the corresponding Skill name.
+   *
+   * @param {string} actionType — e.g. "skill-refresh"
+   * @returns {string|null}
+   */
+  _actionTypeToSkill(actionType) {
+    const mapping = {
+      'skill-refresh': 'skill-evolution',
+      'skill-rollback': 'skill-evolution',
+      'config-adjustment': 'initialization',
+      'experience-cleanup': 'experience-evolution',
+      'experience-distill': 'experience-evolution',
+      'architecture-fix': 'architecture-design',
+      'target-optimization': 'target-optimization',
+      'metric-calibration': 'metric-calibration',
+      'prompt-evolution': 'prompt-evolution',
+      'self-audit-stage': 'self-audit',
+      'self-audit-pipeline': 'self-audit',
+      'article-scout': 'article-scouting',
+      'complaint-resolution': 'complaint-resolution',
+    };
+    return mapping[actionType] || null;
+  }
+
+  /**
+   * Extracts action type from the result action title.
+   *
+   * @param {string} actionTitle — e.g. "skill-refresh: stale skill detected"
+   * @returns {string|null}
+   */
+  _extractActionType(actionTitle) {
+    if (!actionTitle) return null;
+    const types = Object.values(ACTION_TYPE);
+    return types.find(t => actionTitle.toLowerCase().startsWith(t)) || null;
+  }
+
+  /**
+   * Loads per-action-type failure counters from disk.
+   *
+   * @returns {object} Map of actionType → failure count
+   */
+  _loadFailureCounters() {
+    try {
+      const countersPath = path.join(this._outputDir, 'mape-failure-counters.json');
+      if (fs.existsSync(countersPath)) {
+        return JSON.parse(fs.readFileSync(countersPath, 'utf-8'));
+      }
+    } catch (err) {
+      console.warn(`[MAPE] ⚠️ Could not load failure counters: ${err.message}`);
+    }
+    return {};
+  }
+
+  /**
+   * Saves per-action-type failure counters to disk.
+   *
+   * @param {object} counters
+   */
+  _saveFailureCounters(counters) {
+    try {
+      const countersPath = path.join(this._outputDir, 'mape-failure-counters.json');
+      fs.writeFileSync(countersPath, JSON.stringify(counters, null, 2), 'utf-8');
+    } catch (err) {
+      console.warn(`[MAPE] ⚠️ Could not save failure counters: ${err.message}`);
+    }
+  }
+
+  /**
+   * Records an auto-heal trigger event to mape-health-report.json.
+   *
+   * @param {object} entry — { skillName, actionType, reason, timestamp }
+   */
+  _recordAutoHealTrigger(entry) {
+    try {
+      const healthPath = path.join(this._outputDir, 'mape-health-report.json');
+      let history = [];
+      if (fs.existsSync(healthPath)) {
+        history = JSON.parse(fs.readFileSync(healthPath, 'utf-8'));
+        if (!Array.isArray(history)) history = [];
+      }
+      history.push({
+        timestamp: entry.timestamp || new Date().toISOString(),
+        skillName: entry.skillName,
+        actionType: entry.actionType,
+        reason: entry.reason,
+      });
+      fs.writeFileSync(healthPath, JSON.stringify(history, null, 2), 'utf-8');
+    } catch (err) {
+      console.warn(`[MAPE] ⚠️ Could not record auto-heal trigger: ${err.message}`);
+    }
   }
 }
 

@@ -227,6 +227,7 @@ function loadSkill({
   triggerLazyEnrichment,
   validateSkillContent,
   skillRegistry = null,  // Optional: SkillEvolutionEngine registry for custom filePath lookup
+  incremental = false,   // T-2: enable incremental loading (mandatory blocks prioritized)
 }) {
   // Gap 1 fix: double-check retired status at load time
   if (retiredSkills.has(skillName)) return null;
@@ -287,7 +288,15 @@ function loadSkill({
         : tokenBudget);
 
   // For dependency skills or progressive mode, use only the body/fragment
-  const toTruncate = isDep ? body : skillContent;
+  // T-2: Incremental loading — parse H2 sections and prioritize mandatory blocks
+  let toTruncate;
+  if (!isDep && incremental) {
+    const inc = incrementalLoad(body, effectiveBudget);
+    toTruncate = inc.content;
+  } else {
+    toTruncate = isDep ? body : skillContent;
+  }
+
   const truncated = truncate(toTruncate, effectiveBudget);
   if (!truncated) return null;
 
@@ -523,6 +532,147 @@ function _resolveReferencesDir(skillFilePath, skillName, skillsDir) {
   return null;
 }
 
+// ─── Incremental Skill Loading (T-2) ─────────────────────────────────────────
+
+/**
+ * H2 section priority mapping for incremental loading.
+ * Higher priority = loaded first, lower priority = loaded only when budget permits.
+ * Non-essential sections get priority < 50.
+ */
+const CHUNK_PRIORITY = {
+  // Mandatory blocks (essentials — never skipped)
+  meta:          100,
+  metadata:      100,
+  'meta-data':   100,
+  rules:          95,
+  'anti-patterns': 90,
+  'anti patterns': 90,
+  'context-hints': 85,
+  'context hints': 85,
+  hints:          85,
+  checklist:      80,
+  sop:            75,
+  'standard-operating-procedure': 75,
+
+  // Optional blocks (loaded only when budget allows)
+  examples:       50,
+  introduction:   45,
+  intro:          45,
+  background:     30,
+  'deep-analysis': 20,
+  'deep analysis': 20,
+  analysis:       20,
+  references:     10,
+};
+
+const MANDATORY_PRIORITY_THRESHOLD = 70; // blocks with priority >= this are mandatory
+
+/**
+ * Parses skill content into H2 sections (chunks).
+ * Each chunk has { type, text, priority }.
+ *
+ * @param {string} content
+ * @returns {{ type: string, text: string, priority: number }[]}
+ */
+function parseSkillChunks(content) {
+  const chunks = [];
+  const lines = content.split('\n');
+  let currentType = 'preamble';
+  let currentLines = [];
+
+  const flushChunk = (type) => {
+    const text = currentLines.join('\n').trim();
+    if (text) {
+      const normalized = type.toLowerCase().trim();
+      const priority = CHUNK_PRIORITY[normalized] ?? 40; // unknown sections treated as optional
+      chunks.push({ type: normalized, text, priority });
+    }
+    currentLines = [];
+  };
+
+  for (const line of lines) {
+    const h2Match = line.match(/^##\s+(.+)$/);
+    if (h2Match) {
+      flushChunk(currentType);
+      currentType = h2Match[1].trim();
+      continue;
+    }
+    currentLines.push(line);
+  }
+  flushChunk(currentType);
+
+  return chunks;
+}
+
+/**
+ * Loads skill content incrementally: mandatory blocks always included,
+ * optional blocks filled in priority order until budget exhausted.
+ * When budget < mandatory total, truncates lowest-priority mandatory blocks
+ * (never skips rules/anti-patterns, priority >= MANDATORY_PRIORITY_THRESHOLD).
+ *
+ * @param {string} content
+ * @param {number} tokenBudget
+ * @returns {{ content: string, truncated: string[], isTruncated: boolean }}
+ */
+function incrementalLoad(content, tokenBudget) {
+  const chunks = parseSkillChunks(content);
+  if (!chunks.length) {
+    return { content: truncateContent(content, tokenBudget), truncated: [], isTruncated: false };
+  }
+
+  // Sort by priority descending
+  chunks.sort((a, b) => b.priority - a.priority);
+
+  const mandatory = chunks.filter(c => c.priority >= MANDATORY_PRIORITY_THRESHOLD);
+  const optional  = chunks.filter(c => c.priority < MANDATORY_PRIORITY_THRESHOLD);
+
+  // Build result within budget
+  const result = [];
+  const truncated = [];
+  let usedTokens = 0;
+
+  // Phase 1: fill mandatory blocks
+  for (const chunk of mandatory) {
+    const chunkTokens = estimateTokens(chunk.text);
+    if (usedTokens + chunkTokens <= tokenBudget) {
+      result.push(`## ${chunk.type}\n\n${chunk.text}`);
+      usedTokens += chunkTokens;
+    } else {
+      // Truncate this mandatory block instead of skipping
+      const remaining = tokenBudget - usedTokens;
+      if (remaining > 30) {
+        const partial = truncateContent(chunk.text, remaining);
+        result.push(`## ${chunk.type}\n\n${partial}`);
+        usedTokens += estimateTokens(partial);
+      }
+      truncated.push(chunk.type);
+      break; // no room for lower-priority blocks
+    }
+  }
+
+  // Phase 2: fill optional blocks if budget remains
+  for (const chunk of optional) {
+    const chunkTokens = estimateTokens(chunk.text);
+    if (usedTokens + chunkTokens <= tokenBudget) {
+      result.push(`## ${chunk.type}\n\n${chunk.text}`);
+      usedTokens += chunkTokens;
+    } else {
+      truncated.push(chunk.type);
+    }
+  }
+
+  let finalContent = result.join('\n\n');
+  if (truncated.length > 0) {
+    finalContent += `\n\n> ⚠️ truncated sections: ${truncated.join(', ')}`;
+  }
+
+  return {
+    content: finalContent,
+    truncated,
+    isTruncated: truncated.length > 0,
+  };
+}
+
 module.exports = {
   loadSkillWithDeps,
   loadSkill,
@@ -536,4 +686,9 @@ module.exports = {
   parseProgressiveSkill,
   // L3 references (Agent Skills Spec)
   _resolveReferencesDir,
+  // Incremental loading (T-2)
+  CHUNK_PRIORITY,
+  MANDATORY_PRIORITY_THRESHOLD,
+  parseSkillChunks,
+  incrementalLoad,
 };

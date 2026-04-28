@@ -35,6 +35,17 @@ const RISK_SKILL_TOKEN_CAP = 420;
 /** Max number of risk-pack skills to load per prompt (P1.5) */
 const RISK_SKILL_MAX_COUNT = 3;
 
+// ─── Incremental Skill Loading (T-2) ─────────────────────────────────────────
+
+/** Enable incremental loading: only load high-priority sections per skill */
+const INCREMENTAL_LOAD_ENABLED = true;
+
+/** Default token budget per skill when incremental loading is active */
+const INCREMENTAL_SKILL_BUDGET = 400;
+
+/** Max tokens per skill when incremental loading is active */
+const INCREMENTAL_MAX_SKILL_TOKENS = 600;
+
 // ─── Injection Gating Thresholds (P0 Token Optimization) ─────────────────────
 
 /** Min relevance score for skill injection — below this, skill is skipped (saves ~15% tokens) */
@@ -249,8 +260,12 @@ module.exports = {
   MAX_DEP_SKILL_TOKENS,
   MAX_DEP_DEPTH,
   RISK_SKILL_TOKEN_CAP,
-  RISK_SKILL_MAX_COUNT,
   RISK_SKILL_PACKS,
+  RISK_SKILL_MAX_COUNT,
+  // Incremental loading (T-2)
+  INCREMENTAL_LOAD_ENABLED,
+  INCREMENTAL_SKILL_BUDGET,
+  INCREMENTAL_MAX_SKILL_TOKENS,
   // Load levels
   LOAD_LEVEL,
   // Skill keywords

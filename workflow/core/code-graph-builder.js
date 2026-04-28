@@ -45,6 +45,7 @@ const NON_CODE_DIRS = new Set([
   'generated', 'gen', 'auto-generated', 'third_party', 'thirdparty', '3rdparty', 'external',
   'logs', 'log', 'tmp', 'temp', 'cache', '.cache',
   '.idea', '.vscode', '.vs', '.settings',
+  '.codebuddy', '.cursor', '.claude', '.aider', '.workflow',
   'locales', 'locale', 'i18n', 'l10n', 'translations',
 ]);
 
@@ -127,7 +128,7 @@ const CodeGraphBuilderMixin = {
     if (incremental && !force) {
       const loaded = this._loadCache(cachePath);
       if (loaded) {
-        changedFiles = this._detectChangedFiles(cachePath);
+      changedFiles = this._detectChangedFilesByMtime(cachePath);
         
         // P0: Apply structural fingerprint classification
         if (this._fingerprintEngine && changedFiles.length > 0) {
@@ -210,7 +211,10 @@ const CodeGraphBuilderMixin = {
           this._extractSymbols(content, relPath, ext);
           const strippedContent = this._stripCommentsAndStrings(content, ext);
           this._extractImports(strippedContent, relPath, ext);
-          tokenCache.set(relPath, new Set(strippedContent.match(/\b\w+\b/g) || []));
+          tokenCache.set(relPath, {
+            tokens: new Set(strippedContent.match(/\b\w+\b/g) || []),
+            content: strippedContent,
+          });
 try {
         this._fileMtimes.set(relPath, fs.statSync(filePath).mtimeMs);
       } catch (e) {
@@ -220,12 +224,16 @@ try {
       }
     }
 
-    // Pass 2: Build call edges
+    // Pass 2: Build call edges (range-aware when content is available)
     for (const filePath of files) {
       const relPath = path.relative(this._root, filePath).replace(/\\/g, '/');
       const ext = path.extname(filePath);
-      const tokens = tokenCache.get(relPath);
-      if (tokens) this._extractCallEdges(null, relPath, ext, tokens);
+      const cacheEntry = tokenCache.get(relPath);
+      if (cacheEntry) {
+        // cacheEntry = { tokens, content } from main thread path
+        // Pass content to enable range-aware per-symbol extraction
+        this._extractCallEdges(cacheEntry.content || null, relPath, ext, cacheEntry.tokens || null);
+      }
     }
     tokenCache.clear();
 
@@ -248,6 +256,7 @@ try {
     return {
       symbolCount: this._symbols.size,
       fileCount: files.length,
+      fileList: files,
       edgeCount,
       graphPath,
       incremental: isIncremental,
@@ -293,7 +302,7 @@ try {
       this._extractSymbols(content, relPath, ext);
       const strippedContent = this._stripCommentsAndStrings(content, ext);
       this._extractImports(strippedContent, relPath, ext);
-      this._extractCallEdges(null, relPath, ext, new Set(strippedContent.match(/\b\w+\b/g) || []));
+      this._extractCallEdges(strippedContent, relPath, ext, new Set(strippedContent.match(/\b\w+\b/g) || []));
 try {
         this._fileMtimes.set(relPath, fs.statSync(filePath).mtimeMs);
       } catch (e) {
@@ -400,8 +409,10 @@ try {
                   kind: sym.kind,
                   file: relPath,
                   line: sym.line,
+                  endLine: sym.endLine,
                   signature: sym.signature || '',
                   summary: sym.summary || '',
+                  parser: sym.parser || 'regex',
                 });
               }
 
@@ -412,7 +423,7 @@ try {
 
               // Populate tokenCache for Pass 2 call-edge extraction
               if (wordTokens && wordTokens.length > 0) {
-                tokenCache.set(relPath, new Set(wordTokens));
+                tokenCache.set(relPath, { tokens: new Set(wordTokens), content: fileResult.strippedContent });
               }
 
               // Record mtime for incremental cache
@@ -526,6 +537,7 @@ try {
           
           // Update fingerprint cache
           this._fingerprintEngine.updateFingerprints([relPath]);
+          this._setEndLinesForFile(relPath, content.split('\n').length);
           return;
         }
       } catch (err) {
@@ -561,6 +573,7 @@ try {
         });
       }
     }
+    this._setEndLinesForFile(relPath, lines.length);
   },
 
   /**
@@ -600,27 +613,14 @@ try {
 
   /**
    * Extract call graph edges.
-   * @param {string|null} content
-   * @param {string} relPath
-   * @param {string} ext
-   * @param {Set<string>} tokens
+   * Mixed in from code-graph-parsers.js; this placeholder documents the interface.
+   * @param {string|null} content - Source content for range-aware extraction
+   * @param {string} relPath - Relative file path
+   * @param {string} ext - File extension
+   * @param {Set<string>|null} preExtractedTokens - Fallback tokens when content is null
    */
-  _extractCallEdges(content, relPath, ext, tokens) {
-    const calls = [];
-
-    // Find all known symbol names in the file
-    for (const [id, sym] of this._symbols) {
-      if (sym.file === relPath) continue; // Skip own symbols
-      const baseName = sym.name.includes(':') ? sym.name.split(':').pop() : sym.name;
-      if (tokens.has(baseName) || tokens.has(sym.name)) {
-        calls.push(id);
-      }
-    }
-
-    if (calls.length > 0) {
-      this._callEdges.set(relPath, calls);
-    }
-  },
+  // _extractCallEdges(content, relPath, ext, preExtractedTokens) { ... }
+  // Implementation lives in CodeGraphParsersMixin (mixed in after BuilderMixin).
 
   /**
    * Get symbol extraction patterns for a file extension.
