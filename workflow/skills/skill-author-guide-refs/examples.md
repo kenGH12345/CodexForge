@@ -49,7 +49,7 @@
 |---|---|
 | 项目类型 | <ProjectType>（<示例：kart 赛车游戏>） |
 | 主语言 | <Language>，占比 <X>%（<Y> 个源文件） |
-| 运行时 | <Runtime + version>（如 Unity 2021 LTS） |
+| 运行时 | <Runtime + version>（如 "某游戏引擎 某版本 LTS" / "Node.js 20" / "JVM 17"）|
 | 规模 | <N> 符号，<M> 文件，估算 <K>K LOC |
 | 主要模式 | Observer / Command / Pipeline（详见 §4） |
 | 核心数据流 | `<EntryFile>` → `<CoreModuleA>` → `<CoreModuleB>` |
@@ -820,48 +820,30 @@ _数据来源：`codeGraph.callEdges` 聚合（总 edges=<X>，属正常水平�
 本项目采用 MVC 架构，数据层和视图层解耦，视图会自动响应数据变化。
 ```
 
-### ✅ 好例（带证据）
+### ✅ 好例（带证据 + 通用化占位符）
 
 ```markdown
 ## MVC 数据流与绑定 [D3]
 
 ### 架构模式
-本项目使用**自研响应式 Model-View 绑定系统**（非标准 MVC）：
-- **数据层入口**：`<ModuleFramework>/CommonModel/CommonModel.cs`（21 KB）继承 MonoBehaviour，
-  按类型 ID (`typeof(T).FullName`) 存储数据到 `Dictionary<string, ModelCommonData>`
-- **视图层基类**：`<ModuleFramework>/CommonModel/ModelViewBehaviour.cs` 继承 `BaseUI`，
-  提供 `aliveBinder`（Start→Destroy）和 `activeBinder`（Enable→Disable）两种绑定
-- **监听机制**：`<ModuleFramework>/CommonModel/ModelListener.cs` 定义 5 种事件类型：
-  Add / Update / Remove / Clear + 批量版本（`FireEventType` 枚举）
+本项目使用**响应式 Model-View 绑定系统**：
+- **数据层入口**：`<FrameworkRoot>/<DataLayer>/<DataStore>.<ext>`（≥N KB）
+  按类型 ID 存储数据到 `Dictionary<<TypeKey>, <DataContainer>>`
+- **视图层基类**：`<FrameworkRoot>/<DataLayer>/<ViewBase>.<ext>`
+  提供 `<LifecycleA>Binder`（如 mounted→destroyed）和 `<LifecycleB>Binder`（如 visible→hidden）两种绑定
+- **监听机制**：`<FrameworkRoot>/<DataLayer>/<ChangeListener>.<ext>` 定义 N 种事件类型：
+  Add / Update / Remove / Clear + 批量版本（`<ChangeEventEnum>` 枚举）
 
 ### 数据变更事件类型（枚举）
-```csharp
-public enum FireEventType {
-    Add, Update, Remove, Clear
-    // 还支持批量版本：BatAdd / BatUpdate / BatRemove
-}
-```
+enum <ChangeEventEnum> 含：Add, Update, Remove, Clear + 批量版本 BatAdd/BatUpdate/BatRemove
 
 ### "数据改变 → 视图刷新"完整示例
-以"购物袋物品更新"为例：
 
-```csharp
-// 1. 数据层写入（在 System 层）— callCount 1262 次
-var bagModel = <ModuleSystem>.GetModel<BagModel>();
-bagModel.putData<BagItemData>(newItem);           // → 触发 Add 事件
-
-// 2. 视图层绑定（在 UICtrl 继承 ModelViewBehaviour）
-public class BagUICtrl : ModelViewBehaviour {
-    protected override void OnStart() {
-        // alive 绑定：整个 UI 生命周期内有效
-        aliveBinder.AddModelBinding<BagItemData>(bagModel, OnBagItemChanged);
-    }
-    private void OnBagItemChanged(BagItemData item) {
-        // 3. 视图刷新
-        RefreshItemCell(item);
-    }
-}
-```
+1. **数据层写入**（业务层，callCount <高频次数> 次）：
+   `var <domainStore> = <DataAccessor>.getModel<<DomainDataModel>>();`
+   `<domainStore>.putData<<DomainItem>>(newItem);` → 触发 Add 事件
+2. **视图层绑定**（UI 层继承 `<ViewBase>`）：在 `onStart` 里调 `aliveBinder.addModelBinding<<DomainItem>>(<domainStore>, this.onChanged)`
+3. **视图刷新**：回调中调 `this.refreshCell(item)`
 
 ### 绑定生命周期规则
 | 绑定器 | 生命周期 | 何时用 |
@@ -869,15 +851,25 @@ public class BagUICtrl : ModelViewBehaviour {
 | `aliveBinder` | Start → Destroy | 持续存在的 UI，如主界面 |
 | `activeBinder` | Enable → Disable | 临时弹窗、可切换面板 |
 
-⚠️ **禁止**：`_behaviourStarted` 之后调用 `aliveBinder` 会抛 `Exception`（源码第 31 行断言）
+⚠️ **禁止**：初始化完成后再调用 `aliveBinder` 会抛异常（源码已断言）
 
 ### 反模式（新人易错）
-1. ❌ **绕过 Model 直接改 UI**：直接 `SetText("new")` 不通过 Model，下次数据从服务器回来会覆盖
-2. ❌ **忘记 Release 绑定**：ModelListener 注册了但 holder 销毁时未解绑 → 内存泄漏（fire 时 NullRef）
-3. ❌ **在 `Awake` 阶段 aliveBinder**：此时还没 `Start`，应该延后到 `OnStart`
+1. ❌ **绕过数据层直接改 UI**：下次数据从服务器回来会覆盖
+2. ❌ **忘记 Release 绑定**：holder 销毁时未解绑 → 内存泄漏
+3. ❌ **在构造阶段调用 aliveBinder**：此时还没进入 Start 生命周期
 ```
 
-**为什么好例好**：完整贯穿数据 → 事件 → 绑定 → 视图的链路 + 生命周期表 + 具体断言 + 新人陷阱。
+**为什么好例好**：完整贯穿数据→事件→绑定→视图的链路 + 生命周期表 + 具体断言 + 新人陷阱。
+
+### 📐 跨项目类型对照表（同一维度在不同项目里长什么样）
+
+| 项目类型 | 数据层 | 视图绑定 | 事件机制 |
+|---|---|---|---|
+| 游戏（组件化引擎）| 自研 DataStore + 事件订阅 | View 基类 + lifecycle binder | 枚举 Add/Update/Remove/Clear |
+| 前端 SPA（Vue 系）| Pinia/Vuex store + `storeToRefs` | watch/watchEffect + computed | reactive proxy trap |
+| 前端 SPA（React 系）| Redux/Zustand store + selector | useSelector + useEffect | dispatch(action) |
+| 桌面（MVVM 系）| INotifyPropertyChanged ViewModel | XAML Binding + DataContext | PropertyChanged event |
+| 后端（MVC 渲染）| Entity + Repository + Service | 模板引擎渲染（无动态绑定）| N/A |
 
 ---
 
@@ -891,82 +883,61 @@ public class BagUICtrl : ModelViewBehaviour {
 模块之间可以通过事件或直接调用来通讯，也可以用单例访问。
 ```
 
-### ✅ 好例（带选型决策）
+### ✅ 好例（带选型决策 + 通用化占位符）
 
 ```markdown
 ## 模块间通讯契约 [D3]
 
-### 跨模块调用 Top-10（从 189,760 条 callEdges 聚合）
+### 跨模块调用 Top-10（从 <N> 条 callEdges 聚合）
 | 源模块 | 目标模块 | callCount | 主要通讯手段 |
 |---|---|---|---|
-| `<ModuleUICtrl>` | `<ModuleSystem>` | 2,928 | Singleton.Instance 调用 |
-| `<ModuleSystem>` | `<ModuleCore>` | 1,847 | 事件（CGameEvent） |
-| `<ModuleUICtrl>` | `<ModuleFramework>/Event` | 1,103 | 事件订阅 |
-| `<ModuleCore>` | `<ModuleFramework>/Utility` | 987 | 直接调用（PPAssert/Singleton） |
-| `<ModuleSystem>/NetSys` | `<ModuleSystem>/LoginSys` | 654 | ServerProxy 间接调用 |
+| `<ModuleA/UILayer>` | `<ModuleB/BusinessLayer>` | <N> | Singleton.Instance 调用 |
+| `<ModuleB/BusinessLayer>` | `<ModuleC/CoreLayer>` | <N> | 事件（`<TypedEvent>`）|
+| `<ModuleA/UILayer>` | `<Framework>/EventBus` | <N> | 事件订阅 |
+| `<ModuleC/CoreLayer>` | `<Framework>/Utility` | <N> | 直接调用（`<AssertUtil>`/`<Singleton>`）|
+| `<ModuleB/NetSub>` | `<ModuleB/AuthSub>` | <N> | `<ServiceGateway>` 间接调用 |
 | ... | ... | ... | ... |
 
-### 5 种通讯手段与代表文件
+### N 种通讯手段与代表文件
 
-#### 1. **直接调用**（`<ModuleFramework>/Utility/*` 被 8000+ 次调用）
-适用场景：无状态工具函数
-```csharp
-PPAssert.IsTrue(cond);                    // 断言，release 自动剥离
-SimpleStringBuilder.Concat("a", "b", "c"); // 性能敏感字符串拼接
-```
-
-#### 2. **单例访问**（通过 `Singleton<T>.Instance`）
-适用场景：全局状态（Manager / Sys 类）
-```csharp
-UIManager.Instance.OpenUI<BagUICtrl>();
-NetworkSystem.Instance.Send(msg);
-```
-
-#### 3. **事件总线**（`<ModuleFramework>/Event/CGameEvent<T1..T4>`）
-适用场景：跨层解耦、一对多通知
-```csharp
-// 发送方
-BagChangedEvent.Fire(itemId, newCount);
-// 订阅方（继承 ModelViewBehaviour 的 OnStart 中）
-eventBus.Subscribe<BagChangedEvent>(OnBagChanged);
-```
-
-#### 4. **ServerProxy**（专供业务 ↔ 网络层）
-适用场景：强制走统一的请求-响应处理
-```csharp
-// UI 层禁止直接调 NetworkSystem，必须走 ServerProxy
-BagServerProxy.RequestSyncBag(onSuccess, onFail);
-```
-
-#### 5. **协程回调**（`<ModuleCore>/Coroutine/Coroutiner`，被 1,215 次调用）
-适用场景：多帧异步、等待资源加载
-```csharp
-Coroutiner.StartCoroutine(LoadAndShow(), CoroutineMode.ContinueWhenEnable);
-```
+1. **直接调用**（`<Framework>/Utility/*` 被 8000+ 次调用）：无状态工具函数。例：`<AssertUtil>.isTrue(cond);` / `<StringUtil>.concat(...)`
+2. **单例访问**（通过 `<SingletonTemplate><T>.Instance`）：全局状态（Manager/System 类）。例：`<UIManager>.Instance.openUI<<DomainView>>();`
+3. **事件总线**（`<Framework>/Event/<TypedEvent><T1..T4>`）：跨层解耦、一对多通知。例：`<DomainChangedEvent>.fire(itemId, newCount);` + 订阅方 `eventBus.subscribe<<DomainChangedEvent>>(...)`
+4. **业务代理**（`<ServiceGateway>` 专供业务↔外部系统）：强制走统一的请求-响应处理。**UI 层禁止直接调 `<NetworkGateway>`，必须走 `<ServiceGateway>`**
+5. **异步回调**（`<Framework>/Async/<AsyncHelper>`，被 <N> 次调用）：多帧异步、等待资源加载。例：`<AsyncHelper>.start(loadAndShow(), <AsyncMode>.ContinueWhenEnable);`
 
 ### 通讯选型决策表
 
 | 场景 | 推荐手段 | 理由 | 禁止 |
 |---|---|---|---|
 | 无状态工具调用 | 直接调用 | 最简单高效 | — |
-| Manager / 全局服务 | 单例 | 避免传递 | 禁止在 Awake 用（未 OnCreate） |
-| 跨层一对多通知 | CGameEvent | 松耦合，一事件多处理 | 禁止事件套事件（循环触发） |
-| UI 触发网络请求 | ServerProxy | 统一错误处理 | **禁止** UI 直接调 NetworkSystem |
-| 多帧异步加载 | Coroutiner | 可暂停、可续 | 禁止用 async/await（unity 主线程约束） |
+| Manager / 全局服务 | 单例 | 避免传递 | 禁止在构造阶段用（未完成 onCreate）|
+| 跨层一对多通知 | `<TypedEvent>` | 松耦合，一事件多处理 | 禁止事件套事件（循环触发）|
+| UI 触发外部请求 | `<ServiceGateway>` | 统一错误处理 | **禁止** UI 直接调 `<NetworkGateway>` |
+| 多帧异步加载 | `<AsyncHelper>` | 可暂停、可续 | 视框架约束选用 |
 
 ### 硬规则（架构 guard）
 
-1. **单向依赖**：`<ModuleUICtrl>` → `<ModuleSystem>` → `<ModuleCore>` → `<ModuleFramework>`，不能反向
-2. **禁止跨层穿透**：`<ModuleUICtrl>` 不能直接访问 `<ModuleFramework>/Event`，必须走 `<ModuleSystem>` 中介
+1. **单向依赖**：`<UILayer>` → `<BusinessLayer>` → `<CoreLayer>` → `<Framework>`，不能反向
+2. **禁止跨层穿透**：`<UILayer>` 不能直接访问 `<Framework>/Event`，必须走 `<BusinessLayer>` 中介
 3. **事件命名约定**：`<业务域>ChangedEvent` / `<业务域>FailEvent`
 
-### 反模式（本项目已知踩坑）
-1. ❌ **UI 直接 new NetworkSystem**：绕过 ServerProxy → 错误处理缺失
-2. ❌ **全局事件总线滥用**：所有通讯都 Fire 事件 → 调用链不可追溯
-3. ❌ **循环依赖**：`ModuleCore` ↔ `ModuleLiteCore` 存在 1,084 次互调，是设计债务，不要扩大
+### 反模式（项目已知踩坑）
+1. ❌ **UI 直接 new `<NetworkGateway>`**：绕过 `<ServiceGateway>` → 错误处理缺失
+2. ❌ **全局事件总线滥用**：所有通讯都 fire 事件 → 调用链不可追溯
+3. ❌ **循环依赖**：`<ModuleX>` ↔ `<ModuleY>` 存在 N 次互调，是设计债务，不要扩大
 ```
 
-**为什么好例好**：跨模块 callEdges 真实数字 + 5 种通讯手段带代码 + 决策表 + 硬规则 + 项目已知反模式。
+**为什么好例好**：跨模块 callEdges 真实数字 + N 种通讯手段带代码 + 决策表 + 硬规则 + 项目已知反模式。
+
+### 📐 跨项目类型对照表
+
+| 项目类型 | 跨模块通讯主流手段 | 架构规则示例 |
+|---|---|---|
+| 游戏（组件化引擎）| Singleton + EventBus + Coroutine | 单向 UI→Business→Core，禁跨层穿透 |
+| 前端 SPA（Vue/React）| import + hooks/context + store dispatch | 纯函数组件优先，避免 side-effect 跨组件 |
+| 后端（微服务系）| DI 容器 + middleware + RPC client | 按 domain 划分服务，通过接口通信 |
+| CLI/工具 | import + 回调 + 命令模式 | 主流程线性，不需复杂拓扑 |
 
 ---
 
@@ -980,91 +951,137 @@ Coroutiner.StartCoroutine(LoadAndShow(), CoroutineMode.ContinueWhenEnable);
 本项目使用 JSON 格式与服务器通信。
 ```
 
-### ✅ 好例（带完整链路）
+### ✅ 好例（带完整链路 + 通用化占位符）
 
 ```markdown
 ## 协议与契约定义 [D4]
 
 ### 协议文件位置
-- **主协议定义**：`<ModuleTDR>/Proto/cs_proto.cs`（**1.36 MB**，自动生成）
-- **协议元库**：`<ModuleTDR>/Proto/csproto_metalib.cs`（TdrMetaDef 索引）
-- **编解码辅助**：`<ModuleSystem>/NetSys/TDRHelper.cs`
-- **业务层映射**：`<ModuleSystem>/NetSys/ServerProxy/` 目录下 9 个 `*ServerProxy.cs`
+- **主协议定义**：`<ProtocolModule>/<IDLDir>/<protocol>.<ext>`（**N MB**，自动生成）
+- **协议元库**：`<ProtocolModule>/<IDLDir>/<metalib>.<ext>`（协议 Meta 索引）
+- **编解码辅助**：`<NetworkModule>/<ProtocolCodec>.<ext>`
+- **业务层映射**：`<NetworkModule>/<ServiceGatewayDir>/` 目录下 N 个 `*ServiceGateway.<ext>`
 
 ### 工具链（IDL → 代码 → 使用）
 
-```
-*.tdr (IDL 文件，保存在服务器工程)
-   ↓ TDR 工具 (类似 protoc)
-cs_proto.cs (1.36 MB 生成代码，含所有消息类型 + 序列化/反序列化)
-   ↓ TDRHelper 包装
-ServerProxy 层 (业务友好的请求-响应 API)
-   ↓ 被 UI/业务层调用
-BagServerProxy.RequestSyncBag(onSuccess, onFail);
-```
+1. 开发者写 `<protocol-file>.<idl-ext>`（IDL 文件，保存在服务器工程）
+2. IDL 工具（如 `protoc` / `thrift` / 自研 `<idl-compiler>`）生成 `<generated-proto>.<lang-ext>`（N MB 生成代码，含所有消息类型 + 序列化/反序列化）
+3. `<ProtocolCodec>` 包装层提供业务友好的编解码 API
+4. `<ServiceGateway>` 层提供业务友好的请求-响应 API
+5. 业务/UI 层调用：`<DomainGateway>.requestSync(onSuccess, onFail);`
 
 ### 消息类型枚举
 
-```csharp
-// 网络连接类型（8 种）
-public enum ENetConnectType {
-    TCP, UDP, KCP, WebSocket, 
-    ApolloReliable, ApolloUnreliable, 
-    LocalLoopback, Mock
-}
-
-// 消息发送类型（11 种）
-public enum ESendMsgType {
-    Normal, Reliable, Unreliable,
-    LargePacket, Broadcast, Response,
-    Heartbeat, Login, Logout, Reconnect, Ack
-}
-```
+`<NetworkConnectEnum>` 定义连接类型（N 种）：TCP, UDP, KCP, WebSocket, <ReliableFlavor>, <UnreliableFlavor>, LocalLoopback, Mock
+`<SendMsgTypeEnum>` 定义消息发送类型（N 种）：Normal, Reliable, Unreliable, LargePacket, Broadcast, Response, Heartbeat, Login, Logout, Reconnect, Ack
 
 ### 编解码示例
 
-```csharp
-// 发送方
-var msg = new CSSyncBagRequest();
-msg.itemId = 1001;
-msg.count = 5;
-byte[] buf = TDRHelper.Serialize(msg);   // 底层走 cs_proto 自动代码
-NetworkSystem.Instance.Send(buf, ESendMsgType.Reliable);
-
-// 接收方（ThreadedPackReceiver 在网络线程解码）
-var response = TDRHelper.Deserialize<SCSyncBagResponse>(buf);
-MainThread.Post(() => OnSyncBagResponse(response));  // 切回主线程处理
-```
+- **发送方**（业务层）：
+  1. 构造业务 Request 对象（`<DomainRequest>`）
+  2. `<ProtocolCodec>.serialize(msg)` 调用底层生成代码 → byte[]
+  3. `<NetworkGateway>.Instance.send(buf, <SendMsgTypeEnum>.Reliable)`
+- **接收方**（网络线程）：
+  1. `<ThreadedReceiver>` 解码 → `<DomainResponse>`
+  2. 切回主线程：`mainThread.post(() => onResponse(response))`
 
 ### 版本兼容策略（**线上问题高发区**）
 
-1. **新增字段**：必须给默认值（TDR 规则：`optional` + `default = 0/空字符串`）
+1. **新增字段**：必须给默认值（IDL 规则：`optional` + `default = 0/空字符串`）
 2. **废弃字段**：保留字段不可删除，只能改名加 `_deprecated` 后缀，占位不复用
 3. **枚举扩展**：新增枚举值只能 append 在末尾，不可插入中间（会让旧客户端误读）
-4. **版本协商**：登录协议头含 `protoVersion` 字段，服务器发现版本不匹配直接踢下线
+4. **版本协商**：登录协议头含 `protoVersion` 字段，服务器发现版本不匹配直接断开
 
 ### 安全约定
 
-- **加密**：Apollo 协议自带传输层加密（AES）
+- **加密**：`<SecureTransportName>` 自带传输层加密（如 AES）
 - **签名**：Login 协议含 ticket 防重放
 - **CRC**：大包（> 1024 字节）必须带 CRC32 校验
 
 ### 性能约束
 
-- **主线程禁解码**：`TDRHelper.Deserialize` 必须在 `ThreadedPackReceiver` 线程调用
+- **主线程禁解码**：`<ProtocolCodec>.deserialize` 必须在 `<ThreadedReceiver>` 线程调用
 - **大消息上限**：单包 < 64 KB，超出必须 `LargePacket` 分片
-- **主线程禁大包序列化**：单次 `Serialize` 耗时 > 1ms 的必须放到协程里
+- **主线程禁大包序列化**：单次 `serialize` 耗时 > 1ms 的必须放到异步里
 
-### 反模式（本项目已知踩坑）
-1. ❌ **直接改 cs_proto.cs**：手动修改生成代码，下次自动生成被覆盖
+### 反模式（项目已知踩坑）
+1. ❌ **直接改生成代码**：手动修改 `<generated-proto>`，下次自动生成被覆盖
 2. ❌ **新增字段忘记默认值**：老客户端反序列化失败，批量掉线
 3. ❌ **在 UI 层做解码**：阻塞主线程，帧率下降
-4. ❌ **跳过 ServerProxy 直发消息**：绕过版本检查和错误统一处理
+4. ❌ **跳过 `<ServiceGateway>` 直发消息**：绕过版本检查和错误统一处理
 ```
 
-**为什么好例好**：文件路径+大小（1.36 MB 证据）+ 完整工具链 + 枚举清单 + 编解码双向示例 + 版本兼容**具体规则**（而不是泛泛"需要考虑兼容性"）+ 安全/性能约束 + 真实踩坑。
+**为什么好例好**：文件路径+大小证据 + 完整工具链 + 枚举清单 + 编解码双向示例 + 版本兼容**具体规则** + 安全/性能约束 + 真实踩坑。
+
+### 📐 跨项目类型对照表
+
+| 项目类型 | 协议工具链 | 版本兼容手段 |
+|---|---|---|
+| 游戏（强类型二进制）| 自研 IDL / protobuf → 代码生成 | protoVersion 字段 + 断开重连 |
+| Web 后端（REST）| OpenAPI YAML → 代码生成 → HTTP + JSON + 状态码 | API 版本号路径（/v1, /v2）|
+| Web 后端（gRPC）| `.proto` → protoc-gen-<lang> → 二进制 | 服务版本 + 兼容规则（optional 字段）|
+| 前端 SPA | OpenAPI client 生成 / tRPC type-safe / GraphQL codegen | 客户端匹配服务端 API 契约版本 |
+| 桌面/IPC | COM interface / DBus / MessagePack + Named Pipe | 接口版本号 + 降级策略 |
 
 ---
+
+## 📐 §16 分片输出结构示例（v2.1 新增）
+
+### ❌ 坏例（单文件 800+ 行）
+
+```
+<skillsDir>/<project-name>/
+└── SKILL.md   ← 800+ 行，17 节全挤一起
+```
+
+问题：
+- 任何任务都要全量加载（Token 浪费 60~80%）
+- 更新任何一节都可能影响其他 16 节
+- 与 meta-skill 自身"主文件 + refs 分片"的组织形态不一致（违反自举）
+
+### ✅ 好例（主文件 + 4 分片）
+
+```
+<skillsDir>/<project-name>/
+├── SKILL.md                   ← ~250 行（§1 + §M-3 + 四象限导航 + 自检矩阵）
+└── references/
+    ├── d1-structure.md        ← ~250 行（§3 模块 + §5 架构 + §12 公共组件）
+    ├── d2-behavior.md         ← ~250 行（§2 流程 + §4 模式 + §7 状态 + §11 日志）
+    ├── d3-communication.md    ← ~350 行（§6 事件 + §10 网络 + §13 MVC + §14 模块间 + §M-2 影响半径）
+    └── d4-contract.md         ← ~250 行（§8 配置 + §9 持久化 + §15 协议 + §M-1 错误）
+```
+
+**主文件导航表**（SKILL.md 必含）：
+
+```markdown
+## 📍 四象限导航
+
+想了解该项目的…
+
+| 任务 | 读哪个分片 |
+|---|---|
+| 代码怎么组织、模块怎么划分 | [d1-structure.md](./references/d1-structure.md) |
+| 运行时流程、设计模式、状态机 | [d2-behavior.md](./references/d2-behavior.md) |
+| 模块间通讯、事件、MVC 数据流 | [d3-communication.md](./references/d3-communication.md) |
+| 协议契约、配置、持久化、错误处理 | [d4-contract.md](./references/d4-contract.md) |
+```
+
+**跨分片引用示例**（在 d3-communication.md 的 §14 引用 §3 模块管理）：
+
+```markdown
+## 14. 模块间通讯契约 [D3]
+
+本节讨论模块间调用，模块清单详见 [§3 模块管理](../references/d1-structure.md#3-模块管理)。
+```
+
+**为什么好例好**：
+1. 与 meta-skill 自身形态对称（自举）
+2. Agent 按任务加载相关分片，Token 消耗降低 60~80%
+3. 每分片可独立迭代（更新 d3 不影响 d1/d2/d4）
+4. 跨分片链接使用相对路径，项目可整体迁移
+
+---
+
 
 ## 使用本文件的关键提醒
 

@@ -18,7 +18,7 @@
 ## §P1-1 资源管理
 
 ### 触发条件
-- 游戏项目（Unity/UE/Cocos）— 必写
+- 游戏项目（<GameEngine>/UE/Cocos）— 必写
 - 移动端项目（iOS/Android 原生）— 必写
 - 桌面应用带资源打包 — 必写
 - 纯后端服务 — 通常跳过
@@ -40,7 +40,7 @@
 ## §P1-2 并发与异步模型
 
 ### 触发条件
-- 项目使用协程（Unity Coroutine / Go goroutine / Kotlin coroutine）— 必写
+- 项目使用协程（<GameEngine> Coroutine / Go goroutine / Kotlin coroutine）— 必写
 - 项目有显式多线程 — 必写
 - 后端高并发服务 — 必写
 - 单线程 UI + 回调（仅 DOM/Node 单线程）— 可简写

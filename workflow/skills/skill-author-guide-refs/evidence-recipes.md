@@ -309,7 +309,7 @@ const allFiles = cg.filePaths
   .map(fp => ({ fp, sizeKB: Math.round(fs.statSync(path.join(PROJECT_ROOT, fp)).size / 1024) }))
   .sort((a, b) => b.sizeKB - a.sizeKB);
 console.log('Top-5 最大文件:', allFiles.slice(0, 5));
-// ↑ 经常能发现自动生成的协议代码（WePop 案例中 cs_proto.cs 1.36 MB 排第 3）
+// ↑ 经常能发现自动生成的协议代码（<ProjectName> 案例中 <generated-proto>.<lang-ext> 1.36 MB 排第 3）
 
 // 3. 按外部工具链扩展名扫描
 const idlFiles = cg.filePaths.filter(fp =>
@@ -452,6 +452,67 @@ console.log('模块通讯 Top-10:', top10);
 - **交叉验证**：对 Top-5 的边，额外 `read_file` 几个真实调用点确认
 - **总 callEdges < 50 时降级**：直接写"本项目模块通讯强度低，不展开通讯拓扑图"（对应 M-2 的降级规则）
 - **模块命名规则要和 §3 模块管理一致**：否则输出的拓扑和 §3 模块清单对不上
+
+---
+
+## 配方 9：切分粒度决策（v2.1 分片产出）[Sharding] ✨
+
+**目标**：在产出项目专家 skill 时，决定"这个章节到底归哪个分片"——尤其对边界章节。
+
+**前置**：已读 `sharding-strategy.md` R-B 归属表。本配方处理"R-B 不覆盖或看起来有歧义"的情况。
+
+**决策流程**：
+
+```
+Step 1: 查 sharding-strategy.md R-B 表
+└── 命中 → 直接按表归属（end）
+└── 未命中（新增章节 / 项目特有内容）→ Step 2
+
+Step 2: 问四维象限归属决策树
+"这节主要回答什么问题？"
+├── 代码如何组织？（空间） → D1 → references/d1-structure.md
+├── 运行时发生什么？（时间） → D2 → references/d2-behavior.md
+├── 组件间如何交换数据？ → D3 → references/d3-communication.md
+├── 边界约定是什么？ → D4 → references/d4-contract.md
+└── 跨象限 / 综合 / 元维度 → 主文件 SKILL.md
+
+Step 3: 检查目标分片大小
+├── 加入后 ≤ 350 行 → 归入（end）
+├── 加入后 > 350 行 → Step 4
+
+Step 4: 再切分（R-D 触发）
+1. 识别目标分片里最长的章节
+2. 把该章节抽出成独立子分片，命名 <quadrant>-<subtopic>.md
+   例：d3-communication.md 太大 → 抽出 d3-network.md（§10 单独）
+3. 更新 R-B 表 + 主文件导航
+```
+
+**边界案例示例**：
+
+### 案例 1：新章节"安全审计"——归哪儿？
+
+问 Q2：主要回答什么？
+- 如果讲"审计日志格式/留存"（记录什么数据）→ D4 契约 → `d4-contract.md`
+- 如果讲"审计工具运行时 hook 点"（调用链追踪）→ D2 行为 → `d2-behavior.md`
+- 如果讲"审计事件如何跨模块传递"（Sink / Collector）→ D3 通讯 → `d3-communication.md`
+
+**决策关键**：看该节**核心回答的问题**，不是"关键词包含 xx 所以归 xx"。
+
+### 案例 2：d3-communication.md 已 400 行，加 §M-2 会超上限——怎么办？
+
+按 Step 4 再切：
+- 选项 A：把 §M-2 单独抽出成 `d3-impact-radius.md`（5 个文件 → 6 个）
+- 选项 B：如果 §14 模块间通讯也很长，优先把 §14 抽出（因为和 §M-2 最相关）
+
+记录在 `sharding-strategy.md` R-B 表尾部，标注"项目 X 使用子分片 d3-impact-radius.md（由 §M-2 拆出）"。
+
+**输出**：每个章节归属明确 + 超规模时的子分片方案
+
+**实战要点**：
+- **优先按规则**：R-B 表是第一依据，不要绕开
+- **歧义即咨询**：如果一个章节可以在 2 个象限都能写，查决策树最后的核心问题
+- **超限必拆**：不要让分片突破 350 行上限，拆分成本低于臃肿成本
+- **命名约定**：子分片名用 `<quadrant>-<subtopic>.md`（如 `d3-network.md`、`d4-protocol.md`），保持可扫描
 
 ---
 

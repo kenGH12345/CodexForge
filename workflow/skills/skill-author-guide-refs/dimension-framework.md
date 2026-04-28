@@ -209,7 +209,7 @@ D3 分 **3 个子类**，各自必查：
 
 #### D3-b 进程内数据流（MVC/MVVM/Flux）
 
-1. 数据层入口（CommonModel / Store / Vuex store）
+1. 数据层入口（<DataStore> / Store / Vuex store）
 2. 视图层绑定方式（data-binding / subscribe / selector）
 3. 数据改变 → 视图刷新的完整代码示例
 4. 绑定生命周期（alive / active / mounted / beforeDestroy）
@@ -218,7 +218,7 @@ D3 分 **3 个子类**，各自必查：
 
 1. 传输协议（HTTP / WebSocket / 自定义 TCP）
 2. 心跳与重连策略
-3. 消息编解码（JSON / ProtoBuf / TDR / 自研）
+3. 消息编解码（JSON / ProtoBuf / <IDLToolchain> / 自研）
 4. 错误处理与安全边界
 
 ### 反模式
@@ -231,7 +231,7 @@ D3 分 **3 个子类**，各自必查：
 
 | 项目类型 | D3 具体化 |
 |---|---|
-| 游戏 | D3-a: Systems ↔ UICtrl 跨 2928 次调用 / D3-b: CommonModel 响应式 / D3-c: Apollo 网络库 + TDR 协议 |
+| 游戏 | D3-a: Systems ↔ UICtrl 跨 2928 次调用 / D3-b: <DataStore> 响应式 / D3-c: <SecureTransportProtocol> 网络库 + <IDLToolchain> 协议 |
 | Web 后端 | D3-a: service 层互相调用 / D3-b: ORM 数据流 / D3-c: REST API + OpenAPI |
 | 前端 SPA | D3-a: Pinia store / D3-b: props-down/emit-up + v-model / D3-c: axios + REST |
 | CLI | D3-a: cmd 模块间函数调用 / D3-b/c 通常不适用 |
@@ -283,7 +283,7 @@ D4 分 **4 个子类**，各自必查：
 
 #### D4-c 协议契约（跨进程/跨设备）
 
-1. 协议文件清单 + 生成工具链（protoc / TDR / 自研）
+1. 协议文件清单 + 生成工具链（protoc / <IDLToolchain> / 自研）
 2. 消息编解码流程
 3. 版本兼容策略（新增字段默认值、废弃字段处理）
 
@@ -303,7 +303,7 @@ D4 分 **4 个子类**，各自必查：
 
 | 项目类型 | D4 具体化 |
 |---|---|
-| 游戏 | D4-a: IEvent/ISys / D4-b: CommonModelData 体系 / D4-c: TDR cs_proto 1.36MB / D4-d: ErrCode 枚举 |
+| 游戏 | D4-a: IEvent/ISys / D4-b: CommonModelData 体系 / D4-c: <IDLToolchain> <generated-proto> 1.36MB / D4-d: ErrCode 枚举 |
 | Web 后端 | D4-a: Service interfaces / D4-b: ORM entities / D4-c: OpenAPI / D4-d: HTTP 状态码 + 自定义 errCode |
 | 前端 SPA | D4-a: 组件 Props 类型 / D4-b: Store state 类型 / D4-c: API client types / D4-d: try-catch + toast |
 | CLI | D4-a: 命令接口 / D4-b: 输入/输出 schema / D4-c: 通常 N/A / D4-d: exit code |
@@ -365,7 +365,7 @@ D4 分 **4 个子类**，各自必查：
 
 ### 使用规则
 
-- 每个问题必须给出**明确答案 + 对应章节编号**（如"Q7: 本项目用 CommonModel 响应式绑定，见 §12"）
+- 每个问题必须给出**明确答案 + 对应章节编号**（如"Q7: 本项目用 <DataStore> 响应式绑定，见 §12"）
 - "本项目不适用"也是合法答案，但必须说明**为什么**（如"Q8: 本项目是纯 CLI，无跨设备通讯"）
 - 若任一问题是"待补充"，不允许落盘 SKILL.md
 

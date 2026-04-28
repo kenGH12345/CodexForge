@@ -275,26 +275,43 @@ function _mergeConfig(defaults, user) {
 // ─── Skill Auto-Discovery ─────────────────────────────────────────────────────
 
 /**
- * Derives the skills directory path from the loaded config file location.
- * Falls back to paths relative to this module and process.cwd().
+ * Derives the skills directory paths from the loaded config file location.
+ * Returns an array to support both workflow/skills/ (built-in / curated) and
+ * .workflow/skills/ (runtime-generated project experts, e.g. gen-skill output).
  */
-function _resolveSkillsDir(configPath) {
+function _resolveSkillsDirs(configPath) {
+  const dirs = [];
+  const seen = new Set();
+  const push = (p) => {
+    if (!p) return;
+    const norm = path.resolve(p);
+    if (seen.has(norm)) return;
+    if (fs.existsSync(norm) && fs.statSync(norm).isDirectory()) {
+      dirs.push(norm);
+      seen.add(norm);
+    }
+  };
+
   if (configPath) {
+    // Strict mode: only scan the explicitly-configured project's own skill dirs.
+    // Do NOT fall back to __dirname / cwd — that would leak skills across projects.
     const projectRoot = path.dirname(configPath);
-    return path.join(projectRoot, 'workflow', 'skills');
+    push(path.join(projectRoot, 'workflow', 'skills'));
+    push(path.join(projectRoot, '.workflow', 'skills'));
+    return dirs;
   }
 
-  const relativeSkills = path.resolve(__dirname, '..', 'skills');
-  if (fs.existsSync(relativeSkills)) {
-    return relativeSkills;
-  }
+  // No explicit config: use discovery heuristics.
+  push(path.resolve(__dirname, '..', 'skills'));
+  push(path.join(process.cwd(), 'workflow', 'skills'));
+  push(path.join(process.cwd(), '.workflow', 'skills'));
+  return dirs;
+}
 
-  const cwdSkills = path.join(process.cwd(), 'workflow', 'skills');
-  if (fs.existsSync(cwdSkills)) {
-    return cwdSkills;
-  }
-
-  return null;
+// Backward-compat shim: return first dir or null
+function _resolveSkillsDir(configPath) {
+  const dirs = _resolveSkillsDirs(configPath);
+  return dirs.length > 0 ? dirs[0] : null;
 }
 
 /**
@@ -376,10 +393,8 @@ function _buildFallbackMetadata(name) {
  * in merged.builtinSkills. User-configured skills take precedence.
  */
 function _autoRegisterSkills(merged, configPath) {
-  const skillsDir = _resolveSkillsDir(configPath);
-  if (!skillsDir || !fs.existsSync(skillsDir)) {
-    return;
-  }
+  const skillsDirs = _resolveSkillsDirs(configPath);
+  if (skillsDirs.length === 0) return;
 
   if (!Array.isArray(merged.builtinSkills)) {
     merged.builtinSkills = [];
@@ -389,33 +404,58 @@ function _autoRegisterSkills(merged, configPath) {
     merged.builtinSkills.map(s => s && s.name).filter(Boolean)
   );
 
-  let discovered = 0;
-  try {
-    const files = fs.readdirSync(skillsDir);
-    for (const file of files) {
-      if (!file.endsWith('.md')) continue;
+  let totalDiscovered = 0;
+  for (const skillsDir of skillsDirs) {
+    let discovered = 0;
+    try {
+      const entries = fs.readdirSync(skillsDir);
+      for (const entry of entries) {
+        if (entry.startsWith('.')) continue;
 
-      const name = file.slice(0, -3);
-      if (existingNames.has(name)) continue;
-
-      const filePath = path.join(skillsDir, file);
-      try {
-        const metadata = _extractSkillMetadata(filePath, name);
-        if (metadata && metadata.name) {
-          merged.builtinSkills.push(metadata);
-          existingNames.add(metadata.name);
-          discovered++;
+        const fullPath = path.join(skillsDir, entry);
+        let stat;
+        try {
+          stat = fs.statSync(fullPath);
+        } catch (_) {
+          continue;
         }
-      } catch (err) {
-        console.warn(`[ConfigLoader][AutoDiscovery] Failed to parse ${file}: ${err.message}`);
-      }
-    }
-  } catch (err) {
-    console.warn(`[ConfigLoader][AutoDiscovery] Failed to scan ${skillsDir}: ${err.message}`);
-  }
 
-  if (discovered > 0) {
-    console.log(`[ConfigLoader][AutoDiscovery] Registered ${discovered} skill(s) from ${skillsDir}`);
+        let skillName = null;
+        let skillFile = null;
+
+        if (stat.isFile() && entry.endsWith('.md')) {
+          skillName = entry.slice(0, -3);
+          skillFile = fullPath;
+        } else if (stat.isDirectory()) {
+          const candidate = path.join(fullPath, 'SKILL.md');
+          if (fs.existsSync(candidate)) {
+            skillName = entry;
+            skillFile = candidate;
+          }
+        }
+
+        if (!skillName || !skillFile) continue;
+        if (existingNames.has(skillName)) continue;
+
+        try {
+          const metadata = _extractSkillMetadata(skillFile, skillName);
+          if (metadata && metadata.name) {
+            merged.builtinSkills.push(metadata);
+            existingNames.add(metadata.name);
+            discovered++;
+          }
+        } catch (err) {
+          console.warn(`[ConfigLoader][AutoDiscovery] Failed to parse ${entry}: ${err.message}`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[ConfigLoader][AutoDiscovery] Failed to scan ${skillsDir}: ${err.message}`);
+    }
+
+    if (discovered > 0) {
+      console.log(`[ConfigLoader][AutoDiscovery] Registered ${discovered} skill(s) from ${skillsDir}`);
+    }
+    totalDiscovered += discovered;
   }
 }
 

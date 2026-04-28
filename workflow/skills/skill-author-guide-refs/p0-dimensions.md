@@ -10,6 +10,9 @@
 > - **D2 行为**（动态·内部）：运行时发生什么 — 入口/流程/状态/日志
 > - **D3 通讯**（动态·边界）：组件间如何交换数据 — 事件/网络/数据流/模块间调用
 > - **D4 契约**（静态·边界）：组件间约定 — 接口/协议/DTO/错误码
+>
+> **🏠 分片归属**（v2.1 新增）：每节开头的 `🏠 Sharding Home` 字段指定该节在产出 skill 中应写入哪个文件。
+> 详见 `sharding-strategy.md`。主文件 = `SKILL.md`（只含 §1 + §M-3 + 索引）；其余 17 节分入 4 个 refs 分片。
 
 ## 目录索引
 
@@ -35,6 +38,8 @@
 ---
 
 ## §1 项目概览
+
+**🏠 Sharding Home**: **SKILL.md** (主文件)
 
 ### 📋 调研配方
 - 从 `codeGraph.filePaths[]` 统计：总文件数 / 按扩展名分组（`.cs`/`.py`/`.ts` 等）推断主语言
@@ -65,6 +70,8 @@
 
 ## §2 项目流程与生命周期 [D2]
 
+**🏠 Sharding Home**: `references/d2-behavior.md`
+
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找名字包含 `main` / `start` / `init` / `bootstrap` / `run` 的 function/method
 - 从 `business-logic.json` 的 `entryPoints[]` 读（若存在）
@@ -93,6 +100,8 @@
 
 ## §3 模块管理 [D1]
 
+**🏠 Sharding Home**: `references/d1-structure.md`
+
 ### 📋 调研配方
 - 从 `codeGraph.filePaths[]` 分组：按前 2 级目录（`workflow/core/*` → `workflow/core`）
 - 每个模块统计：symbol 数 / hotspot 数 / 外部被调用次数
@@ -120,6 +129,8 @@
 ---
 
 ## §4 设计模式 [D2]
+
+**🏠 Sharding Home**: `references/d2-behavior.md`
 
 ### 📋 调研配方
 - 从 `codeGraph.hotspots[]` 过滤名字含模式关键词的 Top-20：Factory / Builder / Observer / Registry / Singleton / Adapter / Proxy / Command / Strategy / State / Pipeline / Decorator / Facade
@@ -150,6 +161,8 @@
 
 ## §5 架构框架 MVC/分层 [D1]
 
+**🏠 Sharding Home**: `references/d1-structure.md`
+
 ### 📋 调研配方
 - 从 `codeGraph.filePaths[]` 找分层关键词目录：`controllers/` `services/` `models/` `views/` `handlers/` `routes/` `layers/` `domain/` `infra/` `ui/`
 - 从 `codeGraph.symbols[]` 找后缀模式：`*Controller` `*Service` `*Repository` `*Handler` `*UseCase`
@@ -178,6 +191,8 @@
 ---
 
 ## §6 事件系统 [D3]
+
+**🏠 Sharding Home**: `references/d3-communication.md`
 
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`EventBus` / `EventEmitter` / `emit` / `publish` / `subscribe` / `dispatch` / `on[A-Z]` / `Listen*`
@@ -209,6 +224,8 @@
 
 ## §7 状态管理 [D2]
 
+**🏠 Sharding Home**: `references/d2-behavior.md`
+
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`*State` `*Store` `*Context` `*Reducer` `StateMachine` `FSM`
 - 找全局单例：`k === 'class'` 且名字含 `Manager`/`Singleton`/`Global` 的 hotspot
@@ -237,6 +254,8 @@
 ---
 
 ## §8 配置与数据驱动 [D4]
+
+**🏠 Sharding Home**: `references/d4-contract.md`
 
 ### 📋 调研配方
 - 从 `codeGraph.filePaths[]` 找：`*.json` / `*.yaml` / `*.toml` / `*.ini` / `config/` / `configs/` / `constants/`
@@ -267,6 +286,8 @@
 
 ## §9 持久化与存档 [D4]
 
+**🏠 Sharding Home**: `references/d4-contract.md`
+
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`save` / `load` / `serialize` / `deserialize` / `Persist*` / `Storage*` / `*Repository`
 - 从 `codeGraph.filePaths[]` 找：`db/` / `storage/` / `persistence/` / `migrations/`
@@ -295,6 +316,8 @@
 ---
 
 ## §10 网络通信 [D3]
+
+**🏠 Sharding Home**: `references/d3-communication.md`
 
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`*Client` / `*Request` / `*Response` / `fetch` / `http` / `Socket` / `*Api`
@@ -326,6 +349,8 @@
 
 ## §11 日志系统 [D2]
 
+**🏠 Sharding Home**: `references/d2-behavior.md`
+
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`Logger` / `log` / `*Log*`
 - 从 `package.json` / 依赖清单找日志库（winston / pino / log4j / logrus / spdlog）
@@ -355,6 +380,8 @@
 ---
 
 ## §12 公共组件与工具库 [D1]
+
+**🏠 Sharding Home**: `references/d1-structure.md`
 
 ### 📋 调研配方
 - **直接使用 `codeGraph.reusableSymbols[]`**：这是官方认证的高频复用符号
@@ -392,6 +419,8 @@
 
 ## §13 MVC 数据流与绑定 [D3]
 
+**🏠 Sharding Home**: `references/d3-communication.md`
+
 > **象限归属**：D3 通讯·进程内数据流（详见 `dimension-framework.md` §4.1 D3-b）
 > **本节解答**：数据层 ↔ 视图层如何绑定？数据改变如何驱动视图刷新？
 
@@ -408,11 +437,11 @@
 - 命名扫描：`grep -r "Model\|ViewModel\|observable\|reactive"` 定位数据绑定集群
 - `codebase_search`: "data binding" / "property changed" / "数据绑定" / "响应式"
 - 识别响应式框架：
-  - **自研**：`*Model*.addXxxListener` / `ModelsBinder` / `SyncProcess`
+  - **自研**：`*Model*.addXxxListener` / `<ModelBinder>` / `<SyncProcessor>`
   - **前端**：Vuex/Pinia state + mutations / Redux reducers / MobX observable / RxJS Subject
-  - **游戏**：自研 Model-View 监听 / UniRx / ReactiveX
+  - **游戏**：自研 Model-View 监听 / <ReactiveFramework> / ReactiveX
 - 从 `callEdges` 抽取：`addModelListener` / `observe` / `subscribe` / `PropertyChanged` 的调用者集群
-- `read_file` 核心数据层类的实现（如 `CommonModel.cs` / `store/index.ts`）深读生命周期
+- `read_file` 核心数据层类的实现（如 `<DataStore>.<ext>` / `store/index.ts`）深读生命周期
 
 ### ✅ 最低证据
 
@@ -423,8 +452,8 @@
 ### 📐 输出 Schema
 
 该节必须回答：
-1. 数据层入口类是什么？（`CommonModel` / `Store` / `Vuex store`）
-2. 视图层绑定基类是什么？（`ModelViewBehaviour` / `Vue component` / `connect(mapStateToProps)`）
+1. 数据层入口类是什么？（`<DataStore>` / `Store` / `Vuex store`）
+2. 视图层绑定基类是什么？（`<ViewBase>` / `Vue component` / `connect(mapStateToProps)`）
 3. 数据变更的事件类型有哪些？（Add/Update/Remove/Clear/BatchXxx）
 4. 绑定的生命周期管理规则？（绑定何时建立、何时解除？）
 5. 提供一个"数据改变 → 视图刷新"的完整代码示例（从触发到显示）
@@ -441,7 +470,7 @@
 
 | 项目类型 | §13 具体化 |
 |---|---|
-| 游戏（Unity） | CommonModel (MonoBehaviour) + ModelListener 事件 + ModelViewBehaviour.Bind |
+| 游戏（<GameEngine>） | <DataStore> (<EngineComponent>) + <ChangeListener> 事件 + <ViewBase>.Bind |
 | 前端 SPA (Vue) | Pinia store + `storeToRefs` + `watch` + v-model 双向绑定 |
 | 前端 SPA (React) | Redux store + useSelector + useDispatch + 组件重渲染 |
 | 桌面 (WPF/WinUI) | INotifyPropertyChanged + Binding + XAML DataContext |
@@ -449,6 +478,8 @@
 ---
 
 ## §14 模块间通讯契约 [D3]
+
+**🏠 Sharding Home**: `references/d3-communication.md`
 
 > **象限归属**：D3 通讯·模块间调用方式（详见 `dimension-framework.md` §4.1 D3-a）
 > **本节解答**：A 模块要用 B 模块的功能时，用哪种通讯手段？选型依据是什么？
@@ -523,6 +554,8 @@
 
 ## §15 协议与契约定义 [D4]
 
+**🏠 Sharding Home**: `references/d4-contract.md`
+
 > **象限归属**：D4 契约·协议契约（详见 `dimension-framework.md` §5.1 D4-c）
 > **本节解答**：与外部世界（服务器/其他进程/脚本引擎）交换数据的格式契约是什么？
 
@@ -543,7 +576,7 @@
   - **ProtoBuf**：`protoc` / `.proto` / `google.protobuf.Message`
   - **Thrift**：`.thrift` / `TBase`
   - **FlatBuffers**：`.fbs`
-  - **腾讯 TDR**：`cs_proto.cs` / `TdrMetaDef` / `tdr_metalib`
+  - **腾讯 <IDLToolchain>**：`<generated-proto>.<lang-ext>` / `TdrMetaDef` / `tdr_metalib`
   - **REST/OpenAPI**：`swagger.json` / `openapi.yaml` / `@Api` / `@ApiModel`
   - **GraphQL**：`.graphql` / `typeDefs` / `resolvers`
   - **自研二进制**：`BinaryReader` / `BinaryWriter` / custom codec
@@ -560,9 +593,9 @@
 
 该节必须回答：
 1. 项目是否有正式协议定义？在哪里？（文件路径 + 大小）
-2. 使用的协议工具链是什么？（手写 / ProtoBuf / TDR / OpenAPI 等）
+2. 使用的协议工具链是什么？（手写 / ProtoBuf / <IDLToolchain> / OpenAPI 等）
 3. 协议从定义到代码使用的完整链路（IDL → 生成代码 → 注册 → 编解码）
-4. 消息类型有哪些？枚举清单（如 `ESendMsgType: Normal/Reliable/Unreliable/...`）
+4. 消息类型有哪些？枚举清单（如 `<SendMsgTypeEnum>: Normal/Reliable/Unreliable/...`）
 5. 版本兼容策略：
    - 新增字段如何处理？（默认值？Optional？）
    - 废弃字段如何处理？（保留位占？重命名？）
@@ -581,7 +614,7 @@
 
 | 项目类型 | §15 具体化 |
 |---|---|
-| 游戏（腾讯系） | TDR `cs_proto.cs` + `TDRHelper` 编解码 + 版本字段 |
+| 游戏（腾讯系） | <IDLToolchain> `<generated-proto>.<lang-ext>` + `<ProtocolCodec>` 编解码 + 版本字段 |
 | Web 后端 (REST) | OpenAPI yaml + 代码生成 + HTTP + JSON + 状态码 |
 | Web 后端 (gRPC) | `.proto` + protoc-gen-go + gRPC + 二进制 |
 | 前端 SPA | OpenAPI client 生成 / tRPC type-safe / GraphQL codegen |
@@ -590,6 +623,8 @@
 ---
 
 ## §M-1 错误处理与容错策略 [D4]
+
+**🏠 Sharding Home**: `references/d4-contract.md`
 
 ### 📋 调研配方
 - 从 `codeGraph.symbols[]` 找：`*Error` / `*Exception` / `handle*` / `catch*` / `try*`
@@ -619,6 +654,8 @@
 ---
 
 ## §M-2 修改影响半径速查表 [D3] (带降级规则)
+
+**🏠 Sharding Home**: `references/d3-communication.md`
 
 ### 📋 调研配方
 - **主路径**：从 `codeGraph.callEdges{}` 反向聚合，每个模块被哪些模块调用
@@ -665,6 +702,8 @@ const useDegraded = totalCallEdges < 50;
 ---
 
 ## §M-3 新人 Onboarding 路径 [元]
+
+**🏠 Sharding Home**: **SKILL.md** (主文件)
 
 ### 📋 调研配方
 - 综合前面所有维度，选出"最基础的 5-7 个文件"

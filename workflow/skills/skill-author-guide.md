@@ -1,12 +1,12 @@
 ---
 name: skill-author-guide
-version: 2.0.0
+version: 2.1.0
 description: |
   Meta-skill：指导 LLM 在 `bridge gen-skill` 的 Step 2（IDE Agent 自合成 SKILL.md 环节）
-  生成高质量、覆盖全面、带真实证据的项目专家 skill。v2.0 引入四维推导框架
-  （D1 结构 / D2 行为 / D3 通讯 / D4 契约），让维度清单可自我补全。触发：当你收到
-  `gen-skill` 返回 `nextStep=USER_CONFIRM_GENERATE` 或 `MANDATORY_NEXT_ACTION.type=READ_META_SKILL_FIRST` 时，
-  MUST 完整读完本文件再开始生成。
+  生成高质量、覆盖全面、带真实证据的项目专家 skill。v2.1 在四维推导框架基础上，
+  引入**分片输出结构**（主文件 + references/ 4 分片），让产出 skill 遵循与本 meta-skill
+  同样的组织规则（自举）。触发：当你收到 `gen-skill` 返回 `nextStep=USER_CONFIRM_GENERATE`
+  或 `MANDATORY_NEXT_ACTION.type=READ_META_SKILL_FIRST` 时，MUST 完整读完本文件再开始生成。
 triggers:
   keywords:
     - gen-skill
@@ -36,15 +36,16 @@ triggers:
 ### 阅读顺序（MANDATORY）
 
 ```
-[本文件主干] → [dimension-framework.md] → [p0-dimensions.md 对应维度] → [examples.md 对照好坏例]
+[本文件主干] → [dimension-framework.md] → [sharding-strategy.md] → [p0-dimensions.md 对应维度] → [examples.md 对照好坏例]
 ```
 
 **在开始写 SKILL.md 前**，你必须按顺序读取以下 meta-skill 组件：
 
 1. **本文件**（你正在读的）— 提供 rubric + 强制前置动作 + 自检清单
 2. **`workflow/skills/skill-author-guide-refs/dimension-framework.md`** — 定义 **D1~D4 四维正交坐标系**，是维度清单的**生成规则**，不是维度清单本身
-3. **`workflow/skills/skill-author-guide-refs/p0-dimensions.md`** — 17 节具体 rubric（每节含象限徽章 `[D1/D2/D3/D4]`）
-4. **`workflow/skills/skill-author-guide-refs/examples.md`** — 14+3 组 ❌坏例 vs ✅好例对比
+3. **`workflow/skills/skill-author-guide-refs/sharding-strategy.md`** ✨ **v2.1 新增** — 定义产出 skill 的**分片组织规则**（主文件 + references/ 4 分片 + 归属表 + 跨引用语法）
+4. **`workflow/skills/skill-author-guide-refs/p0-dimensions.md`** — 17 节具体 rubric（每节含象限徽章 `[D1/D2/D3/D4]` + **🏠 Sharding Home** 字段）
+5. **`workflow/skills/skill-author-guide-refs/examples.md`** — 17+ 组 ❌坏例 vs ✅好例对比（v2.1 全面通用化，所有例子用占位符）
 
 ### 为什么要读 dimension-framework.md
 
@@ -199,34 +200,48 @@ read_file output/api-endpoints.json    （如存在）
 
 ---
 
-## §3. 内容结构模板（17 节固定结构 · v2.0 扩展）
+## §3. 内容结构模板（17 节 · v2.1 分片输出）
 
-产出的 SKILL.md **必须包含以下 17 节**（若某节不适用写一句跳过，详见 §1.5）。每节用中文，章节标题用 `## N. <中文名> [Dx]` 格式（Dx 是象限徽章，便于读者定位）。
+产出 **必须采用分片结构**：`<project>/SKILL.md`（主文件）+ `<project>/references/d1-d4.md`（4 分片）。切分规则详见 `sharding-strategy.md`。每节中文，章节标题用 `## N. <中文名> [Dx]` 格式。
 
-| # | 章节 | 象限 | 期望字数 | 期望证据 |
-|---|---|---|---|---|
-| 1 | **项目概览** | 综合 | 300-500 | 表格：引擎/语言/规模/主模式；目录结构树 |
-| 2 | **项目流程与生命周期** | [D2] | 400-600 | 入口文件路径 + 启动→处理→销毁主流程 + 至少 1 段调用链 |
-| 3 | **模块管理** | [D1] | 400-600 | 模块清单 + 依赖关系 + 加载顺序 |
-| 4 | **设计模式** | [D2] | 500-800 | ≥3 个具体模式，每个带代码证据 |
-| 5 | **架构框架（MVC / 分层等）** | [D1] | 400-600 | 明确的数据流方向 + 每层职责 |
-| 6 | **事件系统** | [D3] | 400-600 | 事件枚举 + 订阅/发布入口 + 典型事件链 |
-| 7 | **状态管理** | [D2] | 400-600 | 状态归属 + 状态机 + 全局状态清单 |
-| 8 | **配置与数据驱动** | [D4] | 300-500 | 配置文件清单 + 读取入口 + 环境差异说明 |
-| 9 | **持久化与存档** | [D4] | 300-500 | 序列化格式 + 版本兼容策略 |
-| 10 | **网络通信** | [D3] | 300-500 | 协议层 + 序列化 + 错误重连 |
-| 11 | **日志系统** | [D2] | 200-400 | logger 入口 + 格式约定 + 分级规范 |
-| 12 | **公共组件与工具库** | [D1] | 500-800 | ≥10 个 reusableSymbols，带 signature 和用法 |
-| **13** | **✨ MVC 数据流与绑定** | **[D3]** | 400-700 | 数据层入口 + 视图绑定基类 + 生命周期 + "数据变→视图更"完整示例 |
-| **14** | **✨ 模块间通讯契约** | **[D3]** | 500-800 | 跨模块 callEdges Top-10 + ≥3 种通讯手段 + 选型决策表 + 硬规则 |
-| **15** | **✨ 协议与契约定义** | **[D4]** | 500-800 | 协议文件清单 + 工具链 + 编解码示例 + 版本兼容策略 |
-| M-1 | **错误处理与容错策略** | [D4] | 300-500 | 错误哲学（抛异常 vs 返回错误码） + 主错误类型 |
-| M-2 | **修改影响半径速查表** | [D3] | 400-600 | 按模块的 callEdges 统计 + 改此模块要连带检查的清单 |
-| M-3 | **新人 Onboarding 路径** | 元 | 300-500 | 前 3 天该读的 5-7 个文件 + 阅读顺序 |
+| # | 章节 | 象限 | 🏠 Sharding Home | 字数 | 期望证据 |
+|---|---|---|---|---|---|
+| 1 | **项目概览** | 综合 | **SKILL.md** | 300-500 | 表格：语言/规模/主范式；目录结构树 |
+| 2 | **项目流程与生命周期** | [D2] | `references/d2-behavior.md` | 400-600 | 入口文件路径 + 启动→处理→销毁主流程 + 至少 1 段调用链 |
+| 3 | **模块管理** | [D1] | `references/d1-structure.md` | 400-600 | 模块清单 + 依赖关系 + 加载顺序 |
+| 4 | **设计模式** | [D2] | `references/d2-behavior.md` | 500-800 | ≥3 个具体模式，每个带代码证据 |
+| 5 | **架构框架（MVC / 分层等）** | [D1] | `references/d1-structure.md` | 400-600 | 明确的数据流方向 + 每层职责 |
+| 6 | **事件系统** | [D3] | `references/d3-communication.md` | 400-600 | 事件枚举 + 订阅/发布入口 + 典型事件链 |
+| 7 | **状态管理** | [D2] | `references/d2-behavior.md` | 400-600 | 状态归属 + 状态机 + 全局状态清单 |
+| 8 | **配置与数据驱动** | [D4] | `references/d4-contract.md` | 300-500 | 配置文件清单 + 读取入口 + 环境差异说明 |
+| 9 | **持久化与存档** | [D4] | `references/d4-contract.md` | 300-500 | 序列化格式 + 版本兼容策略 |
+| 10 | **网络通信** | [D3] | `references/d3-communication.md` | 300-500 | 协议层 + 序列化 + 错误重连 |
+| 11 | **日志系统** | [D2] | `references/d2-behavior.md` | 200-400 | logger 入口 + 格式约定 + 分级规范 |
+| 12 | **公共组件与工具库** | [D1] | `references/d1-structure.md` | 500-800 | ≥10 个 reusableSymbols，带 signature 和用法 |
+| **13** | **MVC 数据流与绑定** | **[D3]** | `references/d3-communication.md` | 400-700 | 数据层入口 + 视图绑定基类 + 生命周期 + "数据变→视图更"完整示例 |
+| **14** | **模块间通讯契约** | **[D3]** | `references/d3-communication.md` | 500-800 | 跨模块 callEdges Top-10 + ≥3 种通讯手段 + 选型决策表 + 硬规则 |
+| **15** | **协议与契约定义** | **[D4]** | `references/d4-contract.md` | 500-800 | 协议文件清单 + 工具链 + 编解码示例 + 版本兼容策略 |
+| M-1 | **错误处理与容错策略** | [D4] | `references/d4-contract.md` | 300-500 | 错误哲学（抛异常 vs 返回错误码） + 主错误类型 |
+| M-2 | **修改影响半径速查表** | [D3] | `references/d3-communication.md` | 400-600 | 按模块的 callEdges 统计 + 改此模块要连带检查的清单 |
+| M-3 | **新人 Onboarding 路径** | 元 | **SKILL.md** | 300-500 | 前 3 天该读的 5-7 个文件 + 阅读顺序 |
 
-**总字数目标**：≥ 6000 字（不含代码块）。若 < 4000 字，说明没调研到位，回去重读源码。
+### 📐 分片归属速记图
 
-**象限平衡要求**（v2.0 新增）：
+```
+<project-name>/
+├── SKILL.md                         ← §1 + §M-3 + 四象限导航表 + 分片自检矩阵
+└── references/
+    ├── d1-structure.md              ← §3 + §5 + §12                 (D1 结构)
+    ├── d2-behavior.md               ← §2 + §4 + §7 + §11             (D2 行为)
+    ├── d3-communication.md          ← §6 + §10 + §13 + §14 + §M-2    (D3 通讯)
+    └── d4-contract.md               ← §8 + §9 + §15 + §M-1           (D4 契约)
+```
+
+**归属固定**：不允许按个人偏好偏离。边界案例查 `sharding-strategy.md` §3 决策树。
+
+**总字数目标**：≥ 6500 字（主文件 ~1500 + 4 分片 ~5000，不含代码块）。主文件 ≤ 300 行；每分片 ≤ 350 行。
+
+**象限平衡要求**（v2.0 保留）：
 - D1 至少 3 节有实质内容（§3/§5/§12）
 - D2 至少 3 节有实质内容（§2/§4/§7/§11 中至少 3 节）
 - **D3 至少 3 节有实质内容**（§6/§10/§13/§14/M-2 中至少 3 节，含至少 1 节新维度）
@@ -283,9 +298,9 @@ read_file output/api-endpoints.json    （如存在）
 
 ---
 
-## §8. 落盘前自检（9 问必答 · v2.0 扩展）
+## §8. 落盘前自检（12 问必答 · v2.1 分片扩展）
 
-写完 SKILL.md 后，**在 Write 到磁盘前**，你必须自问自答以下 9 问。**任何一问答不上来 = 回去补，不要落盘**。
+写完主文件 + 4 分片后，**在 Write 到磁盘前**，你必须自问自答以下 12 问。**任何一问答不上来 = 回去补，不要落盘**。
 
 ### 纵向深度 6 问（原 v1.0 保留）
 
@@ -316,6 +331,18 @@ read_file output/api-endpoints.json    （如存在）
    - 提问自己："本项目有没有跨进程/跨设备的数据交换？协议定义在哪？版本兼容怎么处理？"
    - 若 §15 整节缺失 → **强制回头补**
    - 合法跳过需在 §15 明确写"本项目不适用：<具体原因>"（如纯本地 CLI 工具）
+
+### 分片组织 3 问（v2.1 新增 ← 保障分片产出质量）
+
+10. **主文件 ≤ 300 行？**
+    - 方法：`wc -l SKILL.md` 或等效
+    - 若超 → 识别最长章节是否违反 `sharding-strategy.md` R-A（主文件只放 §1+§M-3+索引+自检矩阵），违反则搬到对应分片
+11. **章节归属符合 `sharding-strategy.md` R-B 表？**
+    - 方法：逐节核对"实际写在哪个文件"与"R-B 表指定的分片"是否一致
+    - 若偏离 → 按 R-B 表校正（不要反向修改 R-B）
+12. **跨分片引用链接全部有效？**
+    - 方法：检查每个 `[§N](../references/d?-xxx.md#锚点)` 链接，确认目标文件存在且锚点名匹配
+    - 若链接失效 → 要么修目标锚点，要么修引用路径
 
 ### 自检结果记录（写入 SKILL.md 末尾）
 

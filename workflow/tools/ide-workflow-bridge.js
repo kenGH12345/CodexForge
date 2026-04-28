@@ -3183,8 +3183,14 @@ async function runGenSkill(args) {
     const qualityRubric = {
       language: 'zh-CN',
       minWordCount: 3000,
-      targetWordCount: 6000,
+      targetWordCount: 6500,
       minSections: 17,
+      // v2.1：分片输出结构 — 主文件 + 4 refs
+      outputShape: 'main-plus-refs',
+      minMainSections: 5,
+      minRefsFiles: 4,
+      mainFileMaxLines: 300,
+      refsFileMaxLines: 350,
       requiredDimensions: [
         '项目概览', '项目流程', '模块管理', '设计模式', '架构框架',
         '事件系统', '状态管理', '配置数据驱动', '持久化存档',
@@ -3207,6 +3213,11 @@ async function runGenSkill(args) {
         '3. read_file output/business-logic.json (如存在)',
         '4. read_file output/api-endpoints.json (如存在)',
         '5. 按 meta-skill §1 完成 4 个 read_file + 5 个源文件深读',
+        '',
+        '📐 v2.1 分片产出要求（按 sharding-strategy.md）：',
+        '- 产出结构：<project>/SKILL.md（主文件）+ <project>/references/d1~d4.md（4 分片）',
+        '- 归属：§1/§M-3 入主文件；§3/§5/§12 入 d1-structure；§2/§4/§7/§11 入 d2-behavior；§6/§10/§13/§14/§M-2 入 d3-communication；§8/§9/§15/§M-1 入 d4-contract',
+        '- 主文件 ≤ 300 行；每分片 ≤ 350 行；跨分片引用用 [§N](../references/d?-xxx.md#...) 语法',
         '6. 按 meta-skill §3 的 14 节模板落笔，每节参考 p0-dimensions.md 对应 rubric',
         '7. 落盘前按 meta-skill §8 完成 6 问自检',
         '',
