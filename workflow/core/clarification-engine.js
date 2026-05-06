@@ -31,6 +31,7 @@ const {
   parseSemanticSignals,
   buildRefinementPrompt,
 } = require('./clarification-prompts');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ─── Self-Correction Engine ───────────────────────────────────────────────────
 
@@ -53,7 +54,7 @@ class SelfCorrectionEngine {
    * @param {Function} [options.investigationTools.readSource]      - async (filePath: string) => string
    * @param {Function} [options.investigationTools.queryExperience] - async (query: string) => string
    */
-  constructor(llmCall, { maxRounds = 3, verbose = true, semanticMode = true, cheapLlmCall = null, investigationTools = null } = {}) {
+  constructor(llmCall, { maxRounds = 3, verbose = true, semanticMode = true, cheapLlmCall = null, investigationTools = null, outputDir = null } = {}) {
     if (typeof llmCall !== 'function') {
       throw new Error('[SelfCorrectionEngine] llmCall must be a function');
     }
@@ -65,6 +66,7 @@ class SelfCorrectionEngine {
     this.verbose = verbose;
     this.semanticMode = semanticMode;
     this.investigationTools = investigationTools || null;
+    this._outputDir = outputDir;
   }
 
   /**
@@ -157,7 +159,13 @@ class SelfCorrectionEngine {
       const refinementPrompt = buildRefinementPrompt(current, signals, stageLabel);
 
       try {
-        const refined = await this.llmCall(refinementPrompt);
+        const refined = await this.llmCall(prepareGatewayPrompt(this, {
+          callSite: 'workflow/core/clarification-engine.js:correct.refinement',
+          role: 'self-correction',
+          stage: stageLabel,
+          runtimePrompt: refinementPrompt,
+          metadata: { category: 'agent-adapter-call', round },
+        }));
         history.push({ round, signals, before: current, after: refined });
         current = refined;
         this._log(`[SelfCorrection] ✏️  Round ${round} complete. Artifact updated.`);
@@ -263,7 +271,13 @@ class SelfCorrectionEngine {
         this._log(`[SelfCorrection] 🔄 Applying investigation findings in final correction round...`);
         try {
           const finalPrompt = buildRefinementPrompt(investigationResult.enrichedContent, highSeverityRemaining, stageLabel);
-          const finalRefined = await this.llmCall(finalPrompt);
+          const finalRefined = await this.llmCall(prepareGatewayPrompt(this, {
+            callSite: 'workflow/core/clarification-engine.js:correct.deepInvestigation',
+            role: 'self-correction',
+            stage: stageLabel,
+            runtimePrompt: finalPrompt,
+            metadata: { category: 'agent-adapter-call', source: 'deep-investigation' },
+          }));
           history.push({ round: round + 1, signals: highSeverityRemaining, before: current, after: finalRefined, source: 'deep-investigation' });
           current = finalRefined;
           this._log(`[SelfCorrection] ✏️  Post-investigation correction complete.`);
@@ -471,7 +485,13 @@ class SelfCorrectionEngine {
           : buildSemanticDetectionPrompt(text, stageLabel);
       // Use cheapLlmCall for semantic detection (cost-aware: ~$0.002/call)
       // Refinement prompts in correct() still use the main llmCall.
-      const response = await this._semanticLlmCall(prompt);
+      const response = await this._semanticLlmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/clarification-engine.js:detectSignals.semantic',
+        role: 'self-correction-semantic-detector',
+        stage: stageLabel,
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call', mode: modeLabel },
+      }));
       const signals = parseSemanticSignals(response);
 
       if (signals.length > 0) {

@@ -31,6 +31,7 @@ const path = require('path');
 
 // 导入 PATHS 常量作为默认 outputDir
 const { PATHS, getDefaultOutputDir } = require('./constants');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ─── Signal Types (Extended from SessionSignalDetector) ───────────────────────
 
@@ -515,6 +516,16 @@ class EvolutionLoop {
       if (!evidence.includes('未涉及') && evidence.length > 10) return true;
     }
 
+    // Retrospective signals are human-confirmed FINISHED-stage learnings.
+    // Always trigger so Prevention/Capability/Efficiency enter the learning loop.
+    if (
+      type === EvolutionSignalType.RETROSPECTIVE_PREVENTION ||
+      type === EvolutionSignalType.RETROSPECTIVE_CAPABILITY ||
+      type === EvolutionSignalType.RETROSPECTIVE_EFFICIENCY
+    ) {
+      return true;
+    }
+
     // [T-005] FOLLOWUP_IGNORED: socratic follow-up questions were ignored
     // Trigger evolution to record this as a negative experience (Reflexion pattern)
     if (type === EvolutionSignalType.FOLLOWUP_IGNORED) {
@@ -617,7 +628,13 @@ class EvolutionLoop {
     ].join('\n');
 
     try {
-      const response = await this._cheapLlmCall(prompt);
+      const response = await this._cheapLlmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/evolution-loop.js:enhancePreventionRule',
+        role: 'evolution-loop',
+        stage,
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call', dimension: preventionRule.dimension },
+      }));
       return response?.trim() || null;
     } catch (err) {
       this._log(`[EvolutionLoop]    ⚠️ _enhancePreventionRule LLM call failed: ${err.message}`);
@@ -649,8 +666,11 @@ class EvolutionLoop {
       const category = this._getCategoryForSignal(type);
       const title = this._generateTitle(type, stage, evidence);
 
+      const experienceType = type === EvolutionSignalType.RETROSPECTIVE_CAPABILITY
+        ? 'positive'
+        : 'negative';
       this.experienceStore.record({
-        type: 'negative',
+        type: experienceType,
         category,
         title,
         // Use structured content if valid; fall back to raw evidence for low-quality signals

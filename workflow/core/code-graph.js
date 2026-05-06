@@ -77,6 +77,7 @@ class CodeGraph {
     llmCall        = null,
     scopeDirs      = [],
     techProfile    = null,
+    writeLegacyGraph = false,
     // Deprecated options (kept for backward-compat, silently ignored)
     maxFiles: _deprecated_maxFiles,
     useGitignore: _deprecated_useGitignore,
@@ -89,6 +90,7 @@ class CodeGraph {
     this._llmCall    = llmCall;
     this._scopeDirs  = Array.isArray(scopeDirs) ? scopeDirs : [];
     this._techProfile = techProfile;
+    this._writeLegacyGraph = !!writeLegacyGraph;
 
     // IDE-First Architecture (ADR-37) detection
     try {

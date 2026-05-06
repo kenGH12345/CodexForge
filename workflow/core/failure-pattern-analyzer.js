@@ -18,6 +18,7 @@
 'use strict';
 
 const { introspectionCollector } = require('./workflow-introspection-collector');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 const { RootCause } = require('./complaint-wall');
 
 // ─── Failure Pattern Signature ────────────────────────────────────────────────
@@ -376,7 +377,13 @@ class FailurePatternAnalyzer {
     const prompt = this._buildSkillProposalPrompt(pattern, firstSig);
 
     try {
-      const result = await this._llmCall(prompt);
+      const result = await this._llmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/failure-pattern-analyzer.js:generateSkillProposal',
+        role: 'failure-pattern-analyzer',
+        stage: 'EVOLVE',
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call', patternKey: pattern.key },
+      }));
       const parsed = this._parseProposalResponse(result);
 
       if (!parsed || !parsed.recommended) {

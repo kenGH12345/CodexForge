@@ -2,6 +2,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 /**
  * Translates a Markdown file to Chinese and writes a sibling `.zh.md` file.
@@ -36,7 +37,13 @@ async function translateMdFile(mdPath, llmCall, opts = {}) {
     }
 
     const prompt = buildTranslationPrompt(content);
-    const translated = await llmCall(prompt);
+    const translated = await llmCall(prepareGatewayPrompt({ _outputDir: opts.outputDir || path.dirname(mdPath) }, {
+      callSite: 'workflow/core/i18n-translator.js:translateMdFile',
+      role: 'i18n-translator',
+      stage: 'I18N',
+      runtimePrompt: prompt,
+      metadata: { category: 'injected-llm-call', fileName: path.basename(mdPath) },
+    }));
 
     // Atomic write
     const tmp = `${zhPath}.tmp.${Date.now()}`;

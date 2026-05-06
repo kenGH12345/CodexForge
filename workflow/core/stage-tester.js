@@ -38,6 +38,7 @@ const {
   buildWebSearchContext,
 } = require('./stage-tester-prompts');
 const { buildRetryContext, compareOutputFingerprint } = require('./retry-divergence-guard');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 const { ExecutionLogValidator } = require('./execution-log-validator');
 const { EvolutionLoop } = require('./evolution-loop');
 const { ContainerSandboxAdapter } = require('../hooks/adapters/container-sandbox-adapter');
@@ -239,6 +240,7 @@ const outputPath = await this.agents[AgentRole.TESTER].run(inputPath, null, test
         semanticMode: true,
         cheapLlmCall: this.llmRouter?.getTierConfig()?.fast || null,
         investigationTools: this._buildInvestigationTools('TestReport'),
+        outputDir: this._outputDir,
       }
     );
     corrResult = await corrector.correct(testContent, 'Test Report');
@@ -852,7 +854,13 @@ async function _runRealTestLoop({ testCommand, baselineTestCommand = testCommand
         ? fixHistory
         : fixPrompt;
 
-      fixResponse = await this._rawLlmCall(llmInput);
+      fixResponse = await this._rawLlmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/stage-tester.js:runRealTestLoop.fixAgent',
+        role: 'test-fix-agent',
+        stage: 'TEST',
+        runtimePrompt: llmInput,
+        metadata: { category: 'raw-orchestrator-call', fixRound },
+      }));
 
       if (fixResponse && fixResponse.trim()) {
         fixHistory.push({ role: 'assistant', content: fixResponse });

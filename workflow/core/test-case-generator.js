@@ -4,6 +4,7 @@ const fs   = require('fs');
 const path = require('path');
 const { PATHS, getDefaultOutputDir } = require('./constants');
 const { translateMdFile } = require('./i18n-translator');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 /**
  * TestCaseGenerator – Pre-test planning module.
@@ -198,7 +199,13 @@ Now generate the complete test suite for the requirements provided above.
 
     let response;
     try {
-      response = await this._llmCall(prompt);
+      response = await this._llmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/test-case-generator.js:generate',
+        role: 'test-case-generator',
+        stage: 'TEST',
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call', mode: 'basic' },
+      }));
     } catch (err) {
       console.warn(`[TestCaseGenerator] ⚠️  LLM call failed (non-fatal): ${err.message}`);
       return { path: null, caseCount: 0, skipped: true };
@@ -515,7 +522,13 @@ Output the complete test case suite as a JSON array for automated execution:
 
     let response;
     try {
-      response = await this._llmCall(prompt);
+      response = await this._llmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/test-case-generator.js:generateAdvanced',
+        role: 'test-case-generator',
+        stage: 'TEST',
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call', mode: 'advanced' },
+      }));
     } catch (err) {
       console.warn(`[TestCaseGenerator] ⚠️  LLM call failed (non-fatal): ${err.message}`);
       return { path: null, caseCount: 0, skipped: true, features: [] };

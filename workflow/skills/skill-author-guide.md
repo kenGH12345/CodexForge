@@ -369,34 +369,40 @@ read_file output/api-endpoints.json    （如存在）
 
 ## §9. 输出 SKILL.md 的 YAML Frontmatter 规范
 
-你产出的 SKILL.md **必须以如下 YFM 起始**：
+> ⛔ **唯一事实源**：YFM 字段完整清单与必填校验规则详见
+> [`skill-author-guide-refs/p0-dimensions.md § YFM Front-Matter 必填 Schema`](./skill-author-guide-refs/p0-dimensions.md#📐-yfm-front-matter-必填-schema-v21-新增)。
+> 本节不再列字段——避免两处模板漂移。**产出前必读分片文档的 YFM Schema 段**。
+
+### 代码路径会自动注入
+
+当你通过 `skill-ai-generator` 或 `unified-skill-composer` 产出 SKILL.md 时，
+YFM 由 `workflow/core/skill-yfm-builder.js` **代码层强制注入**（8 字段全满 + 校验失败硬 fail）。
+你只需专注内容；格式不是你的负担。
+
+### 手写 SKILL.md 时的最小自举示例
+
+如果你是**手动**写 SKILL.md（不走生成器），最小必填 YFM 参照本 skill 自己的头部：
 
 ```yaml
 ---
 name: <project-name-kebab-case>
 version: 1.0.0
+type: project-expert-skill
 description: |
-  <一句话说明本 skill 指导什么；≥ 50 字；中文>
+  <≥ 20 字的说明，可跨多行>
+domains: [<2-5 个域标签>]
 triggers:
   keywords:
-    - <项目名>
-    - <3-5 个项目特有术语>
-    - <2-3 个技术栈关键词>
-  roles: [developer, architect, <其他角色>]
-generatedAt: <ISO 8601 时间戳>
-llmPowered: true
-confidence: <0.0-1.0，基于自检 6 问的通过率>
-sourceOfTruth:
-  - output/code-graph.json
-  - output/business-logic.json
-  - <其他你 read_file 过的关键源文件>
+    - <≥ 3 个项目特有关键词，用于 BM25 匹配>
+    - <避免泛词，选专有名词 / 框架 / 概念>
+  roles: [developer, architect]
+load_level: session
+max_tokens: 2000
+generatedAt: <ISO 8601>
 ---
 ```
 
-关键字段：
-- `keywords`：触发 ContextLoader 自动注入的信号词，务必具体（避开 "code"/"project" 这种过于宽泛的词）
-- `sourceOfTruth`：列出你实际读过的证据文件，让后续审计可追溯
-- `confidence`：6 问全部达标 → 0.95；达标 4-5 问 → 0.7；仅达标 2-3 问 → **不要落盘，回去补**
+> 完整字段语义 + 5 条硬规则 + 验证命令请阅读 `p0-dimensions.md`。
 
 ---
 

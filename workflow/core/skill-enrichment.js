@@ -9,6 +9,7 @@
 'use strict';
 
 const { webSearchHelper } = require('./web-search-helpers');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ─── External Knowledge → Skill Generation (ADR-29) ─────────────────────────
 
@@ -194,7 +195,13 @@ async function enrichSkillFromExternalKnowledge(orch, skillName, opts = {}) {
     let analysisResult = null;
 
     if (llmCall) {
-      const llmResponse = await llmCall(analysisPrompt, 'enrichment-analyst');
+      const llmResponse = await llmCall(prepareGatewayPrompt({ _outputDir: null }, {
+        callSite: 'workflow/core/skill-enrichment.js:analysis',
+        role: 'skill-enrichment',
+        stage: 'EVOLVE',
+        runtimePrompt: analysisPrompt,
+        metadata: { category: 'injected-llm-call', skillName },
+      }), 'enrichment-analyst');
       analysisResult = _parseEnrichmentResponse(llmResponse);
     }
 
@@ -231,7 +238,13 @@ async function enrichSkillFromExternalKnowledge(orch, skillName, opts = {}) {
       const secondPassPrompt = _buildSecondPassPrompt(skillName, meta, thinSections, additionalContent || fetchedContent);
       let secondPassResult = null;
       if (llmCall) {
-        const llmResponse2 = await llmCall(secondPassPrompt, 'enrichment-analyst');
+        const llmResponse2 = await llmCall(prepareGatewayPrompt({ _outputDir: null }, {
+          callSite: 'workflow/core/skill-enrichment.js:secondPass',
+          role: 'skill-enrichment',
+          stage: 'EVOLVE',
+          runtimePrompt: secondPassPrompt,
+          metadata: { category: 'injected-llm-call', skillName, thinSectionCount: thinSections.length },
+        }), 'enrichment-analyst');
         secondPassResult = _parseEnrichmentResponse(llmResponse2);
       }
 

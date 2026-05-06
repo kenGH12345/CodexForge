@@ -15,6 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ─── Import from sub-modules ────────────────────────────────────────────────
 
@@ -466,7 +467,13 @@ Output:`;
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Query expansion timeout')), 8000)
       );
-      const response = await Promise.race([this._llmCall(prompt), timeoutPromise]);
+      const response = await Promise.race([this._llmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/experience-query.js:expandQuery',
+        role: 'experience-query',
+        stage: 'EXPERIENCE',
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call', keywordCount: keywords.length },
+      })), timeoutPromise]);
 
       const cleaned = (response || '').replace(/```json?\s*/gi, '').replace(/```/g, '').trim();
       const arrayMatch = cleaned.match(/\[([^\]]+)\]/);

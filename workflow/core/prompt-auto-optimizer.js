@@ -275,6 +275,7 @@ class PromptAutoOptimizer {
   recordFeedback(params) {
     const { stage, evidence, signalType, score = 0.6 } = params;
     const record = {
+      id: `FB-${Date.now()}-${Math.random().toString(36).slice(2, 9).toUpperCase()}`,
       target: stage || 'UNKNOWN',
       score,
       issues: [{ type: 'process_improvement', description: (evidence || '').slice(0, 200) }],
@@ -286,9 +287,11 @@ class PromptAutoOptimizer {
       const dir = path.dirname(historyPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.appendFileSync(historyPath, JSON.stringify(record) + '\n', 'utf-8');
-      console.log(`[PromptAutoOptimizer] 📝 Feedback recorded: stage=${stage} signalType=${signalType}`);
+      console.log(`[PromptAutoOptimizer] 📝 Feedback recorded: stage=${stage} signalType=${signalType} id=${record.id}`);
+      return record;
     } catch (e) {
       console.log(`[PromptAutoOptimizer] ⚠️ recordFeedback failed (non-fatal): ${e.message}`);
+      return null;
     }
   }
 

@@ -19,6 +19,8 @@
 
 'use strict';
 
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
+
 // ─── LSH (Locality Sensitive Hashing) for Fast Similarity Search ───────────
 
 /**
@@ -909,7 +911,13 @@ ${signalTexts}
 
 Pattern summary:`;
 
-    const result = await this.cheapLlmCall(prompt);
+    const result = await this.cheapLlmCall(prepareGatewayPrompt(this, {
+      callSite: 'workflow/core/experience-distillation.js:llmPatternSummarize',
+      role: 'experience-distillation',
+      stage: 'EXPERIENCE',
+      runtimePrompt: prompt,
+      metadata: { category: 'llm-lite-call', dimension },
+    }));
     return (result || '').trim().slice(0, 100) || this._ruleBasedSummary(signals);
   },
 
@@ -1059,7 +1067,13 @@ ${experienceBlocks}
 
 --- MERGED CONTENT ---`;
 
-  const result = await cheapLlmCall(prompt);
+  const result = await cheapLlmCall(prepareGatewayPrompt({ _outputDir: null }, {
+    callSite: 'workflow/core/experience-distillation.js:semanticMergeExperiences',
+    role: 'experience-distillation',
+    stage: 'EXPERIENCE',
+    runtimePrompt: prompt,
+    metadata: { category: 'llm-lite-call', experienceCount: allExperiences.length },
+  }));
   if (!result || result.trim().length < 20) return null;
 
   const merged = result.trim();

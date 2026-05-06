@@ -15,6 +15,7 @@
 const fs   = require('fs');
 const path = require('path');
 const { ReflectionType, ReflectionSeverity } = require('./self-reflection-types');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 const DEFAULT_QUALITY_GATES = {
   maxErrorCount:       3,
@@ -547,7 +548,13 @@ For each failed gate, provide:
 
 Keep total output under 500 characters. Be specific and actionable.`;
 
-    const analysis = await this._cheapLlmCall(prompt);
+    const analysis = await this._cheapLlmCall(prepareGatewayPrompt(this, {
+      callSite: 'workflow/core/quality-gate.js:analyzeFailures',
+      role: 'quality-gate',
+      stage: stage || 'QUALITY',
+      runtimePrompt: prompt,
+      metadata: { category: 'llm-lite-call', failedGateCount: failedGates.length },
+    }));
     if (analysis && analysis.trim().length > 20) {
       // Attach analysis to each failed gate for downstream consumers
       for (const fg of failedGates) {

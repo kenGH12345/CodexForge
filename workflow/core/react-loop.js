@@ -8,6 +8,8 @@
 
 'use strict';
 
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
+
 class ReActLoop {
   /**
    * @param {Function} llmCall - The LLM function: async (prompt: string) => string
@@ -21,6 +23,9 @@ class ReActLoop {
     this.tools = tools;
     this.maxSteps = options.maxSteps || 15;
     this.onStep = options.onStep || (() => {});
+    this.llmInjectionGateway = options.llmInjectionGateway || null;
+    this.role = options.role || 'react-loop';
+    this._outputDir = options.outputDir || null;
   }
 
   /**
@@ -37,7 +42,13 @@ class ReActLoop {
     while (step < this.maxSteps) {
       console.error(`[ReActLoop] Step ${step + 1}/${this.maxSteps}...`);
       
-      const response = await this.llmCall(currentPrompt);
+      const response = await this.llmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/react-loop.js:run.step',
+        role: this.role,
+        stage: 'REACT',
+        runtimePrompt: currentPrompt,
+        metadata: { category: 'agent-adapter-call', step },
+      }));
       const toolCalls = this._parseToolCalls(response);
 
       if (!toolCalls || toolCalls.length === 0) {
@@ -73,7 +84,14 @@ class ReActLoop {
 
     if (!finalResponse) {
       console.warn(`[ReActLoop] ⚠️ Max steps (${this.maxSteps}) reached. Returning last response.`);
-      finalResponse = await this.llmCall(currentPrompt + '\n\nSystem: Max steps reached. Please provide your final output now.');
+      const finalPrompt = currentPrompt + '\n\nSystem: Max steps reached. Please provide your final output now.';
+      finalResponse = await this.llmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/react-loop.js:run.final',
+        role: this.role,
+        stage: 'REACT',
+        runtimePrompt: finalPrompt,
+        metadata: { category: 'agent-adapter-call', maxSteps: this.maxSteps },
+      }));
     }
 
     return finalResponse;

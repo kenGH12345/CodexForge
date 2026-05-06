@@ -23,6 +23,8 @@
 
 'use strict';
 
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
+
 // ─── Compression Strategies Enum ─────────────────────────────────────────────
 
 const CompressionStrategy = {
@@ -254,7 +256,13 @@ class SemanticCompressor {
         '--- END ---',
       ].join('\n');
 
-      const response = await this._cheapLlmCall(prompt);
+      const response = await this._cheapLlmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/semantic-compressor.js:llmSummary',
+        role: 'semantic-compressor',
+        stage: 'COMPRESSION',
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call', targetChars },
+      }));
       if (response && typeof response === 'string') {
         const summary = response.trim();
         // Validate: summary should be shorter than original and non-trivial

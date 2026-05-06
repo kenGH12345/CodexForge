@@ -33,6 +33,7 @@ const {
 const { runModuleAwareArchitect } = require('./module-architect-runner');
 const { buildRetryContext, compareOutputFingerprint } = require('./retry-divergence-guard');
 const { buildAgentPrompt } = require('./prompt-builder');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // Forward reference: _runAnalyst is needed for rollback. Lazy-loaded to avoid circular deps.
 let _runAnalyst = null;
@@ -223,7 +224,7 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
     console.warn(`[Orchestrator] 🛡️ Security CVE audit failed (non-fatal): ${err.message}`);
   }
 
-  const coverageChecker = new CoverageChecker(this._rawLlmCall, { verbose: true });
+  const coverageChecker = new CoverageChecker(this._rawLlmCall, { verbose: true, outputDir: this._outputDir });
   const reviewRiskProfile = (() => {
     const corpus = `${extraContext || ''}\n${outputPath && fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : ''}`.toLowerCase();
     const score = (regex) => (regex.test(corpus) ? 0.75 : 0);
@@ -251,7 +252,14 @@ outputPath = await this.agents[AgentRole.ARCHITECT].run(inputPath, null, archExp
     } catch (err) {
       console.warn(`[Orchestrator] ⚠️  Reviewer prompt optimisation failed (non-fatal): ${err.message}`);
     }
-    return this._rawLlmCall(optimisedPrompt);
+    return this._rawLlmCall(prepareGatewayPrompt(this, {
+      callSite: 'workflow/core/stage-architect.js:reviewLlmCall',
+      role: 'architecture-reviewer',
+      stage: 'ARCHITECT',
+      runtimePrompt: optimisedPrompt,
+      candidatePrompt: optimisedPrompt,
+      metadata: { category: 'raw-orchestrator-call' },
+    }));
   };
   const archReviewer = new CodeReviewAgent(
     reviewLlmCall,

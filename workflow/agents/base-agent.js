@@ -17,6 +17,7 @@ const path = require('path');
 const { AGENT_CONTRACTS, AgentRole } = require('../core/types');
 const { PATHS, HOOK_EVENTS, getDefaultOutputDir } = require('../core/constants');
 const { translateMdFile } = require('../core/i18n-translator');
+const { LLMInjectionGateway } = require('../core/llm-injection-gateway');
 
 class BaseAgent {
   /**
@@ -39,6 +40,7 @@ class BaseAgent {
     this.hookEmitter = hookEmitter;
     // P2-b: instance-level output directory
     this._outputDir = opts.outputDir || getDefaultOutputDir();
+    this.llmInjectionGateway = opts.llmInjectionGateway || new LLMInjectionGateway({ outputDir: this._outputDir });
   }
 
   // ─── Public API ───────────────────────────────────────────────────────────────
@@ -91,6 +93,15 @@ class BaseAgent {
 
     // 3. Build prompt and call LLM
     const prompt = this.buildPrompt(inputContent, expContext);
+    const gatewayResult = this.llmInjectionGateway.prepare({
+      callSite: 'workflow/agents/base-agent.js:BaseAgent.run',
+      role: this.role,
+      stage: this.role,
+      runtimePrompt: prompt,
+      candidatePrompt: prompt,
+      metadata: { category: 'agent-adapter-call', hasTools: !!(this.tools && this.tools.length > 0) },
+    });
+    const promptToSend = gatewayResult.promptToSend;
     const startTime = Date.now();
     let llmResponse;
     let promptSuccess = true;
@@ -99,15 +110,18 @@ class BaseAgent {
       if (this.tools && this.tools.length > 0) {
         const { ReActLoop } = require('../core/react-loop');
         const reactLoop = new ReActLoop(this.llmCall, this.tools, {
+          llmInjectionGateway: this.llmInjectionGateway,
+          role: this.role,
+          outputDir: this._outputDir,
           onStep: (info) => {
             if (handoffLog && activityId) {
               handoffLog.addEvent(activityId, 'tool_call', info);
             }
           }
         });
-        llmResponse = await reactLoop.run(prompt);
+        llmResponse = await reactLoop.run(promptToSend);
       } else {
-        llmResponse = await this.llmCall(prompt);
+        llmResponse = await this.llmCall(promptToSend);
       }
     } catch (err) {
       promptSuccess = false;
@@ -118,7 +132,7 @@ class BaseAgent {
         const durationMs = Date.now() - startTime;
         handoffLog.endActivity(activityId, {
           durationMs,
-          inputTokens: this._estimateTokens(prompt),
+          inputTokens: this._estimateTokens(promptToSend),
           outputTokens: llmResponse ? this._estimateTokens(llmResponse) : 0,
         }, promptSuccess);
       }

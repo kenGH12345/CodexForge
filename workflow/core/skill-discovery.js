@@ -35,6 +35,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 const UnifiedSkillComposer = require('./unified-skill-composer');
 
 // ─── Scanner Definitions ──────────────────────────────────────────────────────
@@ -845,7 +846,13 @@ async function discoverProjectSkills({ projectRoot, skillEvolution, llmCall = nu
     // LLM refinement path: 1 call, ~2000 tokens
     try {
       const prompt = buildRefinementPrompt(signalsSummary);
-      const refined = await effectiveLlmCall(prompt);
+      const refined = await effectiveLlmCall(prepareGatewayPrompt({ _outputDir: path.join(projectRoot, 'output') }, {
+        callSite: 'workflow/core/skill-discovery.js:discoverProjectStandards.refine',
+        role: 'skill-discovery',
+        stage: 'INIT',
+        runtimePrompt: prompt,
+        metadata: { category: 'injected-llm-call', signalCount: signals.length, llmTier },
+      }));
       if (refined && refined.trim().length > 50) {
         skillContent = refined.trim();
         result.usedLLM = true;

@@ -5,10 +5,16 @@
  * a dense, structured prompt. Supports both LLM-powered and direct-IDE-Agent modes.
  */
 
-const fs = require('fs');
 const path = require('path');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 const { CapabilityMapper } = require('./capability-mapper');
+const { buildSkillYFM, buildSkillYFMTemplate } = require('./skill-yfm-builder');
+const {
+  assembleShardingPromptBlock,
+  parseShardedOutput,
+  validateSharding,
+} = require('./skill-sharding');
 
 const REQUIRED_SECTIONS = [
   'Module Scaffold',
@@ -173,58 +179,23 @@ function buildPrompt(mapped, packaged) {
   lines.push('');
   lines.push('## Output Format');
   lines.push('');
-  lines.push('Produce a SKILL.md starting with YAML frontmatter (exact format):');
+  lines.push('You MUST produce a v2.1 sharded project-expert skill, not a single monolithic file.');
+  lines.push('Use the exact file-delimiter protocol below; each delimiter must be on its own line.');
+  lines.push('');
+  lines.push('The `SKILL.md` block must start with YAML frontmatter (exact format; all fields required):');
   lines.push('');
   lines.push('```yaml');
-  lines.push('---');
-  lines.push('name: <project-name>');
-  lines.push('version: 1.0.0');
-  lines.push('triggers:');
-  lines.push('  keywords: [<comma-separated, project-specific keywords for ContextLoader matching>]');
-  lines.push('  roles: [<target audience roles, e.g. developer, architect, tester>]');
-  lines.push('generatedAt: <ISO timestamp>');
-  lines.push('llmPowered: true');
-  lines.push('---');
+  lines.push(buildSkillYFMTemplate().trimEnd());
   lines.push('```');
   lines.push('');
-  lines.push('ContextLoader uses `triggers.keywords` and `triggers.roles` for skill-to-task matching.');
+  lines.push(assembleShardingPromptBlock());
   lines.push('');
-  lines.push('Then produce exactly these sections:');
-  lines.push('');
-  lines.push('### 1. Project Architecture & Philosophy');
-  lines.push('- Describe the overall architecture (layered, modular, event-driven, etc.)');
-  lines.push('- Explain the core design philosophy and key abstractions');
-  lines.push('- Identify the most critically coupled modules and why');
-  lines.push('');
-  lines.push('### 2. Key Files & Entry Points');
-  lines.push('- List the most important files a developer must understand first');
-  lines.push('- Map entry points to their architectural role');
-  lines.push('');
-  lines.push('### 3. Design Patterns & Conventions');
-  lines.push('- For each detected pattern: explain HOW it is used in this codebase (not generic definition)');
-  lines.push('- Identify the dominant coding conventions and naming styles');
-  lines.push('- Highlight any unusual or project-specific conventions');
-  lines.push('');
-  lines.push('### 4. Reusable Components & APIs');
-  lines.push('- Document the most important utility functions/classes with their signatures');
-  lines.push('- For EACH reusable component, include a Copy-Paste code template (full function stub or class skeleton)');
-  lines.push('- Include import/require statements and parameter descriptions');
-  lines.push('');
-  lines.push('### 5. Common Pitfalls & Anti-patterns');
-  lines.push('- What mistakes do developers commonly make in this codebase?');
-  lines.push('- What patterns should be AVOIDED?');
-  lines.push('- What are the biggest coupling risks?');
-  lines.push('');
-  lines.push('### 6. Testing & Quality Standards');
-  lines.push('- How is testing organized?');
-  lines.push('- What quality checks are in place?');
-  lines.push('');
-  lines.push('## Rules');
+  lines.push('Content requirements:');
   lines.push('- BE SPECIFIC to this project. Generic advice is useless.');
   lines.push('- Cite concrete file names, function names, and module names from the signals above.');
-  lines.push('- DO NOT list every file — focus on the architecturally significant ones.');
-  lines.push('- Confidence scores indicate signal strength: trust high-confidence signals more.');
-  lines.push('- **CRITICAL**: Every reusable component in Section 4 must have a COMPLETE copy-pasteable code template, not just a description.');
+  lines.push('- DO NOT put detailed single-quadrant sections into `SKILL.md`; put them into the assigned references file.');
+  lines.push('- Every reusable component section must include copy-pasteable usage templates where possible.');
+  lines.push('- If a quadrant is not applicable, still create its reference file and explain why it is N/A.');
   lines.push('');
 
   const prompt = lines.join('\n');
@@ -295,7 +266,13 @@ async function callLLM(prompt, { llmAdapterPath, timeoutMs = 90000, ideAgentCall
   if (typeof cheapLlmCall === 'function') {
     console.error('[SkillAIGenerator] Using cheapLlmCall for skill generation');
     try {
-      const result = await cheapLlmCall(prompt);
+      const result = await cheapLlmCall(prepareGatewayPrompt({ _outputDir: null }, {
+        callSite: 'workflow/core/skill-ai-generator.js:callLLM.cheap',
+        role: 'skill-ai-generator',
+        stage: 'EVOLVE',
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call' },
+      }));
       if (result && typeof result === 'string' && result.trim().length > 0) {
         return result;
       }
@@ -324,6 +301,54 @@ async function callLLM(prompt, { llmAdapterPath, timeoutMs = 90000, ideAgentCall
 
 // ── Fallback Builder ───────────────────────────────────
 
+function _ensureMinKeywords(keywords, fallbackName) {
+  const cleaned = (keywords || [])
+    .filter(k => typeof k === 'string' && k.trim().length > 0)
+    .map(k => k.replace(/'/g, ''));
+  if (cleaned.length >= 3) return cleaned;
+  const extras = [fallbackName, 'project', 'codebase'].filter(x => !cleaned.includes(x));
+  return cleaned.concat(extras).slice(0, Math.max(3, cleaned.length + extras.length));
+}
+
+function _buildFallbackDescription(scaffold, mapped) {
+  const name = scaffold.projectName || scaffold.projectType || 'Project';
+  const arch = scaffold.architecture || 'unknown architecture';
+  const moduleCount = (mapped && mapped.architecture && mapped.architecture.modules || []).length;
+  const domainHint = scaffold.projectType && scaffold.projectType !== name ? ` / ${scaffold.projectType}` : '';
+  const desc = `Project-expert skill for ${name}${domainHint} (${arch}). Covers ${moduleCount} modules, key reusable utilities, design patterns, and common pitfalls detected from static analysis. Auto-generated from code-graph signals.`;
+  return desc;
+}
+
+function _deriveDomainsFromMapped(mapped, scaffold) {
+  const out = new Set();
+  if (scaffold && scaffold.projectType) out.add(String(scaffold.projectType).toLowerCase().replace(/\s+/g, '-'));
+  if (scaffold && scaffold.architecture) out.add(String(scaffold.architecture).toLowerCase().replace(/\s+/g, '-'));
+  const patterns = mapped && mapped.designPatterns && mapped.designPatterns.detected;
+  if (Array.isArray(patterns)) for (const p of patterns.slice(0, 3)) if (p && p.pattern) out.add(String(p.pattern).toLowerCase());
+  return Array.from(out).slice(0, 5);
+}
+
+function _minimalFallbackYFM(name, keywords, roles) {
+  // Disaster recovery: if buildSkillYFM itself throws, fall back to a hand-rolled
+  // minimum-viable YFM that still has triggers.keywords so ContextLoader can match.
+  const safeKw = keywords.map(k => String(k).replace(/'/g, '')).join(', ');
+  const safeRoles = roles.join(', ');
+  return [
+    '---',
+    `name: ${name}`,
+    'version: 1.0.0',
+    'type: project-expert-skill',
+    `description: Auto-generated project-expert skill for ${name} (minimal fallback YFM).`,
+    'triggers:',
+    `  keywords: [${safeKw}]`,
+    `  roles: [${safeRoles}]`,
+    'load_level: session',
+    `generatedAt: ${new Date().toISOString()}`,
+    '---',
+    '',
+  ].join('\n');
+}
+
 function buildFallbackSkill(mapped) {
   const scaffold = mapped.scaffold || {};
   const patterns = mapped.designPatterns || {};
@@ -337,21 +362,35 @@ function buildFallbackSkill(mapped) {
   const triggers = mapped.triggers || { keywords: [], roles: ['developer'] };
   const lines = [];
 
-  // YFM Frontmatter
-  const safeKeywords = (triggers.keywords || []).map(k => k.replace(/'/g, '')).join(', ');
-  const safeRoles = (triggers.roles || ['developer']).join(', ');
-  lines.push('---');
-  lines.push(`name: ${scaffold.projectType || 'Project'}`);
-  lines.push('version: 1.0.0');
-  lines.push('triggers:');
-  lines.push(`  keywords: [${safeKeywords}]`);
-  lines.push(`  roles: [${safeRoles}]`);
-  lines.push(`generatedAt: ${new Date().toISOString()}`);
-  lines.push('llmPowered: false');
-  lines.push('---');
+  const projectName = scaffold.projectName || scaffold.projectType || 'Project';
+  const keywords = _ensureMinKeywords(triggers.keywords || [], projectName);
+  const roles = (triggers.roles && triggers.roles.length > 0) ? triggers.roles : ['developer'];
+  const description = _buildFallbackDescription(scaffold, mapped);
+  const domains = _deriveDomainsFromMapped(mapped, scaffold);
+
+  // YFM via single source of truth — skill-yfm-builder.js
+  let yfmString;
+  try {
+    yfmString = buildSkillYFM({
+      name: projectName,
+      version: '1.0.0',
+      type: 'project-expert-skill',
+      description,
+      domains,
+      triggers: { keywords, roles },
+      load_level: 'session',
+      max_tokens: 2000,
+      generatedAt: new Date().toISOString(),
+      llmPowered: false,
+    });
+  } catch (err) {
+    console.error(`[SkillAIGenerator] YFM builder failed: ${err.message}; using minimal fallback`);
+    yfmString = _minimalFallbackYFM(projectName, keywords, roles);
+  }
+  lines.push(yfmString.trimEnd());
   lines.push('');
 
-  lines.push(`# ${scaffold.projectType || 'Project'} Skill Guide (Auto-Generated)`);
+  lines.push(`# ${projectName} Skill Guide (Auto-Generated)`);
   lines.push('');
   lines.push('> ℹ️ Generated by WorkFlowAgent Skill Generator (fallback mode — signals-based, no LLM reasoning)');
   lines.push('');
@@ -500,6 +539,117 @@ function buildFallbackSkill(mapped) {
   return lines.join('\n');
 }
 
+function buildFallbackReferenceFiles(mapped) {
+  const scaffold = mapped.scaffold || {};
+  const arch = mapped.architecture || {};
+  const patterns = mapped.designPatterns || {};
+  const standards = mapped.codingStandards || {};
+  const highValue = mapped.highValueSymbols || [];
+  const relations = arch.moduleRelations || [];
+  const layers = arch.layers || {};
+  const modules = arch.modules || [];
+  const moduleNames = modules.map(m => m.name || '').join('\n');
+  const hasUnityGameSignals = /UICtrl|Systems|Core|LiteCore|TDR|XLuaWork/i.test(moduleNames);
+  const hasUI = /UICtrl/i.test(moduleNames);
+  const hasSystems = /Systems/i.test(moduleNames);
+  const hasProtocol = /TDR/i.test(moduleNames);
+  const hasLua = /XLuaWork|XLua/i.test(moduleNames);
+
+  const d1 = [
+    '# D1 Structure — 模块、层次与可复用组件',
+    '',
+    '## §3 模块管理',
+    modules.length > 0
+      ? modules.slice(0, 20).map(m => `- ${m.name}: ${m.symbolCount || 0} symbols, ${m.fileCount || 0} files`).join('\n')
+      : '- No module signal detected.',
+    '',
+    '## §5 架构框架（MVC/分层）',
+    Object.keys(layers).length > 0
+      ? Object.entries(layers).map(([name, info]) => `- ${name}: ${(info && info.symbolCount) || 0} symbols / ${(info && info.fileCount) || 0} files`).join('\n')
+      : '- No explicit architecture layer signal detected.',
+    '',
+    '## §12 公共组件与工具库',
+    highValue.length > 0
+      ? highValue.slice(0, 15).map(sym => `- ${sym.name} (${sym.kind}) — ${sym.file}:${sym.line}${sym.signature ? ` — ${sym.signature}` : ''}`).join('\n')
+      : '- No reusable symbols detected.',
+  ].join('\n');
+
+  const detected = patterns.detected || [];
+  const d2 = [
+    '# D2 Behavior — 流程、模式、状态与日志',
+    '',
+    '## §2 项目流程与生命周期',
+    (scaffold.entryPoints || []).length > 0
+      ? (scaffold.entryPoints || []).slice(0, 10).map(ep => `- Entry: ${ep}`).join('\n')
+      : '- No explicit entry points detected.',
+    '',
+    '## §4 设计模式',
+    detected.length > 0
+      ? detected.slice(0, 10).map(p => `- ${p.pattern}: ${p.instanceCount || 0} instances, confidence ${(p.confidence || 0).toFixed(2)}`).join('\n')
+      : '- No dominant pattern detected.',
+    '',
+    '## §7 状态管理',
+    hasUnityGameSignals
+      ? [
+        '- Unity/WePop-like state signals detected from modules: `Core`, `LiteCore`, `Systems`, `UICtrl`.',
+        hasUI ? '- `UICtrl` usually owns UI screen state, restoration and controller/view transitions.' : null,
+        hasSystems ? '- `Systems` modules usually own domain feature state and coordinate with core runtime.' : null,
+        /LiteCore/i.test(moduleNames) ? '- `LiteCore` should be treated as a lightweight parallel runtime path; changes often need Core/LiteCore sync review.' : null,
+      ].filter(Boolean).join('\n')
+      : '- No dedicated state-management signal detected from static analysis.',
+    '',
+    '## §11 日志系统',
+    highValue.some(s => /Log(Error|Info|Warning)|Debug/i.test(s.name))
+      ? highValue.filter(s => /Log(Error|Info|Warning)|Debug/i.test(s.name)).slice(0, 6).map(s => `- ${s.name}: ${s.file}:${s.line}`).join('\n')
+      : '- Logger conventions should be verified manually from project files.',
+  ].join('\n');
+
+  const d3 = [
+    '# D3 Communication — 事件、网络、数据流与影响半径',
+    '',
+    '## §6 事件系统',
+    detected.some(p => /Observer|Event/i.test(p.pattern)) || hasUnityGameSignals
+      ? '- Event/observer-like communication signals detected; verify event payload contracts before cross-module changes.'
+      : '- No strong event-system signal detected.',
+    '',
+    '## §10 网络通信',
+    hasProtocol ? '- `TDR` protocol modules detected; network/data contracts should be treated as schema-bound and regeneration-sensitive.' : '- Network/protocol usage requires project-specific follow-up if relevant.',
+    '',
+    '## §13 MVC 数据流与绑定',
+    hasUI ? '- `UICtrl` modules detected; assume controller/view/model UI flow and validate binding names, prefab/resource links and restoration paths.' : '- Data-flow binding signals require code-level verification.',
+    '',
+    '## §14 模块间通讯契约',
+    relations.length > 0 ? relations.slice(0, 12).map(r => `- ${r.from} → ${r.to}: ${r.callCount} calls`).join('\n') : '- No cross-module relation signal detected.',
+    '',
+    '## §M-2 修改影响半径',
+    relations.length > 0 ? `- Highest observed coupling: ${relations[0].from} → ${relations[0].to}` : '- No impact-radius data detected.',
+  ].join('\n');
+
+  const conventions = standards.conventions || [];
+  const d4 = [
+    '# D4 Contract — 配置、持久化、协议与容错',
+    '',
+    '## §8 配置与数据驱动',
+    conventions.length > 0 ? conventions.slice(0, 8).map(c => `- ${c.type}: ${c.convention}`).join('\n') : '- No configuration convention detected.',
+    '',
+    '## §9 持久化与存档',
+    hasUnityGameSignals ? '- Unity client persistence may span local cache, PlayerPrefs/JSON-style state and server-authoritative feature data; verify module owner before changing state writes.' : '- Persistence behavior requires project-specific verification.',
+    '',
+    '## §15 协议与契约定义',
+    hasProtocol ? '- `TDR` protocol modules detected; field/schema changes require contract review and generated-code compatibility checks.' : '- Protocol contracts require project-specific verification.',
+    '',
+    '## §M-1 错误处理与容错',
+    hasLua ? '- `XLuaWork`/XLua signals detected; hotfix/config bridge failures need guarded fallback and clear C#↔Lua boundary checks.' : '- Error-handling strategy should be verified from source before critical changes.',
+  ].join('\n');
+
+  return {
+    'references/d1-structure.md': d1,
+    'references/d2-behavior.md': d2,
+    'references/d3-communication.md': d3,
+    'references/d4-contract.md': d4,
+  };
+}
+
 // ── Helper: Code Template Generator ──────────────────
 
 function _generateSymbolTemplate(sym, scaffold) {
@@ -580,6 +730,9 @@ async function generateSkillFromPackaged(packaged, codeGraph, options = {}) {
   const prompt = buildPrompt(mapped, packaged);
 
   let skillMarkdown = null;
+  let referenceFiles = {};
+  let shardingMode = 'single';
+  let shardingWarnings = [];
 
   // Attempt LLM path
   const llmResult = await callLLM(prompt, {
@@ -589,31 +742,61 @@ async function generateSkillFromPackaged(packaged, codeGraph, options = {}) {
     cheapLlmCall: options.cheapLlmCall,
   });
 
-  if (llmResult && typeof llmResult === 'string' && llmResult.trim().length > 500) {
-    skillMarkdown = llmResult.trim();
-    console.error('[SkillAIGenerator] LLM skill generation succeeded');
-  } else {
-    console.error('[SkillAIGenerator] LLM unavailable or returned insufficient content; building fallback skill from refined signals');
-    skillMarkdown = buildFallbackSkill(mapped);
+  const llmPowered = !!llmResult && typeof llmResult === 'string' && llmResult.trim().length > 500;
+  if (llmPowered) {
+    const parsed = parseShardedOutput(llmResult.trim());
+    shardingWarnings = shardingWarnings.concat(parsed.warnings || []);
+    if (parsed.parseMode === 'sharded' && parsed.files.has('SKILL.md')) {
+      skillMarkdown = parsed.files.get('SKILL.md');
+      referenceFiles = Object.fromEntries([...parsed.files.entries()].filter(([name]) => name !== 'SKILL.md'));
+      shardingMode = 'sharded';
+      const validation = validateSharding(parsed.files);
+      shardingWarnings = shardingWarnings.concat(validation.warnings || [], validation.errors || []);
+      console.error(`[SkillAIGenerator] LLM sharded skill generation succeeded (${Object.keys(referenceFiles).length} reference files)`);
+    } else if (parsed.parseMode === 'single' && parsed.files.has('SKILL.md')) {
+      skillMarkdown = parsed.files.get('SKILL.md');
+      console.error('[SkillAIGenerator] LLM returned single-file skill; using compatibility mode');
+    } else {
+      console.error('[SkillAIGenerator] LLM output malformed; building fallback sharded skill');
+    }
   }
 
-  // YFM safety net: if skillMarkdown lacks frontmatter, inject one
+  if (!skillMarkdown) {
+    console.error('[SkillAIGenerator] LLM unavailable/insufficient/malformed; building fallback sharded skill from refined signals');
+    skillMarkdown = buildFallbackSkill(mapped);
+    referenceFiles = buildFallbackReferenceFiles(mapped);
+    shardingMode = 'fallback-sharded';
+    const validation = validateSharding(new Map([['SKILL.md', skillMarkdown], ...Object.entries(referenceFiles)]));
+    shardingWarnings = shardingWarnings.concat(validation.warnings || [], validation.errors || []);
+  }
+
+  // YFM safety net: if SKILL.md lacks frontmatter, inject one via single source of truth
   if (!skillMarkdown.startsWith('---')) {
     const triggers = mapped.triggers || { keywords: [], roles: ['developer'] };
-    const safeKeywords = (triggers.keywords || []).map(k => k.replace(/'/g, '')).join(', ');
-    const safeRoles = (triggers.roles || ['developer']).join(', ');
-    const frontmatter = [
-      '---',
-      `name: ${options.projectName || (packaged.modules && packaged.modules[0] && packaged.modules[0].name) || 'Unknown Project'}`,
-      'version: 1.0.0',
-      'triggers:',
-      `  keywords: [${safeKeywords}]`,
-      `  roles: [${safeRoles}]`,
-      `generatedAt: ${new Date().toISOString()}`,
-      `llmPowered: ${!!llmResult && llmResult.trim().length > 500}`,
-      '---',
-      ''
-    ].join('\n');
+    const fallbackName = options.projectName || (packaged.modules && packaged.modules[0] && packaged.modules[0].name) || 'Unknown Project';
+    const keywords = _ensureMinKeywords(triggers.keywords || [], fallbackName);
+    const roles = (triggers.roles && triggers.roles.length > 0) ? triggers.roles : ['developer'];
+    const description = _buildFallbackDescription(mapped.scaffold || {}, mapped);
+    const domains = _deriveDomainsFromMapped(mapped, mapped.scaffold || {});
+
+    let frontmatter;
+    try {
+      frontmatter = buildSkillYFM({
+        name: fallbackName,
+        version: '1.0.0',
+        type: 'project-expert-skill',
+        description,
+        domains,
+        triggers: { keywords, roles },
+        load_level: 'session',
+        max_tokens: 2000,
+        generatedAt: new Date().toISOString(),
+        llmPowered,
+      });
+    } catch (err) {
+      console.error(`[SkillAIGenerator] YFM builder failed in safety net: ${err.message}; using minimal fallback`);
+      frontmatter = _minimalFallbackYFM(fallbackName, keywords, roles);
+    }
     skillMarkdown = frontmatter + skillMarkdown;
     console.error('[SkillAIGenerator] Injected missing YFM frontmatter');
   }
@@ -624,12 +807,15 @@ async function generateSkillFromPackaged(packaged, codeGraph, options = {}) {
     patternCount: (mapped.designPatterns && mapped.designPatterns.detected || []).length,
     detectedPatterns: (mapped.designPatterns && mapped.designPatterns.detected || []).map(p => p.pattern),
     alternatives: inferAlternatives(mapped),
-    llmPowered: !!llmResult && llmResult.trim().length > 500,
+    llmPowered,
+    shardingMode,
+    referenceFileCount: Object.keys(referenceFiles || {}).length,
+    shardingWarnings,
     tokenEstimate: estimateTokens(skillMarkdown),
     generatedAt: new Date().toISOString()
   };
 
-  return { skillMarkdown, mapping: mapped, metadata };
+  return { skillMarkdown, referenceFiles, shardingMode, shardingWarnings, mapping: mapped, metadata };
 }
 
 /**
@@ -637,7 +823,8 @@ async function generateSkillFromPackaged(packaged, codeGraph, options = {}) {
  *   A. generateSkill(requirement, context, options) — old 3-arg style
  *   B. generateSkill(projectRoot, options) — bridge/facade 2-arg style
  *
- * In mode B, loads code-graph.json from projectRoot and builds packaged context from fileList.
+ * In mode B, loads layered CodeGraph (L1 index + L2 shards, legacy fallback only for old projects)
+ * from projectRoot and builds packaged context from fileList.
  */
 async function generateSkill(arg1, arg2, arg3) {
   let packaged, codeGraph, options;
@@ -651,16 +838,21 @@ async function generateSkill(arg1, arg2, arg3) {
     // Mode B: generateSkill(projectRoot, options) — bridge/facade style
     const projectRoot = arg1;
     options = arg2 || {};
-    const fs = require('fs');
     const path = require('path');
 
-    // Load code-graph.json
-    const cgPath = options.codeGraphPath || path.join(projectRoot, 'output', 'code-graph.json');
     try {
-      codeGraph = JSON.parse(fs.readFileSync(cgPath, 'utf-8'));
+      const { loadLayeredCodeGraph } = require('./code-graph-layered-reader');
+      codeGraph = loadLayeredCodeGraph(projectRoot, {
+        includeTopShards: true,
+        // Dual budget: stop once either cap is reached. Raised defaults so
+        // projects with many small shards (after Pass-2 split) still get
+        // adequate coverage. Explicit options override.
+        maxShards: options.maxShards || 8,
+        maxSymbols: options.maxSymbols || 25000,
+      });
     } catch (err) {
-      console.error(`[SkillAIGenerator] Could not load code-graph.json from ${cgPath}: ${err.message}`);
-      codeGraph = {};
+      console.error(`[SkillAIGenerator] Could not load layered code graph: ${err.message}`);
+      codeGraph = { source: 'missing', modules: [], hotspots: [], reusableSymbols: [] };
     }
 
     // Build lightweight packaged context from fileList or projectRoot
@@ -693,5 +885,6 @@ module.exports = {
   generateSkillFromPackaged,
   buildPrompt,
   inferAlternatives,
-  buildFallbackSkill
+  buildFallbackSkill,
+  buildFallbackReferenceFiles
 };

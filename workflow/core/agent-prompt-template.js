@@ -55,8 +55,8 @@ Always prefer IDE-native tools over self-built equivalents:
 > MUST prefer the IDE-native equivalents listed in this table.
 
 Self-built unique capabilities (always available — read from output/ files):
-- **Hotspot analysis** — \`output/code-graph.json\` → which symbols change most frequently
-- **Module summary** — \`output/code-graph.json\` → high-level codebase overview
+- **Hotspot analysis** — \`output/code-graph-index.json\` → which symbols change most frequently (L1 lightweight)
+- **Module summary** — \`output/code-graph-index.json\` + \`output/code-graph-shards/<module>.json\` → high-level overview + on-demand module detail
 - **Business logic** — \`output/business-logic.json\` → entry points, business flows, core services
 - **API endpoints** — \`output/api-endpoints.json\` → REST routes, handlers, request/response schemas
 - **Duplicate detection** — \`output/duplicate-patterns.json\` → duplicate code blocks, similar functions
@@ -108,45 +108,52 @@ Do NOT reason internally and skip to conclusions. The user needs to SEE your rea
 3. What are the edge cases? (null input, empty collection, boundary values, error paths)
 4. What could break in production? (concurrency, large data, network failures, auth bypass)
 5. What security implications does this change have?
+6. If the change produces an artifact/shared capability/schema/generator output, did tests prove downstream consumers actually use it (not only that the producer emits it)?
 
-## 📖 Dynamic Context Loading (MANDATORY at task start)
+## 📖 Dynamic Context Loading (MANDATORY, digest-first)
 
-At the START of every task, you MUST load dynamic context using **\`read_file\`** (IDE-native tool):
+At the START of every task, load dynamic context using a **digest-first** strategy. The goal is to reduce token use without losing traceability.
 
-> ⚠️ Use \`read_file\` for each file below. Do NOT use the \`Read\` tool — it causes unnecessary tool execution overhead.
+### Default path: compact context first
 
 \`\`\`
-1. read_file \`output/code-graph.json\`           → Module map, hotspots, reusable symbols
-2. read_file \`output/project-profile.md\`        → Architecture analysis, tech stack details
-3. read_file \`.workflow/experiences.json\`        → Past lessons learned (avoid repeating mistakes)
-4. read_file \`output/reflections.json\`           → Known issues to watch for
-5. read_file \`manifest.json\`                     → Current workflow state
-6. list_dir  \`${v.workflowRoot}/skills/\`           → List available skill files, read relevant ones
-7. read_file \`output/feature-list.json\`          → Feature completion status (which features pass/fail)
-8. read_file \`${v.workflowRoot}/decision-log.md\`   → Architecture Decision Records (ADRs)
-9. read_file \`${v.workflowRoot}/architecture-constraints.md\` → Architecture constraints and guardrails
-10. read_file \`workflow.config.js\`               → Global/project skill configuration
-11. read_file \`output/business-logic.json\`       → Business logic patterns (entry points, flows, core services)
-12. read_file \`output/api-endpoints.json\`        → REST API endpoints (routes, handlers, schemas)
-13. read_file \`output/duplicate-patterns.json\`   → Duplicate code patterns (refactoring candidates)
+1. read_file \`output/context-digests/index.json\` → discover fresh stage digests and source hashes
+2. read_file relevant \`output/context-digests/<stage>.json\` files → reuse old relevant summaries
+3. Use digest \`source.path\`, \`source.sourceHash\`, and \`evidenceRefs\` to decide whether deeper reads are needed
 \`\`\`
 
-> ⚠️ This is NOT optional. Skipping context loading leads to shallow analysis, duplicate code,
-> and missed patterns. The direct-run workflow injects this automatically; in IDE mode YOU must
-> read these files yourself to achieve the same quality.
+### Fallback path: read full sources only when needed
+
+Read full artifacts or source files only when one of these conditions is true:
+
+\`\`\`
+- the relevant digest is missing, stale, or has low confidence
+- the task needs line-level/code-level evidence
+- the digest omits required downstream consumers, risks, decisions, or acceptance criteria
+- a validator/test failure requires inspecting the original artifact
+- a deep module change needs \`output/code-graph-shards/<module>.json\`
+\`\`\`
+
+Useful fallback sources include:
+
+\`\`\`
+- \`output/code-graph-index.json\` and targeted \`output/code-graph-shards/<module>.json\`
+- \`output/project-profile.md\`, \`output/business-logic.json\`, \`output/api-endpoints.json\`
+- \`output/duplicate-patterns.json\`, \`output/reflections.json\`, \`output/feature-list.json\`
+- \`${v.workflowRoot}/decision-log.md\`, \`${v.workflowRoot}/architecture-constraints.md\`, relevant \`${v.workflowRoot}/skills/*.md\`
+- \`.workflow/experiences.json\`, \`manifest.json\`, \`workflow.config.js\`
+\`\`\`
+
+> ⚠️ Context loading is NOT optional, but full artifact loading is no longer the default. Default to digest reuse; escalate to full files only when the digest is insufficient.
 
 ### How to Use Loaded Context:
-- **Hotspots**: Before writing new code, check if a hotspot symbol already does what you need
-- **Reusable Symbols**: In \`output/code-graph.json\`, look for the \`reusableSymbols\` section — these are high-frequency utility functions, base classes, and hub functions. ALWAYS prefer reusing these over writing new ones.
-- **Business Logic**: Check \`output/business-logic.json\` for entry points and business flows — understand the system's core logic paths before adding new ones. Avoid duplicating existing flows.
-- **API Endpoints**: Check \`output/api-endpoints.json\` for existing REST routes — before adding a new endpoint, verify it doesn't already exist. Understand request/response schemas for consistency.
-- **Duplicate Patterns**: Check \`output/duplicate-patterns.json\` for known duplicate code — if your change touches a duplicated area, consider refactoring the duplicates as part of the task.
-- **Experiences**: If a past experience warns about a pattern, follow its lesson
-- **Skills**: Match task keywords to skill files (e.g. "auth" → read \`bp-security-audit.md\`, "performance" → read \`bp-performance-optimization.md\`). Check \`workflow.config.js\` for \`globalSkills\` (always loaded) and \`projectSkills\` (project-specific).
-- **Known Issues**: If self-reflection flags a recurring problem, proactively address it
-- **ADRs**: Before making architecture decisions, check \`decision-log.md\` for existing decisions that may constrain or guide your design
-- **Architecture Constraints**: Read \`architecture-constraints.md\` for hard guardrails (e.g. "no new dependencies without approval")
-- **Feature List**: Check \`output/feature-list.json\` to know which features are done (\`passes: true\`) and which remain (\`passes: false\`). Work on the highest-priority incomplete feature.
+- **Digest Store**: Reuse fresh relevant digests. Append new relevant findings during stage completion; do not re-inject unrelated digests.
+- **Traceability**: Every digest claim must remain backed by \`source.path\`, \`sourceHash\`, or \`evidenceRefs\`; read the source when precise evidence is required.
+- **Hotspots**: Before writing new code, check digest/index summaries first, then targeted code graph shards if deeper module context is needed.
+- **Reusable Symbols**: In \`output/code-graph-index.json\`, look for \`reusableSymbols\`; avoid reading full \`output/code-graph.json\` unless doing offline deep analysis.
+- **Business/API/Duplicates**: Use digest summaries first; read \`business-logic.json\`, \`api-endpoints.json\`, or \`duplicate-patterns.json\` only when the task overlaps those domains.
+- **Experiences/Skills/ADRs**: Prefer relevant injected snippets; read full files only when the digest/snippet lacks the required decision or rule.
+- **Feature List**: Check feature state when selecting unfinished work or validating completion.
 ${v.selfReflectionSection}
 ${v.experienceSection}
 
@@ -154,7 +161,7 @@ ${v.experienceSection}
 
 ❌ DO NOT produce shallow, abbreviated output — every stage deserves thorough analysis
 ❌ DO NOT skip the Thinking Process — it is MANDATORY before every stage output
-❌ DO NOT skip Dynamic Context Loading — read output/ files before starting work
+❌ DO NOT skip Dynamic Context Loading — load fresh relevant digests first, and read full output/source files only when the digest is insufficient
 ❌ DO NOT invent features the user did not ask for ("while we're at it, let's also add...")
 ❌ DO NOT write vague requirements like "the system should be fast" — quantify: "API response < 200ms p95"
 ❌ DO NOT include implementation details in ANALYSE — that is ARCHITECT's job
@@ -185,156 +192,56 @@ The workflow has a **tiered review gate policy** based on stage risk:
 - For TEST and FINISHED: Automatically continue, no user confirmation needed
 - If the user requests changes at any gate, revise and re-present
 
-## 🔌 IDE Workflow Bridge (MANDATORY — use for EVERY workflow task)
+## 🔌 IDE Workflow Bridge (compact protocol)
 
-You have access to a **CLI bridge** that gives you the same capabilities as the full Node.js orchestrator.
-Instead of manually simulating triage, context loading, and experience matching, you MUST call these
-commands via \`terminal\` to get real, code-level results.
+The bridge is the runtime source of truth for \`/wf\`. Do not duplicate the full CLI manual in prompts; use the compact protocol below and inspect command JSON only when needed.
 
-### Bridge Commands Reference
+### Required \`/wf\` control loop
 
-| Command | When to Use | What It Does |
-|---------|-------------|-------------|
-| \`triage\` | **Before starting ANY task** | RequestTriage complexity scoring + routing recommendation |
-| \`context\` | **At the START of each stage** | ContextLoader skill/ADR/doc injection (same as MCP mode) |
-| \`experience-search\` | **When investigating a topic** | Search ExperienceStore by keyword/skill/tags |
-| \`experience-context\` | **At the START of each stage** | Get proven patterns + known pitfalls for current skill |
-| \`experience-record\` | **After completing a task** | Record lessons learned to ExperienceStore |
-| \`staleness-check\` | **At session start** | Check if artifacts are outdated |
-| \`quality-check\` | **After CODE stage** | Run local quality checks on modified files |
-| \`build-agent-prompt\` | **At the START of each stage** | Build role-specific prompt + constraints (Agent Role Isolation) |
-| \`rollback-check\` | **After EACH stage completes** | Validate output against downstream contract (Auto-Rollback) |
-| \`quality-gate\` | **After workflow completes** | Full QualityGate threshold validation (same as MCP) |
-| \`experience-evolve\` | **After workflow completes or periodically** | Purge expired + distill similar + analyze duplicates + layer health |
-| \`deep-audit\` | **Periodically or before /evolve** | Run 7-dimension deep audit (logic, config, coupling, architecture, etc.) |
-| \`experience-health\` | **At session start or periodically** | Comprehensive experience store health checks |
-| \`mape-analysis\` | **After 5-10 workflows or quality degradation** | MAPE Monitor+Analyze+Plan cycle (zero LLM, file-based signals) |
-| \`regression-check\` | **Before/after evolution sessions** | RegressionGuard baseline comparison (quality delta tracking) |
-| \`skill-refine-check\` | **Monthly or when search quality drops** | Identify skills needing refinement/fix/enrichment (YOU do the LLM work) |
-| \`contract-check\` | **At session start or after init** | Validate core module interface contracts (IExperienceStore, ICodeGraph) |
-| \`skill-discover\` | **On new projects or after config changes** | Auto-discover project conventions from config files (zero LLM) |
-| \`experience-transfer\` | **When starting work on a new project** | Cross-project experience discovery, export, and import |
-| \`task-history\` | **After EVERY workflow completion + at session start** | Cross-session task recall memory (record/recall/stats) |
-| \`arch-cache\` | **At session start (cold-start injection)** | Architecture Knowledge Cache: rebuild, query distilled summary |
-| \`execution-validate\` | **After workflow completes** | Validate execution log completeness and score |
-| \`prompt-optimize\` | **Monthly or after 10+ workflows** | Analyze feedback history, generate prompt optimization suggestions |
-| \`session-score\` | **After workflow completes** | Score session quality + signal detection (experience capture decision) |
-| \`scheduler-check\` | **At session start** | Check for overdue scheduled tasks (replaces background scheduler) |
-| \`input-received\` | **FIRST thing on ANY /wf message** | Log user input to workflow-progress.log (P0 mandatory) |
-| \`workflow-stage\` | **At the START of each stage** | Start stage execution, auto-write stage_start trace + progress banner |
-| \`stage-complete\` | **At the END of each stage** | Complete stage, auto-write stage_end trace + trigger Socratic challenge |
+\`\`\`text
+input-received  -> once per \`/wf\` request
+workflow-stage  -> start each stage and emit trace/progress
+stage work      -> use IDE tools and digest-first context
+stage-complete  -> finish each stage, write trace/digest, follow MANDATORY_NEXT_ACTION
+session-summary -> after DEPLOY/workflow complete
+\`\`\`
 
-### Mandatory Bridge Calls (DO NOT SKIP)
+### Stage sequence
 
-**Step 0: Before ANY workflow task** — Log input + Run triage:
+\`\`\`text
+ANALYSE -> ARCHITECT -> PLAN -> DEVELOP -> TEST -> REVIEW -> DEPLOY
+\`\`\`
 
-> ⚠️ **MANDATORY — Log Every /wf Input (P0)**:
-> Before doing ANYTHING else, you MUST call \`input-received\` to log this message in \`workflow-progress.log\`.
-> This applies to ALL \`/wf\` messages — requirements, questions, research requests — NO EXCEPTIONS.
+Triage is advisory only: ${v.WF_ROUTING_HINT}
+
+### Minimal command forms
 
 \`\`\`bash
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js input-received \\
-  --user-input "<exact /wf message text>" \\
-  --input-type "requirement" \\
-  --decision "走完整工作流" \\
-  --project-root .
+node ${v.workflowRoot}/tools/ide-workflow-bridge.js input-received --user-input "<exact /wf message>" --input-type "requirement" --decision "走完整工作流" --project-root .
+node ${v.workflowRoot}/tools/ide-workflow-bridge.js workflow-stage --stage <STAGE> --requirement "<requirement>" --project-root . --stage-input "<context refs>"
+node ${v.workflowRoot}/tools/ide-workflow-bridge.js stage-complete --stage <STAGE> --project-root . --summary "<summary>" --stage-output "<artifact path>"
 \`\`\`
 
-Then run triage:
-\`\`\`bash
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js triage --requirement "<user requirement>" --project-root .
-\`\`\`
-Parse the triage JSON output. Use \`score\`, \`suggestion\`, and \`matchedRules\` for diagnostics, prioritization, and risk signaling.
-\`/wf\` routing is fixed: ${v.WF_ROUTING_HINT} RequestTriage suggestions never skip the pipeline.
-If \`requiresInit\` is true, run \`/wf init\` first.
+### Optional bridge helpers
 
-**Step 1: At the START of each stage** — Call workflow-stage + Load context:
+Use these only when relevant; do not inject their full documentation by default.
 
-> ⚠️ **MANDATORY**: You MUST call \`workflow-stage\` FIRST to start the stage. This auto-writes \`stage_start\` trace and returns a progress banner.
-> Output the progress banner verbatim as the FIRST line of your stage response.
+| Need | Command |
+|---|---|
+| Role prompt / contract | \`build-agent-prompt\` |
+| Digest-first context sections | \`context\` |
+| Experience lookup | \`experience-search\`, \`experience-context\` |
+| Quality and rollback checks | \`quality-check\`, \`quality-gate\`, \`rollback-check\` |
+| Session lifecycle | \`task-history\`, \`session-score\`, \`execution-validate\`, \`experience-transfer\` |
+| Maintenance | \`scheduler-check\`, \`experience-health\`, \`contract-check\`, \`deep-audit\`, \`mape-analysis\`, \`regression-check\`, \`skill-refine-check\` |
 
-\`\`\`bash
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js workflow-stage \\
-  --stage <STAGE_NAME> \\
-  --requirement "<user requirement>" \\
-  --project-root . \\
-  --stage-input "<key files / context being analyzed>"
-\`\`\`
+### Non-negotiable rules
 
-Then load role prompt + context + experience:
-\`\`\`bash
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js build-agent-prompt --role <analyst|architect|planner|developer|tester> --project-root .
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js context --stage <STAGE> --task "<task description>" --project-root .
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js experience-context --skill "<relevant-skill>" --task "<task description>" --project-root .
-\`\`\`
-Parse the JSON output from \`build-agent-prompt\`: read the \`promptPrefix\` to adopt the role's persona,
-check \`contract.forbiddenActions\` to know what you MUST NOT do, and \`mandatoryDocs\` for required reading.
-The \`sections\` array from \`context\` contains skill docs, ADR digests, and code graph summaries.
-The \`contextBlock\` from \`experience-context\` contains proven patterns and known pitfalls.
-**Incorporate ALL THREE into your stage work. This is Agent Role Isolation — you must respect role boundaries.**
-
-**Step 1.5: After EACH stage completes** — Call stage-complete + Run rollback check:
-
-> ⚠️ **MANDATORY**: After ALL work for a stage is done, you MUST call \`stage-complete\`. This auto-writes \`stage_end\` trace, updates \`workflow-progress.log\`, and triggers Socratic challenge.
-
-\`\`\`bash
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js stage-complete \\
-  --stage <STAGE_NAME> \\
-  --project-root . \\
-  --summary "<1-2 sentence summary of what was done>" \\
-  --stage-output "<key decisions / artifacts produced>"
-\`\`\`
-
-> Parse the JSON output. If \`MANDATORY_NEXT_ACTION.type\` is \`STOP_HOOK_INJECT\`, execute the returned command immediately.
-> If \`MANDATORY_NEXT_ACTION.socraticInstruction\` is non-null, output the Socratic three-part structure first, then execute.
-
-Then run rollback check:
-\`\`\`bash
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js rollback-check --stage <STAGE> --project-root .
-\`\`\`
-Parse the JSON output. If \`passed\` is false, the output does NOT satisfy the downstream Agent's input contract.
-Follow the \`rollbackRecommendation.action\` — re-execute the indicated stage to fix the output.
-**This is Auto-Rollback — the same contract validation the MCP orchestrator uses.**
-
-**Step 2: After CODE stage** — Run quality checks:
-\`\`\`
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js quality-check --files "<file1.js,file2.js>" --project-root .
-\`\`\`
-Fix any FAIL items before proceeding to TEST.
-
-**Step 3: After completing a task** — Record experience:
-\`\`\`
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js experience-record --type POSITIVE --category stable_pattern --title "<lesson title>" --content "<what you learned>" --skill "<skill>" --project-root .
-\`\`\`
-For negative experiences (bugs found, pitfalls hit), use \`--type NEGATIVE --category pitfall\`.
-
-**Step 4: After workflow completes** — Run full QualityGate:
-\`\`\`
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js quality-gate --error-count <N> --test-pass-rate <0-1> --duration-ms <ms> --project-root .
-\`\`\`
-Provide your actual metrics: how many errors occurred, test pass rate, total duration.
-Parse the JSON output. If \`overallPassed\` is false, review the \`failedGates\` and address the issues.
-**This is the same QualityGate the MCP orchestrator runs at the end of every workflow.**
-
-**Step 5: After TEST stage — Close trace + generate health report:**
-\`\`\`
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js trace-append --event workflow_end --session <sessionId> --seq <N> --project-root .
-node ${v.workflowRoot}/tools/ide-workflow-bridge.js health-report --project-root .
-\`\`\`
-This writes the final trace event and regenerates \`output/health-report.md\` with real execution data.
-**seq numbering: workflow_start=1, stage_start ANALYSE=2, stage_end ANALYSE=3, ..., workflow_end = last seq.**
-
-> ⚠️ **CRITICAL**: These bridge calls replace the manual "simulate in your head" approach.
-> The bridge runs the SAME Node.js code that the MCP orchestrator uses.
-> Skipping bridge calls means you lose: real skill matching, experience search, quality gates,
-> agent role isolation, auto-rollback detection, and full quality gate validation.
-
-> 💡 **Skill name mapping for experience-context**: Use the skill name that matches the current stage:
-> - ANALYSE → \`architecture-design\`
-> - ARCHITECT → \`architecture-design\`
-> - PLAN → \`code-development\`
-> - CODE → \`code-development\`
-> - TEST → \`test-report\`
+- For \`/wf\`, call \`input-received\` before analysis or edits.
+- For every stage, call \`workflow-stage\` before stage work and \`stage-complete\` after stage work.
+- If \`stage-complete\` returns \`MANDATORY_NEXT_ACTION\`, execute it unless workflow is complete.
+- Prefer \`output/context-digests/\` and source refs over full artifact injection.
+- Record real verification output in TEST; do not replace tests with reasoning.
 
 ### Advanced Bridge Commands (Periodic Maintenance)
 
@@ -734,6 +641,7 @@ After completing the Code Self-Review, switch to a **hostile code reviewer** min
 
 **📏 Depth Requirements (MANDATORY)**:
 - Test each acceptance criterion individually and report pass/fail with evidence
+- If the change produces/modifies an artifact, schema, generator output, loader/reader/cache, config, metadata, or shared capability, include consumer adoption tests proving downstream consumers actually use the new output/capability
 - Include actual test output (not just "tests passed")
 - If any test fails, explain the failure and fix before proceeding
 
@@ -974,7 +882,7 @@ Every session MUST begin with the following steps in order. Do not skip any step
    If any tasks are overdue or never-run, execute the recommended bridge commands before proceeding.
 5. **Read progress state**: Use \`read_file\` to read \`manifest.json\` and \`output/feature-list.json\` to understand what has been done and what remains.
 6. **Review recent git history**: Run \`git log --oneline -20\` to identify any undocumented changes from previous sessions.
-7. **Load dynamic context**: Follow the Dynamic Context Loading checklist above (read all 10 files).
+7. **Load dynamic context**: Follow the digest-first Dynamic Context Loading policy above: read \`output/context-digests/index.json\` and relevant digests first; read full artifacts/source files only when needed.
 8. **Run health checks**: Run \`experience-health\` and \`contract-check\` to verify system health.
 9. **Select ONE task**: Find the highest-priority pending task or incomplete feature. Work on it exclusively.
    Do NOT claim or start a second task until the first is committed and marked done.
@@ -984,36 +892,23 @@ Every session MUST begin with the following steps in order. Do not skip any step
 - Do NOT mark a task as done without providing a verificationNote describing how you tested the change.
 - If the environment is broken at session start, fix it first before implementing new features.
 
-## 📊 Health Trace Protocol (MANDATORY for every /wf run)
+## 📊 Health Trace Protocol (compact)
 
-> ⚠️ **THIS IS NOT OPTIONAL.** Every \`/wf\` execution MUST emit trace events so \`health-report.md\` reflects real data.
-> ✅ For normal /wf tasks, use the unified \`run\` command as the only required execution path.
+Every \`/wf\` stage must emit trace/progress through the bridge. In IDE mode, do **not** duplicate a separate \`run\` command path in the prompt; \`workflow-stage\` and \`stage-complete\` are the trace-producing boundaries.
 
-### Unified Execution Command
+### Active Stage → Output File Mapping
 
-\`\`\`bash
-node workflow/tools/ide-workflow-bridge.js run --requirement "<the user's requirement text>" --project-root . --llm-module workflow/tools/ide-llm-adapter.js
-\`\`\`
+| Stage | Output File |
+|-------|-------------|
+| ANALYSE | \`output/analysis.md\` |
+| ARCHITECT | \`output/architecture.md\` |
+| PLAN | \`output/execution-plan.md\` |
+| DEVELOP | \`output/code.diff\` |
+| TEST | \`output/test-report.md\` |
+| REVIEW | \`output/review-output.md\` |
+| DEPLOY | \`output/deploy-output.md\` |
 
-> This command starts trace session, runs pipeline stages, records events, and triggers health-report generation.
-> Manual \`trace-session-start\` / \`trace-append\` commands are debug-only fallback.
-
-### Stage → Output File Mapping (reference)
-
-| Stage | Output File | What to write |
-|-------|-------------|---------------|
-| ANALYSE | \`output/analysis.md\` | Requirement analysis, user stories, functional requirements |
-| ARCHITECT | \`output/architecture.md\` | System design, tech stack, module breakdown |
-| PLAN | \`output/execution-plan.md\` | Task breakdown, file changes, implementation steps |
-| CODE | \`output/code.diff\` | Actual code changes (diff format or summary) |
-| TEST | \`output/test-report.md\` | Test results, coverage, pass/fail summary |
-
-### Optional Post-Run Commands
-
-\`\`\`bash
-node workflow/tools/ide-workflow-bridge.js health-report --project-root .
-node workflow/tools/ide-workflow-bridge.js session-summary --requirement "<the user's requirement text>" --project-root .
-\`\`\`
+After workflow completion, run or rely on the bridge-provided \`session-summary\` command when requested by \`MANDATORY_NEXT_ACTION\`.
 
 ## ⚡ Bash/Terminal Safety Rules (CRITICAL)
 
@@ -1076,7 +971,9 @@ During the CODE stage, after each file modification, output:
 |------|---------|
 | \`AGENTS.md\` | Project context entry point |
 | \`docs/architecture.md\` | Architecture decisions |
-| \`output/code-graph.json\` | Symbol index + call graph + hotspots + reusable symbols |
+| \`output/code-graph-index.json\` | L1 lightweight symbol/module index + hotspots + reusable symbols |
+| \`output/code-graph-shards/<module>.json\` | L2 module shard: symbols + internal/cross-module call edges |
+| \`output/code-graph.json\` | L3 full legacy graph for offline deep analysis |
 | \`output/project-profile.md\` | Deep architecture analysis |
 | \`output/business-logic.json\` | Business logic patterns (entry points, flows, core services) |
 | \`output/api-endpoints.json\` | REST API endpoints (routes, handlers, schemas) |

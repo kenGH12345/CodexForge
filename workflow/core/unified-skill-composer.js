@@ -1,4 +1,5 @@
 const path = require('path');
+const { buildSkillYFM, SkillYFMBuilderError } = require('./skill-yfm-builder');
 
 class UnifiedSkillComposer {
   constructor(projectRoot, opts = {}) {
@@ -14,17 +15,72 @@ class UnifiedSkillComposer {
   }
 
   _composeFrontmatter(sources) {
-    const now = new Date().toISOString();
-    const meta = {
-      name: `${this.projectName} Skill Knowledge`,
-      project: this.projectName.toLowerCase(),
-      type: 'project-knowledge',
-      version: '1.0.0',
-      generated_at: now,
-      sources: sources.length > 0 ? sources : ['skill-ai-generator', 'skill-discovery'],
-      deprecated: false
-    };
-    return '---\n' + this._simpleYamlDump(meta) + '---\n';
+    const skillName = `${this.projectName} Skill Knowledge`;
+    const projectKey = this.projectName.toLowerCase().replace(/\s+/g, '-');
+    const effectiveSources = sources.length > 0 ? sources : ['skill-ai-generator', 'skill-discovery'];
+
+    // Build triggers.keywords from: projectName tokens + sources
+    const kwSet = new Set();
+    kwSet.add(projectKey);
+    kwSet.add(this.projectName);
+    for (const tok of this.projectName.split(/[-_\s]+/)) if (tok.length > 1) kwSet.add(tok.toLowerCase());
+    for (const s of effectiveSources) kwSet.add(String(s));
+    kwSet.add('project-knowledge');
+    const keywords = Array.from(kwSet).filter(Boolean).slice(0, 10);
+
+    const description = `Unified project knowledge skill for ${this.projectName} — fused from ${effectiveSources.length} source(s): ${effectiveSources.join(', ')}. Covers conventions, architecture patterns, and reusable components discovered through static analysis.`;
+
+    try {
+      const yfm = buildSkillYFM({
+        name: skillName,
+        version: '1.0.0',
+        type: 'project-knowledge',
+        description,
+        domains: [projectKey, 'project-knowledge'],
+        triggers: { keywords, roles: ['developer', 'architect'] },
+        load_level: 'session',
+        max_tokens: this.tokenLimit,
+        generatedAt: new Date().toISOString(),
+      });
+      // Append composer-specific extras (project/sources/deprecated) AFTER builder's YFM.
+      // We must merge them INTO the same `---` block — so remove the trailing `---\n` and re-add.
+      const trimmed = yfm.replace(/\n---\n*$/, '\n');
+      const extras = [
+        `project: ${projectKey}`,
+        `sources:`,
+        ...effectiveSources.map(s => `  - ${s}`),
+        `deprecated: false`,
+      ].join('\n');
+      return `${trimmed}${extras}\n---\n`;
+    } catch (err) {
+      if (err instanceof SkillYFMBuilderError) {
+        console.error(`[UnifiedSkillComposer] YFM builder rejected input: ${err.message}; falling back to minimal YFM`);
+      } else {
+        throw err;
+      }
+      // Disaster fallback: minimal YFM that still registers via ConfigLoader
+      const now = new Date().toISOString();
+      return [
+        '---',
+        `name: ${skillName}`,
+        `type: project-knowledge`,
+        `version: 1.0.0`,
+        `description: ${description}`,
+        `domains: [${projectKey}, project-knowledge]`,
+        `triggers:`,
+        `  keywords:`,
+        ...keywords.map(k => `    - ${k}`),
+        `  roles:`,
+        `    - developer`,
+        `project: ${projectKey}`,
+        `sources:`,
+        ...effectiveSources.map(s => `  - ${s}`),
+        `deprecated: false`,
+        `generated_at: ${now}`,
+        '---',
+        '',
+      ].join('\n');
+    }
   }
 
   _simpleYamlDump(obj) {

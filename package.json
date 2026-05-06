@@ -12,7 +12,9 @@
     "test:effective-lines": "node workflow/tests/run-all-tests.js --file=integration-effective-lines",
     "test:pipeline": "node workflow/tests/run-all-tests.js --file=integration-pipeline-flow",
     "test:agent": "node workflow/tests/run-all-tests.js --file=integration-agent-fusion",
-    "test:framework": "node workflow/tests/run-all-tests.js --file=integration-framework-fusion"
+    "test:framework": "node workflow/tests/run-all-tests.js --file=integration-framework-fusion",
+    "ci:llm-injection": "node workflow/tools/ide-workflow-bridge.js unified-llm-injection-ci-gate --project-root .",
+    "slo:llm-injection": "node workflow/tools/ide-workflow-bridge.js unified-llm-injection-slo-dashboard --project-root ."
   },
   "keywords": [
     "workflow",

@@ -3,6 +3,7 @@
 const fs   = require('fs');
 const path = require('path');
 const { extractJsonBlock, extractKeyDecisions, extractSummary } = require('./agent-output-schema');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 /**
  * StageContextStore – Cross-stage semantic context propagation.
@@ -758,7 +759,13 @@ class StageContextStore {
           `--- END ---`,
         ].join('\n');
 
-        const response = await cheapLlmCall(prompt);
+        const response = await cheapLlmCall(prepareGatewayPrompt({ _outputDir: null }, {
+          callSite: 'workflow/core/stage-context-store.js:extractFromFile',
+          role: 'stage-context-store',
+          stage: stageName,
+          runtimePrompt: prompt,
+          metadata: { category: 'llm-lite-call' },
+        }));
         if (response) {
           const cleaned = String(response).replace(/```json\s*/g, '').replace(/```/g, '').trim();
           const match = cleaned.match(/\{[\s\S]*\}/);

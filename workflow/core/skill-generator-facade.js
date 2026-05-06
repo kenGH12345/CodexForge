@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { discoverProjectSkills } = require('./skill-discovery');
 const { generateSkillFromPackaged } = require('./skill-ai-generator');
+const { atomicWriteShardedSkill } = require('./skill-sharding');
 
 /**
  * MockDetector — detects low-quality or placeholder skill content.
@@ -96,15 +97,13 @@ async function generate(projectRoot, options = {}) {
 
   // Phase 2: project-specific skill via AI generator (generateSkillFromPackaged)
   try {
-    // Load code-graph.json for refined signal extraction
     let codeGraph = {};
     try {
-      const cgPath = path.join(projectRoot, 'output', 'code-graph.json');
-      if (fs.existsSync(cgPath)) {
-        codeGraph = JSON.parse(fs.readFileSync(cgPath, 'utf-8'));
-      }
+      const { loadSemanticCodeGraph } = require('./semantic-code-graph-adapter');
+      codeGraph = loadSemanticCodeGraph(projectRoot, { includeAllShards: true }).toCapabilityCodeGraph();
     } catch (cgErr) {
-      console.warn(`[SkillGeneratorFacade] Could not load code-graph.json: ${cgErr.message}`);
+      console.warn(`[SkillGeneratorFacade] Could not load semantic layered code graph: ${cgErr.message}`);
+      codeGraph = { source: 'missing', modules: [], hotspots: [], reusableSymbols: [] };
     }
 
     // Build packaged context from filtered file list
@@ -136,18 +135,22 @@ async function generate(projectRoot, options = {}) {
     result.projectSkill = aiResult;
     if (aiResult && aiResult.skillMarkdown) {
       result.skillName = skillNameBase;
-      result.skillPath = path.join(projectRoot, '.workflow', 'skills', skillNameBase.toLowerCase(), 'SKILL.md');
+      const skillDir = path.join(projectRoot, '.workflow', 'skills', skillNameBase.toLowerCase());
+      result.skillPath = path.join(skillDir, 'SKILL.md');
+      result.referencePaths = [];
+      result.shardingMode = aiResult.shardingMode || 'single';
       const baseConfidence = (aiResult.metadata && aiResult.metadata.llmPowered) ? 0.7 : 0.5;
       const sectionCount = (aiResult.skillMarkdown || '').split('##').length - 1;
-      const sectionBoost = Math.min(0.25, sectionCount * 0.05);
+      const referenceCount = Object.keys(aiResult.referenceFiles || {}).length;
+      const sectionBoost = Math.min(0.25, (sectionCount + referenceCount) * 0.04);
       result.confidenceSummary = { overall: Math.min(0.95, baseConfidence + sectionBoost) };
       result.wasFallback = !((aiResult.metadata && aiResult.metadata.llmPowered));
 
-      // Write SKILL.md if not dryRun
       if (!options.dryRun) {
-        const skillDir = path.join(projectRoot, '.workflow', 'skills', skillNameBase.toLowerCase());
-        if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true });
-        fs.writeFileSync(result.skillPath, aiResult.skillMarkdown, 'utf-8');
+        const writeResult = atomicWriteShardedSkill(skillDir, aiResult.skillMarkdown, aiResult.referenceFiles || {});
+        result.writeResult = writeResult;
+        result.referencePaths = Object.keys(aiResult.referenceFiles || {})
+          .map(rel => path.join(skillDir, rel));
       }
     } else {
       result.error = 'Skill generation returned no content';

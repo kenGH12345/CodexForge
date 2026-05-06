@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestration
-version: 2.0.0
+version: 2.1.0
 type: domain-skill
 domains: [workflow, orchestration]
 dependencies: []
@@ -9,314 +9,246 @@ max_tokens: 800
 triggers:
   keywords: [workflow, orchestrat, agent, pipeline, stage]
   roles: [analyst, architect, planner, developer, tester, coding-agent]
-description: "Multi-agent workflow orchestration SOP"
+description: "IDE /wf workflow orchestration SOP"
 ---
-# Skill: Full Workflow Orchestration SOP
+# Skill: IDE /wf Workflow Orchestration SOP
 
-> **Type**: Workflow Skill  
-> **Version**: 1.0.0  
-> **Trigger**: `/ask-workflow-agent` or programmatic call  
-> **Description**: Standard Operating Procedure for running the complete multi-agent development workflow from raw requirement to delivered code.
+> **Type**: Workflow Skill
+> **Version**: 2.1.0
+> **Description**: Current IDE-mode `/wf` workflow SOP. This document describes the active stage chain used by `workflow/tools/ide-workflow-bridge.js`.
 
 ---
 
 ## Overview
-<!-- PURPOSE: High-level summary of the 7-stage pipeline (INIT→ANALYSE→ARCHITECT→PLAN→CODE→TEST→FINISHED) and inter-agent communication model. -->
 
-This skill orchestrates the full 7-stage pipeline:
+Current IDE `/wf` runs the full sequential pipeline:
 
+```text
+ANALYSE -> ARCHITECT -> PLAN -> DEVELOP -> TEST -> REVIEW -> DEPLOY
 ```
-INIT �?ANALYSE �?ARCHITECT �?PLAN �?CODE �?TEST �?FINISHED
+
+`INIT` is an initialization activity (`/wf init` / `workflow/init-project.js`), not a normal stage in every `/wf` task. Older implementation/finalization labels should be interpreted through the current active stages: `DEVELOP` for implementation and `DEPLOY` plus `session-summary` for closure.
+
+Every stage follows the same bridge pattern:
+
+```text
+workflow-stage --stage <STAGE>
+  -> IDE tools perform the stage work
+stage-complete --stage <STAGE>
 ```
 
-Each stage is handled by a dedicated agent with strict role boundaries.  
-All inter-agent communication uses **file path references only** (never raw content).
+Agents should communicate through file paths and digests, not raw large content blocks.
 
 ---
 
 ## Pre-conditions
-<!-- PURPOSE: Prerequisites that must be satisfied before the workflow can start (manifest, user requirement, writable output dir, LLM availability). -->
 
-- [ ] `manifest.json` does not exist (fresh run) OR exists with a resumable state (checkpoint resume)
-- [ ] User has provided a raw requirement string
-- [ ] `workflow/output/` directory is writable
-- [ ] LLM adapter is configured and reachable
-
----
-
-## Steps
-<!-- PURPOSE: Detailed step-by-step SOP for each stage: actor, inputs, actions, outputs, hooks, and state transitions. -->
-
-### Step 1 → INIT
-**Actor**: Orchestrator (or AI Agent via terminal)  
-**Action**:
-1. Check if `manifest.json` exists
-   - If YES → load state, skip to the recorded `currentState`
-   - If NO → create fresh manifest, set state to `INIT`
-2. **Run `node workflow/init-project.js --path <project-root>`** in terminal to:
-   - Auto-detect tech stack and generate `workflow.config.js` (if missing)
-   - Run ProjectProfiler (deep architecture analysis → `output/project-profile.md`)
-   - Build AGENTS.md (global project context)
-   - Generate experience store from source files
-   - Register built-in skills
-   - **Build code-graph** (symbol index + call graph → `output/code-graph.json`, `output/code-graph.md`)
-3. Emit `HOOK_EVENTS.AFTER_STATE_TRANSITION` with state `INIT`
-
-> ⚠️ **CRITICAL**: The AI Agent MUST execute `init-project.js` via terminal command,
-> NOT attempt to manually replicate its steps. The script handles code-graph construction,
-> tech detection, and all 6 initialisation phases automatically.
-
-**Output**: `manifest.json` created/loaded, `output/code-graph.json`, `output/project-profile.md`
+- [ ] User provided a concrete `/wf` requirement.
+- [ ] Workspace root is known and writable.
+- [ ] `input-received` has logged the user request.
+- [ ] `workflow-stage` has been called before any stage work.
+- [ ] Context loading follows digest-first policy.
 
 ---
 
-### Step 2 → ANALYSE
-**Actor**: AnalystAgent  
-**Input**: Raw user requirement string  
-**Action**:
-1. Call `AnalystAgent.run(null, rawRequirement)`
-2. Agent writes `output/requirement.md` containing:
-   - Sections 1-7: Standard requirement analysis (Overview, User Stories, Acceptance Criteria, etc.)
-   - **Section 8: Functional Module Map** — a structured decomposition of the codebase into distinct functional modules. Each module has: id, name, description, file boundaries, dependencies, complexity, and isolatability. Also identifies cross-cutting concerns.
-   - **JSON metadata block**: includes a `moduleMap` field with structured module data for programmatic consumption by downstream stages.
-3. Orchestrator calls `storeAnalyseContext()` which extracts the `moduleMap` from the JSON block and stores it in `stageCtx.meta.moduleMap`
-4. `FileRefBus.publish('analyst', 'architect', requirementMdPath)`
-5. State machine transitions: `INIT → ANALYSE`
-6. Record artifact path in manifest
+## Current Stages
 
-**Output**: `output/requirement.md` (with Functional Module Map)  
-**Downstream Impact**: The Module Map enables the ARCHITECT stage to produce module-aligned architecture with explicit inter-module interface contracts.  
-**Hook**: `HOOK_EVENTS.AFTER_STATE_TRANSITION`
----
+| Stage | Actor Role | Main Artifact | Primary Consumer |
+|---|---|---|---|
+| `ANALYSE` | Analyst | `output/analysis.md` | `ARCHITECT`, `PLAN`, `DEVELOP` |
+| `ARCHITECT` | Architect | `output/architecture.md` | `PLAN`, `DEVELOP`, `REVIEW` |
+| `PLAN` | Planner | `output/execution-plan.md` | `DEVELOP`, `TEST`, `REVIEW` |
+| `DEVELOP` | Developer | `output/code.diff` | `TEST`, `REVIEW` |
+| `TEST` | Tester | `output/test-report.md` | `REVIEW`, `DEPLOY` |
+| `REVIEW` | Reviewer | `output/review-output.md` | `DEPLOY` |
+| `DEPLOY` | Delivery / Summary | `output/deploy-output.md` | Human, session summary, health reporting |
 
-### Step 3 �?ARCHITECT
-**Actor**: ArchitectAgent  
-**Input**: `output/requirement.md` (via FileRefBus)  
-**Action**:
-1. Orchestrator calls `FileRefBus.consume('architect')` → gets `requirementMdPath`
-2. **Module-Split Decision** (P2): Check if ANALYSE produced a `moduleMap` with ≥2 isolatable modules:
-   - **YES (Module-Split Mode)**: `runModuleAwareArchitect()` executes N focused LLM calls (one per module, serial):
-     - Each call designs ONLY one module's internal architecture
-     - Interface contracts from previously designed modules are injected into subsequent calls
-     - Topological sort ensures dependencies are designed before dependents
-     - Outputs are merged into a unified `architecture.md` with cross-module interface contracts
-   - **NO (Standard Mode)**: Single `ArchitectAgent.run(requirementMdPath)` call (existing behavior)
-3. Agent writes `output/architecture.md` (either merged or single-pass)
-4. **Parallel quality gates**: CoverageChecker + ArchitectureReviewAgent run in parallel
-5. **Human review hook**: emit `HOOK_EVENTS.HUMAN_REVIEW_REQUIRED` with architecture.md path
-6. Wait for human confirmation (Socratic question: "Does this architecture meet your expectations?")
-7. State machine transitions: `ANALYSE → ARCHITECT`
-8. `FileRefBus.publish('architect', 'planner', architectureMdPath)` — includes `moduleSplit` and `moduleCount` metadata
+Each `stage-complete` may also produce or update:
 
-**Output**: `output/architecture.md`  
-**Module-Split Metadata**: When module-split mode is used, `stageCtx.meta.moduleSplit` contains:
-- `moduleCount`, `successCount`, `failedCount`
-- `moduleOrder` (topological), `crossCuttingConcerns`
-- `totalElapsedMs`  
-**Hook**: `HOOK_EVENTS.HUMAN_REVIEW_REQUIRED` (blocks until confirmed)
----
-
-### Step 3.5 → PLAN
-**Actor**: PlannerAgent (Frederick Brooks — Turing Award laureate, author of "The Mythical Man-Month")
-**Input**: `output/architecture.md` (via FileRefBus)  
-**Action**:
-1. Orchestrator calls `FileRefBus.consume('planner')` → gets `architectureMdPath`
-2. Inject upstream context (ANALYSE + ARCHITECT summaries + **Functional Module Map**) + experience context
-3. Call `PlannerAgent.run(architectureMdPath)` → decomposes architecture into vertical-slice implementation tasks
-4. Agent reads architecture + Module Map, writes `output/execution-plan.md` with:
-   - Implementation phases (vertical slices, not horizontal layers)
-   - File/function-level task breakdown with acceptance criteria (TDD mindset)
-   - Dependency graph (Mermaid)
-   - Complexity estimates and risk assessment
-   - **Module-Task Grouping** (Section 7): maps each task to its owning module from the Module Map
-   - **JSON metadata block** includes `moduleGrouping` field: `{ groups: [{ moduleId, moduleName, taskIds }], crossModuleTasks: [] }`
-5. Orchestrator calls `storePlannerContext()` which extracts `moduleGrouping` from JSON block and stores in `stageCtx.meta.moduleGrouping`
-6. **SocraticEngine checkpoint**: User reviews and approves/rejects the execution plan
-7. State machine transitions: `ARCHITECT → PLAN`
-8. `FileRefBus.publish('planner', 'developer', architectureMdPath, { executionPlanPath })`
-
-**Output**: `output/execution-plan.md` (with Module-Task Grouping)  
-**Downstream Impact**: The moduleGrouping enables the CODE stage to inject module-scope boundaries into each Worker, reducing cross-module file conflicts.  
-**Hook**: SocraticEngine approval (approve / reject / approve with reservations)
----
-
-### Step 4 → CODE
-**Actor**: DeveloperAgent  
-**Input**: `output/architecture.md` + `output/execution-plan.md` (via FileRefBus metadata)  
-**Action**:
-1. Orchestrator calls `FileRefBus.consume('developer')` → gets `architectureMdPath`
-2. Read execution plan from bus metadata (`executionPlanPath`)
-3. **Module-Scope Injection** (Phase 2.5B): If moduleMap and moduleGrouping are available:
-   - Inject a Module Scope Guide into DeveloperAgent context with per-module file boundaries
-   - In task-based mode: each Worker receives its task's module scope (boundaries, dependencies)
-   - Workers are effectively constrained to their module's file boundaries, reducing cross-module conflicts
-4. Call `DeveloperAgent.run(architectureMdPath)` → follows execution plan task order
-5. Agent reads architecture + plan + module scope, writes `output/code.diff`
-6. **Module-Granular Experience** (Phase 2.5C): Experiences are recorded with `moduleId` tags, enabling module-level knowledge accumulation
-7. State machine transitions: `PLAN → CODE`
-
-**Output**: `output/code.diff`
----
-
-### Step 5 �?TEST
-**Actor**: TesterAgent  
-**Input**: `output/code.diff` (via FileRefBus)  
-**Action**:
-1. Orchestrator calls `FileRefBus.consume('tester')` �?gets `codeDiffPath`
-2. Call `TesterAgent.run(codeDiffPath)`
-3. Agent reads diff, writes `output/test-report.md`
-4. State machine transitions: `CODE �?TEST`
-5. Check test report for Critical/High defects
-   - If defects found �?emit `HOOK_EVENTS.HUMAN_REVIEW_REQUIRED`
-   - If clean �?proceed to FINISHED
-
-**Output**: `output/test-report.md`
+```text
+output/context-digests/<stage>.json
+output/context-digests/index.json
+output/workflow-progress.log
+output/agent-self-reports.jsonl
+```
 
 ---
 
-### Step 6 �?FINISHED
-**Actor**: Orchestrator  
-**Action**:
-1. State machine transitions: `TEST �?FINISHED`
-2. Save `FileRefBus` communication log to `output/communication-log.json`
-3. Emit `HOOK_EVENTS.WORKFLOW_COMPLETE`
-4. Print summary of all artifacts
+## Stage SOP
 
-**Output**: All artifacts in `output/` directory
+### 1. ANALYSE
 
----
+**Goal**: identify the real problem, affected locations, change scope, downstream consumers, and risks.
 
-## Coding Principles
-<!-- PURPOSE: 7 coding principles that all code produced by agents must follow: no over-engineering, reuse, minimal change, incremental delivery, study first, pragmatic, clear intent. -->
+**Input**: user requirement, relevant digests, targeted source evidence.
 
-These principles apply to all code produced by the DeveloperAgent and any human contributor:
+**Output**: `output/analysis.md`.
 
-| # | Principle | Guidance |
-|---|-----------|----------|
-| 1 | **No over-engineering** | Keep code simple, readable, and practical. Avoid abstractions that aren't needed yet. |
-| 2 | **Reuse over reinvention** | Prefer existing utilities, modules, and patterns before writing new ones. |
-| 3 | **Minimal change** | Touch only what is necessary. Do not refactor unrelated code in the same commit. |
-| 4 | **Incremental delivery** | Each change must compile and pass tests independently. Small steps, always green. |
-| 5 | **Study before coding** | Read existing code first, plan the approach, then implement. |
-| 6 | **Pragmatic over dogmatic** | Adapt to the project's actual conventions rather than enforcing external ideals. |
-| 7 | **Clear intent over clever code** | Choose the simplest solution that communicates its purpose. |
+Required sections:
 
----
+```text
+## 根因 / Root Cause
+## 受影响位置
+## 修改范围
+## 下游消费影响
+## 风险评估
+```
 
-## Error Handling
-<!-- PURPOSE: Error handling matrix: boundary violations, LLM failures, missing files, human review timeouts �?with prescribed actions for each. -->
+ANALYSE must not design architecture or implement code.
 
-| Scenario | Action |
-|----------|--------|
-| Agent boundary violation | Emit `AGENT_BOUNDARY_VIOLATION` hook, abort stage, log to manifest risks |
-| LLM call failure | Retry up to 3 times, then emit `WORKFLOW_ERROR` hook |
-| File not found | Throw error with clear message, do NOT proceed to next stage |
-| Human review timeout | Wait indefinitely (no timeout) �?human must respond |
+### 2. ARCHITECT
 
----
+**Goal**: design the smallest safe solution consistent with ANALYSE.
 
-## Artifacts Produced
-<!-- PURPOSE: Complete artifact manifest: file name, producer agent, consumer agent �?for traceability and debugging. -->
+**Input**: `output/analysis.md` or its digest.
 
-| File | Producer | Consumer |
-|------|----------|----------|
-| `output/requirement.md` | AnalystAgent | ArchitectAgent |
-| `output/architecture.md` | ArchitectAgent | PlannerAgent, DeveloperAgent |
-| `output/execution-plan.md` | PlannerAgent | DeveloperAgent, TesterAgent |
-| `output/code.diff` | DeveloperAgent | TesterAgent |
-| `output/test-report.md` | TesterAgent | Human reviewer |
-| `manifest.json` | StateMachine | All agents (read-only) |
-| `output/communication-log.json` | FileRefBus | Observability |
+**Output**: `output/architecture.md`.
+
+Required design coverage includes:
+
+```text
+Architecture Scorecard
+Failure Model
+Migration Safety Case
+Scenario Coverage
+Consumer Adoption Design
+```
+
+ARCHITECT must not implement code.
+
+### 3. PLAN
+
+**Goal**: convert architecture into ordered vertical-slice tasks.
+
+**Input**: `output/analysis.md`, `output/architecture.md`, or their digests.
+
+**Output**: `output/execution-plan.md`.
+
+Each task should include ID, scope, acceptance criteria, files likely touched, and dependencies. If downstream consumers exist, PLAN must include consumer migration/adoption tasks and tests.
+
+### 4. DEVELOP
+
+**Goal**: implement the plan with minimal, focused changes.
+
+**Input**: `output/execution-plan.md`, relevant source files, and upstream digests.
+
+**Output**: `output/code.diff`.
+
+DEVELOP should follow the plan. If implementation discovers a local plan gap, emit a clear plan-deviation marker instead of silently changing scope.
+
+### 5. TEST
+
+**Goal**: verify acceptance criteria, regression risk, and consumer adoption.
+
+**Input**: `output/code.diff`, execution plan, relevant test files.
+
+**Output**: `output/test-report.md`.
+
+TEST must include real command output. If a broad suite has unrelated pre-existing failures, report them separately from targeted verification.
+
+### 6. REVIEW
+
+**Goal**: review whether the workflow output matches the requirement and whether risks are acceptable.
+
+**Input**: test report, code diff, upstream digests.
+
+**Output**: `output/review-output.md`.
+
+REVIEW should not introduce new implementation scope. It records pass/fail, known issues, and follow-up recommendations.
+
+### 7. DEPLOY
+
+**Goal**: finalize delivery state, summarize operational behavior, and identify remaining follow-ups.
+
+**Input**: review output, test report, deliverables.
+
+**Output**: `output/deploy-output.md`.
+
+DEPLOY does not imply external cloud deployment unless explicitly requested. For normal workflow tasks, it means local delivery/closure.
 
 ---
 
 ## Rules
-<!-- PURPOSE: Prescriptive constraints for workflow orchestration. -->
 
-1. **Stage skipping follows StageSmartSkip two-layer detection** — Stages can be skipped based on: (a) **complexity-based**: simple tasks skip ARCHITECT/PLAN; (b) **intent-based (two-layer)**: Layer 1 (regex pre-detection from raw /wf input, instant) → Layer 2 (semantic confirmation from ANALYSE enriched output, post-ANALYSE). Layer 2 overrides Layer 1 when it has high confidence. Safety rule: if Layer 1 says non-code but Layer 2 says code is needed → revert to full pipeline. ANALYSE is NEVER skipped.
+1. **Full `/wf` pipeline** — `/wf` tasks run the full active sequence: `ANALYSE -> ARCHITECT -> PLAN -> DEVELOP -> TEST -> REVIEW -> DEPLOY`. Triage is advisory only.
+2. **Bridge-first execution** — start each stage with `workflow-stage` and finish with `stage-complete`.
+3. **File paths and digests over raw content** — pass artifact paths, digest summaries, and source refs instead of dumping large raw content.
+4. **Context Digest First Rule** — reuse fresh relevant digests from `output/context-digests/` before reading full artifacts. Old relevant digest facts are reused, new relevant findings are appended by `stage-complete`, unrelated digests stay stored but are not injected, and full artifacts remain available through source refs when precise evidence is needed.
+5. **Producer-Consumer Impact Rule** — when a task creates or changes an artifact, schema, generator output, loader/reader/cache, config, metadata, or shared capability, trace downstream consumers before implementation. ANALYSE identifies consumers; ARCHITECT defines adoption; PLAN adds migration/adoption tasks; TEST proves consumers actually use the output.
+6. **Agent boundary rule** — ANALYSE does not design; ARCHITECT does not code; PLAN does not implement; DEVELOP follows the plan; TEST verifies; REVIEW evaluates; DEPLOY summarizes.
+7. **No direct coding shortcut** — do not bypass ANALYSE/ARCHITECT/PLAN just because a task looks simple.
+8. **No unrelated refactor** — keep changes scoped to the accepted plan.
 
-2. **FileRefBus is the only inter-agent communication channel** �?Agents must NEVER pass raw content directly. All communication goes through file path references published to the bus. This ensures traceability and enables replay/debugging.
-
-3. **State machine transitions are forward-only by default, with controlled rollback for quality recovery** → The normal flow advances strictly forward (INIT→ANALYSE→…→FINISHED). However, when a QualityGate detects high-severity issues (e.g. ArchitectureReview failures), the orchestrator can trigger a **controlled rollback**: the state machine rolls back to the previous stage, stale downstream FileRefBus messages are invalidated, and the stage re-runs with correction context injected. This rollback is bounded by a per-stage budget (maxRollbacks, default 1) to prevent infinite loops. If the rollback budget is exhausted and issues persist, the gate escalates to human review. Arbitrary backward jumps (e.g. skipping from TEST back to ANALYSE) are NOT supported — rollback is always to the immediately preceding stage.
-
-4. **Human review checkpoints are blocking** �?The orchestrator must WAIT for human approval at ARCHITECT and PLAN stages. Never auto-approve on timeout. The human review exists to catch architectural mistakes that are expensive to fix later.
-
-5. **Each agent must operate within its boundary** �?The AnalystAgent must not write architecture decisions. The DeveloperAgent must not modify the execution plan. Boundary violations are logged and should trigger an abort.
-
-6. **Manifest.json is the single source of truth** �?Current state, artifact paths, timestamps, and error history all live in manifest.json. If there's a conflict between in-memory state and manifest, manifest wins.
+---
 
 ## Checklist
-<!-- PURPOSE: Verification checklist for workflow orchestration. -->
 
 ### Pre-workflow
-- [ ] Raw requirement string is provided and non-empty
-- [ ] `workflow/output/` directory exists and is writable
-- [ ] No stale `manifest.json` from a previous aborted run (or user confirms resume)
-- [ ] LLM adapter is configured and a test call succeeds
 
-### Post-workflow
-- [ ] All 6 artifact files exist in `output/` (requirement, architecture, execution-plan, code.diff, test-report, communication-log)
-- [ ] manifest.json shows `currentState: FINISHED`
-- [ ] Test report has zero Critical/High defects
-- [ ] Communication log shows correct agent-to-agent handoffs
+- [ ] `/wf` input has been logged by `input-received`.
+- [ ] `workflow-stage` has started the current stage.
+- [ ] Required upstream artifact or digest exists.
+- [ ] Context loading used digest-first fallback rules.
 
 ### Per-stage
-- [ ] Agent output file is non-empty and valid markdown
-- [ ] State transition is recorded in manifest.json
-- [ ] FileRefBus publish/consume pairs match (no orphaned messages)
+
+- [ ] Stage artifact exists and is readable.
+- [ ] Stage summary is visible in chat and written to progress logs.
+- [ ] `stage-complete` succeeded or the retry reason is recorded.
+- [ ] Fresh relevant context digests are preferred over full artifact injection.
+- [ ] Downstream consumers are identified when the stage changes a producer/output.
+
+### Post-workflow
+
+- [ ] `analysis.md`, `architecture.md`, `execution-plan.md`, `code.diff`, `test-report.md`, `review-output.md`, and `deploy-output.md` are present when applicable.
+- [ ] `output/context-digests/index.json` is updated.
+- [ ] Known unrelated failures are separated from regressions caused by this task.
+- [ ] Completion summary lists modified files and acceptance criteria status.
+
+---
 
 ## Best Practices
-<!-- PURPOSE: Recommended patterns for workflow orchestration. -->
 
-1. **Use the SocraticEngine for ambiguity resolution** �?When the AnalystAgent identifies ambiguous requirements, don't guess. Use the Socratic questioning mechanism to ask the user targeted questions. One round of clarification saves hours of rework.
+1. **Use digest-first context** — inject compact, fresh, relevant context first; read full artifacts only when the digest is missing, stale, insufficient, or precise evidence is required.
+2. **Checkpoint aggressively** — each `stage-complete` records progress, digest, self-report, and trace data.
+3. **Keep downstream adoption explicit** — for producer changes, require consumer analysis, consumer adoption design, consumer tasks, and consumer tests.
+4. **Report real test output** — do not claim tests passed without command evidence.
+5. **Keep stage summaries visible** — users should not need to open logs to know the current stage result.
 
-2. **Checkpoint aggressively** �?After each stage completes, persist the manifest immediately. If the process crashes between stages, the next run can resume from the last checkpoint instead of starting over.
-
-3. **Include upstream context in downstream prompts** �?The PlannerAgent should receive summaries of ANALYSE and ARCHITECT outputs, not just the raw architecture.md. Upstream context prevents the planner from contradicting earlier decisions.
-
-4. **Monitor LLM token usage per stage** �?Track tokens consumed by each agent. If the AnalystAgent consistently uses 80% of the token budget, the requirement input is probably too large and should be chunked.
-
-5. **Run the TesterAgent even for "obvious" changes** �?Small changes cause surprising regressions. The TesterAgent catches issues that the DeveloperAgent's self-review misses because it has a different perspective (black-box vs white-box).
+---
 
 ## Anti-Patterns
-<!-- PURPOSE: Common workflow orchestration mistakes. -->
 
-1. **"Let me just code it directly"** �?Skipping ANALYSE and ARCHITECT to jump straight to CODE. Result: code that doesn't match requirements, architecture that's ad-hoc, and a test report that's meaningless because there was nothing to test against. �?Skip �?�?Full pipeline, every time.
+1. **Direct implementation after `/wf`** — bypassing the stage chain creates unreviewed, untraceable work.
+2. **Using stale full-artifact defaults** — injecting full artifacts when a fresh relevant digest is enough wastes tokens and can distract the agent.
+3. **Producer-only implementation** — creating an output without updating or verifying consumers makes the feature effectively unused.
+4. **Raw content handoff** — dumping large files between stages causes token blowups; use file refs and digests.
+5. **Silent scope expansion** — adding unrelated refactors during DEVELOP makes TEST and REVIEW ambiguous.
+6. **Ignoring known failures** — broad suite failures must be reported and classified, not hidden.
 
-2. **Passing raw content between agents** �?Agent A dumps 5000 lines of code into Agent B's prompt instead of writing to a file and passing the path. Result: token budget blown, context truncated, critical information lost. �?Raw content �?�?File path references.
-
-3. **Auto-approving human review** �?Setting a timeout on human review and auto-approving. Result: architectural flaws slip through and compound. By the time they're discovered in TEST, fixing them requires restarting from ARCHITECT. �?Auto-approve �?�?Block until human responds.
-
-4. **Ignoring the execution plan during CODE** �?DeveloperAgent writes code in whatever order feels natural instead of following the planner's task sequence and dependency graph. Result: missing dependencies, incomplete features, tasks done out of order. �?Freestyle �?�?Follow the plan.
-
-5. **Not checking test report for defects** �?Marking the workflow as FINISHED without reading the test report. Critical defects found by TesterAgent are silently ignored. �?Auto-finish �?�?Gate on zero Critical/High defects.
+---
 
 ## Gotchas
-<!-- PURPOSE: Environment-specific traps for workflow orchestration. -->
 
-1. **LLM rate limits can stall the pipeline** �?If the LLM provider returns 429 (rate limited), the orchestrator must implement exponential backoff. Without this, the workflow fails mid-pipeline, leaving artifacts in an inconsistent state.
+1. **PowerShell quoting** — avoid complex inline `node -e` scripts when quoting is fragile; use small temporary scripts only when necessary and clean them up.
+2. **Windows file locks** — atomic writes may fail if files are watched or open; retry or use IDE-native file tools.
+3. **Digest is not the source of truth** — digest reduces injection size; full artifact/source refs remain the audit trail.
+4. **Stage naming drift** — use `DEVELOP` for the current implementation stage and avoid reintroducing older implementation-stage labels.
+5. **Completion is after DEPLOY** — describe active IDE workflow closure as `DEPLOY` plus `session-summary`.
 
-2. **File system race conditions on Windows** �?Atomic write (tmp + rename) can fail on Windows if another process has the target file open. The `EPERM` error is misleading. Workaround: retry with short delay, or ensure no other process watches the output directory.
-
-3. **Large diffs exceed LLM context window** �?If code.diff is > 50KB, the TesterAgent's prompt may be truncated, causing it to miss critical changes. Workaround: chunk the diff by file and run multiple tester passes, then merge reports.
-
-4. **Manifest.json corruption on power loss** �?If the process crashes during a manifest write, the file may be truncated. Workaround: use atomic write pattern (write to tmp, then rename). This is already implemented in the orchestrator but must be verified after unexpected shutdowns.
+---
 
 ## Context Hints
-<!-- PURPOSE: Background knowledge for workflow orchestration decisions. -->
 
-1. **The 7-stage pipeline was inspired by the Waterfall model but is NOT waterfall** �?Each stage is short (minutes, not months) and the full pipeline runs per-feature, not per-release. It's closer to a structured single-iteration Agile sprint.
+1. The active IDE pipeline is enforced by `workflow/tools/ide-workflow-bridge.js`.
+2. `workflow-stage` and `stage-complete` are the bridge-enforced boundaries for each stage.
+3. `output/context-digests/` is the lightweight cross-stage context layer.
+4. Full artifacts remain available for audit and fallback.
+5. If this document conflicts with bridge behavior, bridge behavior is the current source of truth and this document should be updated.
 
-2. **FileRefBus was designed for observability** �?The decision to use file references instead of direct content passing was driven by debuggability. When something goes wrong, you can inspect every artifact independently without replaying the entire conversation.
-
-3. **The human review checkpoint at ARCHITECT is the highest-ROI quality gate** �?Fixing an architecture mistake at the ARCHITECT stage costs 5 minutes. Finding the same mistake at TEST costs hours (the entire CODE stage must be redone). This is why the review is blocking, not optional.
-
-4. **Agent boundary violations are the #1 cause of quality issues** �?When the AnalystAgent starts making architecture decisions (crossing into the ArchitectAgent's domain), the resulting document is neither a good spec nor a good architecture. Strict boundaries produce better outputs from each agent.
+---
 
 ## Evolution History
 
-| Version | Date | Change |
-|---------|------|--------|
-| v1.0.0 | 2026-03-17 | Initial creation with 7-stage pipeline, Steps SOP, Coding Principles, Error Handling, Artifacts |
-| v2.0.0 | 2026-03-19 | Skill-enrich-all: added 7 standard sections (Rules, Checklist, Best Practices, Anti-Patterns, Gotchas, Context Hints) |
-| v2.1.0 | 2026-03-21 | Deep Review P0: Rule 3 rewritten to document controlled rollback mechanism (was incorrectly stated as irreversible). Aligns docs with actual code behavior (QualityGate rollback + FileRefBus.clearDownstream). |
+- **v2.1.0** — Aligned SOP with current IDE `/wf` pipeline: `ANALYSE -> ARCHITECT -> PLAN -> DEVELOP -> TEST -> REVIEW -> DEPLOY`; removed legacy analysis artifact names, legacy implementation/final stage labels, skip-stage wording, and obsolete communication-log drift from the active path.
+- **v2.0.0** — Added digest-first and producer-consumer impact rules.

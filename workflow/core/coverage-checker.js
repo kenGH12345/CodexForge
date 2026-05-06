@@ -18,6 +18,7 @@
 'use strict';
 
 const fs = require('fs');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ─── Requirement Parser ───────────────────────────────────────────────────────
 
@@ -177,14 +178,16 @@ class CoverageChecker {
    * @param {object}   [options]
    * @param {boolean}  [options.verbose=true]
    * @param {number}   [options.batchSize=20]  - Max items per LLM call
+   * @param {string}   [options.outputDir]      - Optional gateway telemetry directory
    */
-  constructor(llmCall, { verbose = true, batchSize = 20 } = {}) {
+  constructor(llmCall, { verbose = true, batchSize = 20, outputDir = null } = {}) {
     if (typeof llmCall !== 'function') {
       throw new Error('[CoverageChecker] llmCall must be a function');
     }
     this.llmCall = llmCall;
     this.verbose = verbose;
     this.batchSize = batchSize;
+    this._outputDir = outputDir;
   }
 
   /**
@@ -239,7 +242,13 @@ class CoverageChecker {
       let batchResults = null;
 
       try {
-        const response = await this.llmCall(prompt);
+        const response = await this.llmCall(prepareGatewayPrompt(this, {
+          callSite: 'workflow/core/coverage-checker.js:check.batch',
+          role: 'coverage-checker',
+          stage: 'ARCHITECT',
+          runtimePrompt: prompt,
+          metadata: { category: 'agent-adapter-call', batchSize: batch.length },
+        }));
         batchResults = extractJsonArray(response);
       } catch (err) {
         this._log(`[CoverageChecker] ❌ LLM call failed for batch: ${err.message}`);

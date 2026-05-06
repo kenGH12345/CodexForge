@@ -59,6 +59,11 @@ const ANALYSE_PASS = [
   '实现 _matchSlot 辅助函数。',
   '插入 slot 校验分支。',
   '',
+  '## 下游消费影响',
+  '- 产出: output/analysis.md schema。',
+  '- 下游: workflow/tools/ide-workflow-bridge.js validator 与 planner prompt。',
+  '- 消费方式: stage-complete 读取并校验 slot。',
+  '',
   '## 风险评估',
   '- P1: 正则误匹配',
   '- P2: 测试回归',
@@ -87,6 +92,11 @@ const ARCHITECT_PASS = [
   'Scenario 1: projection drift handled.',
   'Scenario 2: rollback boundary covered.',
   'Scenario 3: recovery path grounded.',
+  '',
+  '## Consumer Adoption Design',
+  'Consumer A reads workflow/tools/ide-workflow-bridge.js through the existing validator path.',
+  'Consumer B keeps fallback compatibility for old artifacts.',
+  'Adoption is verified by a consumer-facing slot test.',
   ''
 ].join('\n');
 
@@ -98,17 +108,17 @@ function main() {
   let total = 0;
 
   total += 1;
-  if (run('Static: ARTIFACT_SCHEMA.ANALYSE has 3 requiredSlots', () => {
+  if (run('Static: ARTIFACT_SCHEMA.ANALYSE has 4 requiredSlots', () => {
     expect(Array.isArray(ARTIFACT_SCHEMA.ANALYSE.requiredSlots), 'ANALYSE.requiredSlots missing');
-    expect(ARTIFACT_SCHEMA.ANALYSE.requiredSlots.length === 3, `expected 3 slots, got ${ARTIFACT_SCHEMA.ANALYSE.requiredSlots.length}`);
+    expect(ARTIFACT_SCHEMA.ANALYSE.requiredSlots.length === 4, `expected 4 slots, got ${ARTIFACT_SCHEMA.ANALYSE.requiredSlots.length}`);
     const ids = ARTIFACT_SCHEMA.ANALYSE.requiredSlots.map(s => s.id).sort();
-    expect(JSON.stringify(ids) === JSON.stringify(['change_scope', 'risk_assessment', 'root_cause']), `unexpected slot ids: ${ids}`);
+    expect(JSON.stringify(ids) === JSON.stringify(['change_scope', 'downstream_consumers', 'risk_assessment', 'root_cause']), `unexpected slot ids: ${ids}`);
   })) passed += 1;
 
   total += 1;
-  if (run('Static: ARTIFACT_SCHEMA.ARCHITECT has 4 requiredSlots', () => {
+  if (run('Static: ARTIFACT_SCHEMA.ARCHITECT has 5 requiredSlots', () => {
     expect(Array.isArray(ARTIFACT_SCHEMA.ARCHITECT.requiredSlots), 'ARCHITECT.requiredSlots missing');
-    expect(ARTIFACT_SCHEMA.ARCHITECT.requiredSlots.length === 4, `expected 4 slots, got ${ARTIFACT_SCHEMA.ARCHITECT.requiredSlots.length}`);
+    expect(ARTIFACT_SCHEMA.ARCHITECT.requiredSlots.length === 5, `expected 5 slots, got ${ARTIFACT_SCHEMA.ARCHITECT.requiredSlots.length}`);
   })) passed += 1;
 
   total += 1;
@@ -163,6 +173,17 @@ function main() {
   })) passed += 1;
 
   total += 1;
+  if (run('_validateArtifact: ANALYSE missing downstream_consumers FAILS with SLOT_MISSING', () => {
+    const root = sandbox();
+    const content = ANALYSE_PASS.replace(/## 下游消费影响[\s\S]*?(?=\n## )/, '');
+    writeArtifact(root, 'analysis.md', content);
+    const r = _validateArtifact('ANALYSE', root);
+    cleanup(root);
+    expect(r.valid === false, 'should fail');
+    expect(r.error && r.error.includes('[SLOT_MISSING]'), `expected SLOT_MISSING, got: ${r.error}`);
+  })) passed += 1;
+
+  total += 1;
   if (run('_validateArtifact: ANALYSE with thin 根因 (1 line) FAILS with SLOT_TOO_THIN', () => {
     const root = sandbox();
     const content = ANALYSE_PASS.replace(
@@ -182,6 +203,7 @@ function main() {
     const content = ANALYSE_PASS
       .replace('## 根因', '## Root Cause')
       .replace('## 修改范围', '## Change Scope')
+      .replace('## 下游消费影响', '## Downstream Consumers')
       .replace('## 风险评估', '## Risk Assessment');
     writeArtifact(root, 'analysis.md', content);
     const r = _validateArtifact('ANALYSE', root);
@@ -195,7 +217,7 @@ function main() {
   })) passed += 1;
 
   total += 1;
-  if (run('_validateArtifact: ARCHITECT with 4 slots filled PASSES slot check', () => {
+  if (run('_validateArtifact: ARCHITECT with 5 slots filled PASSES slot check', () => {
     const root = sandbox();
     writeArtifact(root, 'architecture.md', ARCHITECT_PASS);
     const r = _validateArtifact('ARCHITECT', root);
@@ -206,6 +228,17 @@ function main() {
         throw new Error(`unexpected slot failure: ${err}`);
       }
     }
+  })) passed += 1;
+
+  total += 1;
+  if (run('_validateArtifact: ARCHITECT missing consumer_adoption_design FAILS with SLOT_MISSING', () => {
+    const root = sandbox();
+    const content = ARCHITECT_PASS.replace(/## Consumer Adoption Design[\s\S]*?(?=\n## |$)/, '');
+    writeArtifact(root, 'architecture.md', content);
+    const r = _validateArtifact('ARCHITECT', root);
+    cleanup(root);
+    expect(r.valid === false, 'should fail');
+    expect(r.error && r.error.includes('[SLOT_MISSING]'), `expected SLOT_MISSING, got: ${r.error}`);
   })) passed += 1;
 
   total += 1;

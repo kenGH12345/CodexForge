@@ -33,6 +33,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -629,7 +630,13 @@ async function autoDistillExpertKnowledge(options) {
   ].join('\n');
 
   try {
-    const response = await cheapLlmCall(prompt);
+    const response = await cheapLlmCall(prepareGatewayPrompt({ _outputDir: path.join(projectRoot, 'output') }, {
+      callSite: 'workflow/core/expert-knowledge-channel.js:autoDistillProjectKnowledge',
+      role: 'expert-knowledge-channel',
+      stage: 'KNOWLEDGE',
+      runtimePrompt: prompt,
+      metadata: { category: 'llm-lite-call', sourceCount: artifacts.length },
+    }));
     if (!response || response.trim().length < 50) {
       return { success: false, error: 'LLM response too short' };
     }
@@ -726,7 +733,13 @@ async function generateExpertFromFiles(options) {
   ].join('\n');
 
   try {
-    const response = await cheapLlmCall(prompt);
+    const response = await cheapLlmCall(prepareGatewayPrompt({ _outputDir: path.join(projectRoot, 'output') }, {
+      callSite: 'workflow/core/expert-knowledge-channel.js:generateExpertFromFiles',
+      role: 'expert-knowledge-channel',
+      stage: 'KNOWLEDGE',
+      runtimePrompt: prompt,
+      metadata: { category: 'llm-lite-call', fileCount: files.length },
+    }));
     if (!response || response.trim().length < 50) {
       return { success: false, error: 'LLM response too short' };
     }

@@ -14,6 +14,7 @@
 const { TeardownStep } = require('../teardown-step');
 const { SessionQualityScorer } = require('../session-quality-scorer');
 const { getLayerForCategory } = require('../experience-types');
+const { prepareGatewayPrompt } = require('../llm-injection-gateway');
 
 class SessionSignalStep extends TeardownStep {
   constructor() {
@@ -71,7 +72,13 @@ class SessionSignalStep extends TeardownStep {
             errorLog: errorLogContent,
           });
 
-          orch._rawLlmCall(extractionPrompt, 'session-signal-extraction')
+          orch._rawLlmCall(prepareGatewayPrompt(orch, {
+            callSite: 'workflow/core/teardown-steps/session-signal-step.js:execute.extraction',
+            role: 'session-signal',
+            stage: 'FINISHED',
+            runtimePrompt: extractionPrompt,
+            metadata: { category: 'raw-orchestrator-call', signalCount: signalResult.signals.length },
+          }), 'session-signal-extraction')
             .then(response => {
               if (!response) return;
 

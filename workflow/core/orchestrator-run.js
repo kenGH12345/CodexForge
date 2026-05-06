@@ -96,6 +96,8 @@ const OrchestratorRunMixin = {
       maxRetries: 1,
       verbose: true,
       llmCall: _challengerLlm,
+      llmInjectionGateway: this.llmInjectionGateway,
+      outputDir: this._outputDir,
     });
     console.error(`[Orchestrator] 🤔 SocraticChallenger initialized (maxRetries=1)`);
 

@@ -27,6 +27,7 @@
 'use strict';
 
 const { introspectionCollector } = require('./workflow-introspection-collector');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -125,6 +126,7 @@ class SkillLlmRefiner {
   async refineSkill(skillMeta, skillContent) {
     if (!this.shouldRefine(skillMeta, skillContent)) return null;
 
+    const _gatewayCallSite = 'workflow/core/skill-llm-refiner.js:refineSkill';
     const truncatedContent = skillContent.slice(0, this._config.MAX_SKILL_CONTENT_CHARS);
     const truncated = skillContent.length > this._config.MAX_SKILL_CONTENT_CHARS;
 
@@ -157,7 +159,13 @@ class SkillLlmRefiner {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const result = await this._llmCall(currentPrompt);
+        const result = await this._llmCall(prepareGatewayPrompt(this, {
+          callSite: _gatewayCallSite,
+          role: 'skill-llm-refiner',
+          stage: 'EVOLVE',
+          runtimePrompt: currentPrompt,
+          metadata: { category: 'llm-lite-call', attempt },
+        }));
         if (!result || typeof result !== 'string') {
           lastError = 'LLM returned empty result';
           continue;
@@ -288,6 +296,7 @@ class SkillLlmRefiner {
   async fixSkill(skillMeta, skillContent) {
     if (!this.shouldFix(skillMeta)) return null;
 
+    const _gatewayCallSite = 'workflow/core/skill-llm-refiner.js:fixSkill';
     const usage = skillMeta.usageCount || 0;
     const effective = skillMeta.effectiveCount || 0;
     const hitRate = ((effective / usage) * 100).toFixed(1);
@@ -333,7 +342,13 @@ class SkillLlmRefiner {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const result = await this._llmCall(currentPrompt);
+        const result = await this._llmCall(prepareGatewayPrompt(this, {
+          callSite: _gatewayCallSite,
+          role: 'skill-llm-refiner',
+          stage: 'EVOLVE',
+          runtimePrompt: currentPrompt,
+          metadata: { category: 'llm-lite-call', attempt },
+        }));
         if (!result || typeof result !== 'string') {
           lastError = 'LLM returned empty result';
           continue;
@@ -450,7 +465,13 @@ class SkillLlmRefiner {
     ].join('\n');
 
     try {
-      const result = await this._llmCall(prompt);
+      const result = await this._llmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/skill-llm-refiner.js:generateSkillContent',
+        role: 'skill-llm-refiner',
+        stage: 'EVOLVE',
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call', skillName },
+      }));
       if (!result || typeof result !== 'string' || result.trim().length < 50) {
         this._stats.failed++;
         return null;

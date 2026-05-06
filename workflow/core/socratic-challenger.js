@@ -33,6 +33,7 @@ const { detectBlindSpots, detectDimensionBlindSpots, collectRuleDrivenQuestions,
 const { extractEntities, generateEntityGroundedQuestions, extractArtifactStructure } = require('./socratic-entity-extractor');
 const { decideChallengeTrigger, buildP2RevisionProtocol } = require('./socratic-trigger-engine');
 const { recordPre, recordPost, recordAdoption } = require('./socratic-effect-tracker');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // Re-export constants for backward compatibility
 const {
@@ -62,6 +63,8 @@ class SocraticChallenger {
     this.maxQuestions = options.maxQuestions ?? socraticCfg.maxQuestions ?? 3;
     this.verbose = options.verbose !== false;
     this.llmCall = options.llmCall || null;
+    this.llmInjectionGateway = options.llmInjectionGateway || null;
+    this._outputDir = options.outputDir || null;
     this.ruleConfig = buildRuleConfig(null, '', socraticCfg);
     this._challengeHistory = new Map();
     this._questionHistory = [];
@@ -325,7 +328,13 @@ ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
 Output ONLY the rewritten questions in Chinese, one per line, numbered (e.g., "1. ..."). Keep them concise and sharp.`;
 
-      const response = await this.llmCall(prompt, `socratic-rewrite-${stageName.toLowerCase()}`);
+      const response = await this.llmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/socratic-challenger.js:rewriteQuestions',
+        role: 'socratic-challenger',
+        stage: stageName,
+        runtimePrompt: prompt,
+        metadata: { category: 'agent-adapter-call', questionCount: questions.length },
+      }), `socratic-rewrite-${stageName.toLowerCase()}`);
       if (!response) return questions;
       const rewritten = response.split('\n').map(l => l.trim()).filter(l => /^\d+\.\s+/.test(l)).map(l => l.replace(/^\d+\.\s*/, '').trim()).filter(Boolean);
       return rewritten.length > 0 ? rewritten.slice(0, questions.length) : questions;

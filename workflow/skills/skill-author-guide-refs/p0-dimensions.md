@@ -14,6 +14,79 @@
 > **🏠 分片归属**（v2.1 新增）：每节开头的 `🏠 Sharding Home` 字段指定该节在产出 skill 中应写入哪个文件。
 > 详见 `sharding-strategy.md`。主文件 = `SKILL.md`（只含 §1 + §M-3 + 索引）；其余 17 节分入 4 个 refs 分片。
 
+---
+
+## 📐 YFM Front-Matter 必填 Schema（v2.1 新增）
+
+产出 SKILL.md 的 YAML front-matter **必须**包含以下字段，否则 ConfigLoader 注册的 skill 会在 ContextLoader 的 BM25 匹配中命中率归零（skill 被写磁盘但从不被消费）。
+
+```yaml
+---
+name: <skill-name>                    # 必填，唯一标识
+version: <semver>                      # 必填，如 2.1.0
+type: project-expert-skill             # 必填，项目专家 skill 固定此值
+description: |                         # 必填，支持多行块标量
+  简明扼要说明该 skill 覆盖什么内容、适用什么场景。
+  可以跨多行，Agent 看首段决定是否深读。
+domains: [domain1, domain2, framework] # 必填，域标签数组
+triggers:                              # 🔥 必填（否则 skill 不会被 ContextLoader 匹配）
+  keywords:                            # ≥ 5 个关键词，BM25 匹配的唯一入口
+    - <代表性专有名词>
+    - <核心概念>
+    - <框架/类名>
+    - <中文领域术语>
+    - <English domain term>
+  roles:                               # 可选，限定适用的 agent 角色
+    - analyst
+    - architect
+    - developer
+    - reviewer
+load_level: session                    # 可选，session / task / on-demand（默认 task）
+max_tokens: 2000                       # 可选，注入预算上限（默认由 ContextLoader 决定）
+---
+```
+
+### 为什么 `triggers.keywords` 至关重要
+
+ContextLoader 使用 **BM25 关键词匹配** 决定哪些 skill 被注入到 LLM prompt 中。匹配逻辑：
+
+1. Agent 收到任务文本 → 提取任务关键词
+2. 每个 skill 的 `triggers.keywords` 作为 BM25 corpus 的 terms
+3. 任务关键词与 skill keywords 相交计算 BM25 分
+4. Top-K skill 被注入 prompt
+
+**如果 `triggers.keywords` 为空**：该 skill 只能依赖 description 全文匹配——命中率通常 < 10%。等于写了个精美 skill 没人看。
+
+### keywords 选取的 5 条硬规则
+
+1. **专有名词优先**：`CommonModel` / `ServerProxy` / `TDR` 这类项目特有符号，Agent 问到就必须命中
+2. **跨语言覆盖**：同一个概念给中文 + 英文两种形式（如 `模块间通讯` + `module communication`）
+3. **多粒度**：既有宏观概念（`MVC`）又有具体类（`CGameEvent`）
+4. **避免泛词**：`code` / `function` / `class` 这种高频词会稀释 BM25 分，不要放
+5. **数量 ≥ 5**：低于 5 个 BM25 打分区分度不足
+
+### 写完必验证
+
+```bash
+node -e "const {loadConfig}=require('./workflow/core/config-loader'); const {config}=loadConfig('<project>'); const s=config.builtinSkills.find(x=>x.name==='<skill-name>'); console.log('triggers.keywords:', s.triggers && s.triggers.keywords);"
+```
+
+输出应显示 ≥ 5 个关键词数组。否则 ContextLoader 不会注入此 skill。
+
+### 代码路径保证（v2.2 新增）
+
+通过 **`skill-ai-generator`** 或 **`unified-skill-composer`** 产出的 SKILL.md，
+YFM 由 `workflow/core/skill-yfm-builder.js` 的 `buildSkillYFM(input)` **强制注入 + 校验**：
+
+- 缺 `name` / `description` / `triggers.keywords (< 3)` 时**硬 fail**（早 fail 优于 silent）
+- 默认值：`type = project-expert-skill`、`load_level = session`、`max_tokens = 2000`
+- 8 字段全部输出，不存在"漏字段"情况
+- 契约测试 `skill-generator-yfm.test.js` 守护"产出 → ConfigLoader 读出"端到端闭环
+
+**手写 skill** 时依然需要遵循本 Schema；**生成器产出** 由代码保证，你只负责内容。
+
+---
+
 ## 目录索引
 
 - [§1 项目概览](#1-项目概览) — 综合

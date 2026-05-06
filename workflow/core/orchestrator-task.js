@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { UnifiedTraceCollector } = require('./unified-trace-collector');
+const { LLMInjectionGateway } = require('./llm-injection-gateway');
 const { TaskBatcher } = require('./task-batcher');
 const { resolveHealthPaths } = require('./health-observability');
 
@@ -101,6 +102,18 @@ function mergeResponses(original, continuation) {
     return { ...original, text: merged, _continuationCount: (original._continuationCount || 0) + 1 };
   }
   return merged;
+}
+
+function prepareTaskLLMChatPayload(orch, options = {}) {
+  const gateway = orch.llmInjectionGateway || new LLMInjectionGateway({ outputDir: orch._outputDir });
+  return gateway.prepare({
+    callSite: options.callSite,
+    role: options.role || 'task-executor',
+    stage: options.stage || 'CODE',
+    runtimePrompt: options.runtimePrompt,
+    candidatePrompt: options.candidatePrompt || options.runtimePrompt,
+    metadata: { category: 'direct-chat-api', ...(options.metadata || {}) },
+  }).promptToSend;
 }
 
 // ─── Task-Based Execution Mixin ───────────────────────────────────────────────
@@ -329,11 +342,17 @@ Guidelines:
 4. Aim for 3-8 tasks total`;
 
     try {
-      const response = await this.llm.chat({
-        system: systemPrompt,
-        user: `Decompose this requirement into tasks:\n\n${rawRequirement}`,
-        responseFormat: 'json',
-      });
+      const response = await this.llm.chat(prepareTaskLLMChatPayload(this, {
+        callSite: 'workflow/core/orchestrator-task.js:_decomposeRequirement',
+        role: 'task-decomposer',
+        stage: 'ANALYSE',
+        runtimePrompt: {
+          system: systemPrompt,
+          user: `Decompose this requirement into tasks:\n\n${rawRequirement}`,
+          responseFormat: 'json',
+        },
+        metadata: { responseFormat: 'json' },
+      }));
 
       const tasks = JSON.parse(response);
       return { success: true, tasks: Array.isArray(tasks) ? tasks : [] };
@@ -500,10 +519,16 @@ Guidelines:
         const prompt = this._buildTaskPrompt(task, depsOutputs, beacon);
 
         // Execute via LLM with ADR-42 auto-continuation
-        let output = await this.llm.chat({
-          system: this._getSystemPrompt(),
-          user: prompt,
-        });
+        let output = await this.llm.chat(prepareTaskLLMChatPayload(this, {
+          callSite: 'workflow/core/orchestrator-task.js:_executeTask',
+          role: 'task-executor',
+          stage: 'CODE',
+          runtimePrompt: {
+            system: this._getSystemPrompt(),
+            user: prompt,
+          },
+          metadata: { taskId: task.id },
+        }));
 
         // ADR-42: Auto-continuation loop for truncated responses
         let continuationAttempts = 0;
@@ -529,10 +554,16 @@ Guidelines:
           ].join('\n');
 
           try {
-            const continuation = await this.llm.chat({
-              system: this._getSystemPrompt(),
-              user: continuationPrompt,
-            });
+            const continuation = await this.llm.chat(prepareTaskLLMChatPayload(this, {
+              callSite: 'workflow/core/orchestrator-task.js:_executeTask.continuation',
+              role: 'task-executor',
+              stage: 'CODE',
+              runtimePrompt: {
+                system: this._getSystemPrompt(),
+                user: continuationPrompt,
+              },
+              metadata: { taskId: task.id, continuationAttempts },
+            }));
             output = mergeResponses(output, continuation);
           } catch (contErr) {
             console.warn(`[TaskExecutor] ⚠️  Continuation attempt ${continuationAttempts} failed: ${contErr.message}. Using partial output.`);

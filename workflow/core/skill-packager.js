@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { loadLayeredCodeGraph } = require('./code-graph-layered-reader');
 
 const CHARS_PER_TOKEN = 4;
 
@@ -19,18 +20,20 @@ const DEFAULT_CONFIG = {
 };
 
 async function loadContext(projectRoot) {
-  const codeGraphPath = path.join(projectRoot, 'output', 'code-graph.json');
   const businessLogicPath = path.join(projectRoot, 'output', 'business-logic.json');
   const apiEndpointsPath = path.join(projectRoot, 'output', 'api-endpoints.json');
 
-  let codeGraph = { modules: {}, hotspots: [], reusableSymbols: [], filesByModule: {} };
+  let codeGraph = loadLayeredCodeGraph(projectRoot, {
+    includeTopShards: true,
+    maxShards: 6,
+    maxSymbols: 20000,
+  });
   let businessLogic = {};
   let apiEndpoints = [];
 
   try {
-    if (fs.existsSync(codeGraphPath)) {
-      const raw = fs.readFileSync(codeGraphPath, 'utf-8');
-      codeGraph = JSON.parse(raw);
+    if (!codeGraph || codeGraph.source === 'empty' || codeGraph.source === 'missing') {
+      codeGraph = { modules: [], hotspots: [], reusableSymbols: [], filesByModule: {}, source: 'missing' };
     }
   } catch (_) { /* ignore */ }
 
@@ -197,7 +200,7 @@ async function packageProject(projectRoot, options = {}) {
   const { codeGraph, businessLogic, apiEndpoints } = await loadContext(projectRoot);
 
   let allFiles;
-  const filePaths = codeGraph.filePaths;
+  const filePaths = codeGraph.filePaths || (codeGraph.loadedShards || []).flatMap(s => s.files || []);
   if (Array.isArray(filePaths) && filePaths.length > 0) {
     // Prefer code-graph file list — already indexed, language-complete, no re-scan overhead
     const noiseRe = /\/(output|\.codebuddy|generated|docs|tests?|__tests__|node_modules|dist|build)\//;
@@ -214,7 +217,7 @@ async function packageProject(projectRoot, options = {}) {
         };
       })
       .filter(f => config.extensions.includes(f.ext));
-    console.error(`[SkillPackager] Using ${allFiles.length} files from code-graph (skipped file-system scan)`);
+    console.error(`[SkillPackager] Using ${allFiles.length} files from code-graph ${codeGraph.layered ? 'layered shards' : 'legacy graph'} (skipped file-system scan)`);
   } else {
     allFiles = scanFiles(projectRoot, config);
     console.error(`[SkillPackager] File-system scan: ${allFiles.length} files (code-graph not available)`);

@@ -19,9 +19,12 @@ const { getConfig } = require('../core/config-loader');
 const { estimateTokens } = require('../tools/thin-tools');
 const { ContextLoader } = require('./context-loader');
 const { PromptSlotManager } = require('./prompt-slot-manager');
-const { generateIDEToolGuidance, getIDEDetectionResult } = require('./ide-detection');
 const { introspectionCollector } = require('./workflow-introspection-collector');
-const { SELF_REPORT_INSTRUCTION } = require('./agent-self-report');
+const {
+  appendRuntimeEnvironmentSection,
+  appendIDEToolGuidanceSections,
+  appendSelfReportInstructionSections,
+} = require('./prompt-runtime-supplement-builder');
 
 // ─── Pattern Library (P2: Cross-platform prompt patterns) ────────────────────
 
@@ -1026,49 +1029,14 @@ function _readContextFileSections(contextFilePaths) {
  * Phase 5a: Inject runtime environment info (OS, shell).
  */
 function _injectRuntimeInfo(autoSections) {
-  try {
-    const osType = process.platform;
-    const shellHint = osType === 'win32' ? 'PowerShell' : (process.env.SHELL || '/bin/bash');
-    const envLines = [
-      `### Runtime Environment`,
-      `- **OS**: ${osType === 'win32' ? 'Windows' : osType === 'darwin' ? 'macOS' : 'Linux'}`,
-      `- **Shell**: ${shellHint}`,
-    ];
-    if (osType === 'win32') {
-      envLines.push(
-        `- **CRITICAL Shell Rules**:`,
-        `  - Do NOT use \`&&\` to chain commands (PowerShell does not support it). Use \`;\` or separate commands.`,
-        `  - Use \`Get-ChildItem\` instead of \`ls\`, \`Select-String\` instead of \`grep\`.`,
-        `  - Use backslash \`\\\` for path separators, or forward slash \`/\` (both work in PowerShell).`,
-        `  - Use \`$env:VAR\` instead of \`$VAR\` for environment variables.`,
-      );
-    }
-    autoSections.push(envLines.join('\n'));
-  } catch (_) { /* Non-fatal */ }
+  appendRuntimeEnvironmentSection(autoSections);
 }
 
 /**
  * Phase 5a-IDE: Inject IDE tool guidance when running inside an IDE.
- * Instructs AI Agents to prefer IDE-native tools (codebase_search, grep_search,
- * view_code_item) over self-built modules (CodeGraph.search, LSPAdapter) for
- * maximum accuracy and speed. Self-built modules remain available as fallback.
- *
- * ADR-37 Update: CodeGraph.querySymbol() now automatically prioritizes
- * IDE's view_code_item when available, falling back to regex parsing on failure.
- * This ensures maximum symbol accuracy (~100% via LSP vs ~80% via regex).
  */
 function _injectIDEToolGuidance(autoSections) {
-  try {
-    const guidance = generateIDEToolGuidance();
-    if (guidance) {
-      autoSections.push(guidance);
-      // Add note about automatic IDE priority in CodeGraph
-      autoSections.push(`
-> 💡 **Implementation Note**: \`CodeGraph.querySymbol()\` automatically uses IDE's \`view_code_item\` 
-> when available (ADR-37), falling back to regex parsing only on failure. This provides 
-> compiler-accurate symbol resolution (~100% accuracy) instead of regex-based approximation (~80%).`);
-    }
-  } catch (_) { /* Non-fatal: IDE guidance is optional enhancement */ }
+  appendIDEToolGuidanceSections(autoSections);
 }
 
 /**
@@ -1098,12 +1066,7 @@ function _injectSelfReflection(autoSections, options) {
  * Cost: ~400 tokens of prompt space. Benefit: fills the IDE-mode observability gap.
  */
 function _injectAgentSelfReportInstruction(autoSections, role) {
-  try {
-    const ideResult = getIDEDetectionResult();
-    if (ideResult.isInsideIDE) {
-      autoSections.push(SELF_REPORT_INSTRUCTION);
-    }
-  } catch (_) { /* Non-fatal: self-report instruction is optional enhancement */ }
+  appendSelfReportInstructionSections(autoSections);
 }
 
 /**

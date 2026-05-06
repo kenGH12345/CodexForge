@@ -30,6 +30,8 @@
 
 'use strict';
 
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /**
@@ -152,7 +154,13 @@ async function extractKeyDecisions(previousOutput) {
         '--- END ---',
       ].join('\n');
 
-      const response = await _cheapLlmCall(prompt);
+      const response = await _cheapLlmCall(prepareGatewayPrompt({ _outputDir: null }, {
+        callSite: 'workflow/core/retry-divergence-guard.js:extractKeyDecisions',
+        role: 'retry-divergence-guard',
+        stage: 'RETRY',
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call' },
+      }));
       if (response) {
         // Parse JSON array from response (tolerant of markdown fences)
         const cleaned = String(response).replace(/```json\s*/g, '').replace(/```/g, '').trim();

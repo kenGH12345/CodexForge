@@ -29,6 +29,7 @@ const path = require('path');
 const { PATHS, getDefaultOutputDir } = require('./constants');
 const { AgentRole } = require('./types');
 const { buildJsonBlockInstruction } = require('./agent-output-schema');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -350,7 +351,13 @@ async function runModuleAwareArchitect(orch, requirementContent, expContext, opt
       // to a fixed location. Here we need multiple independent LLM calls whose
       // outputs are collected and merged.
       const agent = orch.agents[AgentRole.ARCHITECT];
-      const rawOutput = await agent.llmCall(prompt);
+      const rawOutput = await agent.llmCall(prepareGatewayPrompt(orch, {
+        callSite: 'workflow/core/module-architect-runner.js:runModuleAwareArchitect.module',
+        role: AgentRole.ARCHITECT,
+        stage: 'ARCHITECT',
+        runtimePrompt: prompt,
+        metadata: { category: 'agent-adapter-call', moduleId: mod.id },
+      }));
       const moduleOutput = agent.parseResponse(rawOutput);
 
       // Extract interface contracts for downstream modules

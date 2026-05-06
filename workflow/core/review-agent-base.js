@@ -23,6 +23,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ─── JSON Extractor (shared utility) ─────────────────────────────────────────
 
@@ -226,7 +227,13 @@ class ReviewAgentBase {
 
       let fixedContent = currentContent;
       try {
-        const rawFixed = await this.llmCall(fixPrompt);
+        const rawFixed = await this.llmCall(prepareGatewayPrompt(this, {
+          callSite: 'workflow/core/review-agent-base.js:review.fix',
+          role: this._getLabelPrefix ? this._getLabelPrefix() : 'review-agent',
+          stage: 'REVIEW',
+          runtimePrompt: fixPrompt,
+          metadata: { category: 'agent-adapter-call', fixMode, round },
+        }));
         fixedContent = this._applyFix(currentContent, rawFixed, fixMode);
       } catch (err) {
         this._log(`[${label}] ❌ Fix LLM call failed: ${err.message}. Keeping current content.`);
@@ -339,7 +346,13 @@ class ReviewAgentBase {
     const prompt = this._buildReviewPrompt(content, requirementText);
     let response;
     try {
-      response = await this.llmCall(prompt);
+      response = await this.llmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/review-agent-base.js:runReview.main',
+        role: label,
+        stage: 'REVIEW',
+        runtimePrompt: prompt,
+        metadata: { category: 'agent-adapter-call' },
+      }));
     } catch (err) {
       this._log(`[${label}] ❌ Review LLM call failed: ${err.message}`);
       return this.checklist.map(item => ({
@@ -384,7 +397,13 @@ class ReviewAgentBase {
     this._log(`[${label}] 🔴 Running adversarial verification on ${passedItems.length} PASS/N/A item(s)...`);
     let adversarialResults = [];
     try {
-      const adversarialResponse = await this.adversarialLlmCall(adversarialPrompt);
+      const adversarialResponse = await this.adversarialLlmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/review-agent-base.js:runReview.adversarial',
+        role: label,
+        stage: 'REVIEW',
+        runtimePrompt: adversarialPrompt,
+        metadata: { category: 'agent-adapter-call', phase: 'adversarial' },
+      }));
       adversarialResults = extractJsonArray(adversarialResponse) || [];
     } catch (err) {
       this._log(`[${label}] ⚠️  Adversarial LLM call failed: ${err.message}. Using main results only.`);

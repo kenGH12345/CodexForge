@@ -23,6 +23,7 @@
 'use strict';
 
 const fs = require('fs');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 const path = require('path');
 
 // ─── Source Types ────────────────────────────────────────────────────────────
@@ -192,10 +193,17 @@ class KnowledgePipeline {
     const prompt = this._buildAnalysisPrompt(template, rawData, context);
 
     let llmResponse = null;
+    const promptToSend = prepareGatewayPrompt(this, {
+      callSite: 'workflow/core/knowledge-pipeline.js:analyse',
+      role: 'knowledge-pipeline',
+      stage: 'ANALYSE',
+      runtimePrompt: prompt,
+      metadata: { category: 'raw-orchestrator-call', template },
+    });
     if (this._orch && this._orch._rawLlmCall) {
-      llmResponse = await this._orch._rawLlmCall(prompt, `kp-analyse-${template}`);
+      llmResponse = await this._orch._rawLlmCall(promptToSend, `kp-analyse-${template}`);
     } else if (this._orch && this._orch.llmCall) {
-      llmResponse = await this._orch.llmCall(prompt, `kp-analyse-${template}`);
+      llmResponse = await this._orch.llmCall(promptToSend, `kp-analyse-${template}`);
     }
 
     if (!llmResponse) {

@@ -333,32 +333,196 @@ function _extractSkillMetadata(filePath, fallbackName) {
   const rawDomains = _yamlGet(fm, 'domains');
   const domains = _normalizeDomains(rawDomains, fallbackName);
 
-  return { name, description, domains };
-}
+  const meta = { name, description, domains };
 
-function _yamlGet(frontmatter, key) {
-  const lineRe = new RegExp(`^${key}\\s*:\\s*(.*)$`, 'm');
-  const match = frontmatter.match(lineRe);
-  if (!match) return undefined;
+  const triggers = _yamlGet(fm, 'triggers');
+  if (triggers !== undefined) meta.triggers = triggers;
 
-  let value = match[1].trim();
+  const version = _yamlGet(fm, 'version');
+  if (version !== undefined) meta.version = version;
 
-  if (value.startsWith('[') && value.endsWith(']')) {
-    try {
-      return value.slice(1, -1).split(',')
-        .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
-        .filter(s => s.length > 0);
-    } catch {
-      return undefined;
-    }
+  const type = _yamlGet(fm, 'type');
+  if (type !== undefined) meta.type = type;
+
+  const loadLevel = _yamlGet(fm, 'load_level');
+  if (loadLevel !== undefined) meta.load_level = loadLevel;
+
+  const maxTokens = _yamlGet(fm, 'max_tokens');
+  if (maxTokens !== undefined) {
+    const parsed = typeof maxTokens === 'string' ? parseInt(maxTokens, 10) : maxTokens;
+    if (!isNaN(parsed)) meta.max_tokens = parsed;
   }
 
+  return meta;
+}
+
+/**
+ * YAML subset parser for skill frontmatter. Supports:
+ *   1. flat scalar:      key: value
+ *   2. quoted string:    key: "value" or key: 'value'
+ *   3. inline array:     key: [a, b, c]
+ *   4. indented list:    key:\n  - item1\n  - item2
+ *   5. nested object:    key:\n  sub1: v1\n  sub2: [a, b]  (1 level deep)
+ *   6. block scalar |:   key: |\n  line1\n  line2
+ * Does NOT support: multi-doc, anchors, folded '>', 2+ level nesting.
+ */
+function _yamlGet(frontmatter, key) {
+  const lines = frontmatter.split(/\r?\n/);
+  const keyRe = new RegExp(`^(\\s*)${_escapeRegex(key)}\\s*:\\s*(.*)$`);
+
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(keyRe);
+    if (!m) continue;
+    const keyIndent = m[1].length;
+    const rawValue = m[2];
+
+    if (rawValue.length > 0) {
+      if (rawValue.trim() === '|' || rawValue.trim() === '>') {
+        return _parseBlockScalar(lines, i + 1, keyIndent, rawValue.trim());
+      }
+      return _parseScalar(rawValue);
+    }
+
+    // Empty value — look at next indented lines for list or nested object
+    return _parseNestedBlock(lines, i + 1, keyIndent);
+  }
+  return undefined;
+}
+
+function _escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function _parseScalar(raw) {
+  const value = raw.trim();
+  if (value.startsWith('[') && value.endsWith(']')) {
+    return value.slice(1, -1).split(',')
+      .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(s => s.length > 0);
+  }
   if ((value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))) {
     return value.slice(1, -1);
   }
-
   return value;
+}
+
+function _parseBlockScalar(lines, startIdx, keyIndent, marker) {
+  const collected = [];
+  for (let j = startIdx; j < lines.length; j++) {
+    const line = lines[j];
+    if (line.trim() === '') { collected.push(''); continue; }
+    const indent = line.match(/^(\s*)/)[1].length;
+    if (indent <= keyIndent) break;
+    collected.push(line.slice(keyIndent + 2));
+  }
+  // Trim trailing empty lines
+  while (collected.length > 0 && collected[collected.length - 1] === '') collected.pop();
+  const joined = marker === '>' ? collected.join(' ') : collected.join('\n');
+  return joined;
+}
+
+function _parseNestedBlock(lines, startIdx, keyIndent) {
+  // Detect if block is a list (starts with '- ') or nested object
+  let firstChildIdx = -1;
+  let childIndent = -1;
+  for (let j = startIdx; j < lines.length; j++) {
+    const line = lines[j];
+    if (line.trim() === '') continue;
+    const indent = line.match(/^(\s*)/)[1].length;
+    if (indent <= keyIndent) return undefined;
+    firstChildIdx = j;
+    childIndent = indent;
+    break;
+  }
+  if (firstChildIdx === -1) return undefined;
+
+  const firstBody = lines[firstChildIdx].slice(childIndent);
+  if (firstBody.startsWith('- ')) {
+    return _parseList(lines, firstChildIdx, childIndent);
+  }
+  return _parseObject(lines, firstChildIdx, childIndent);
+}
+
+function _parseList(lines, startIdx, listIndent) {
+  const items = [];
+  for (let j = startIdx; j < lines.length; j++) {
+    const line = lines[j];
+    if (line.trim() === '') continue;
+    const indent = line.match(/^(\s*)/)[1].length;
+    if (indent < listIndent) break;
+    const body = line.slice(listIndent);
+    if (!body.startsWith('- ')) break;
+    items.push(_parseScalar(body.slice(2).trim()));
+  }
+  return items;
+}
+
+function _parseObject(lines, startIdx, objIndent) {
+  const obj = {};
+  for (let j = startIdx; j < lines.length; j++) {
+    const line = lines[j];
+    if (line.trim() === '') continue;
+    const indent = line.match(/^(\s*)/)[1].length;
+    if (indent < objIndent) break;
+    if (indent > objIndent) continue; // Child's children — handled by recursive call
+    const m = line.slice(objIndent).match(/^([^:\s]+)\s*:\s*(.*)$/);
+    if (!m) continue;
+    const subKey = m[1];
+    const subVal = m[2];
+    if (subVal.length === 0) {
+      const nested = _parseNestedBlock(lines, j + 1, objIndent);
+      obj[subKey] = nested;
+    } else if (subVal.trim() === '|' || subVal.trim() === '>') {
+      obj[subKey] = _parseBlockScalar(lines, j + 1, objIndent, subVal.trim());
+    } else {
+      obj[subKey] = _parseScalar(subVal);
+    }
+  }
+  return obj;
+}
+
+/**
+ * Checks whether a skill-metadata field value should be treated as empty,
+ * i.e. eligible to be enriched from YFM data.
+ *
+ * Rules:
+ *   - undefined / null → empty
+ *   - "" / "Auto-discovered skill from X.md" (fallback placeholder) → empty
+ *   - [] → empty; non-empty array → not empty
+ *   - {} → empty; object with any keys → not empty (user intent)
+ *   - all other values (including 0) → not empty (explicit value)
+ */
+function _isEmpty(v) {
+  if (v === undefined || v === null) return true;
+  if (typeof v === 'string') {
+    if (v.length === 0) return true;
+    if (v.startsWith('Auto-discovered skill from ')) return true;
+    return false;
+  }
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === 'object') return Object.keys(v).length === 0;
+  return false;
+}
+
+/**
+ * Enriches an existing skill metadata entry with fields from a YFM-parsed
+ * metadata object. User-provided fields (already non-empty) are preserved;
+ * only empty fields are filled from the YFM source. The `name` field is
+ * never modified since it is the merge key.
+ *
+ * Semantics: single-direction (YFM → existing). Mutates `existing` in place.
+ */
+function _enrichSkillMetadata(existing, fromYfm) {
+  const enrichableFields = [
+    'description', 'domains', 'triggers',
+    'version', 'type', 'load_level', 'max_tokens',
+  ];
+  for (const key of enrichableFields) {
+    if (_isEmpty(existing[key]) && !_isEmpty(fromYfm[key])) {
+      existing[key] = fromYfm[key];
+    }
+  }
 }
 
 function _normalizeDomains(rawDomains, fallbackName) {
@@ -400,13 +564,19 @@ function _autoRegisterSkills(merged, configPath) {
     merged.builtinSkills = [];
   }
 
-  const existingNames = new Set(
-    merged.builtinSkills.map(s => s && s.name).filter(Boolean)
-  );
+  // Map name → index so we can enrich existing entries in-place (not just skip them).
+  // This lets YFM data fill fields that hard-coded config.js entries left empty,
+  // while preserving any explicit user values (enrichment is single-direction: YFM → existing).
+  const existingIndex = new Map();
+  merged.builtinSkills.forEach((skill, idx) => {
+    if (skill && skill.name) existingIndex.set(skill.name, idx);
+  });
 
   let totalDiscovered = 0;
+  let totalEnriched = 0;
   for (const skillsDir of skillsDirs) {
     let discovered = 0;
+    let enriched = 0;
     try {
       const entries = fs.readdirSync(skillsDir);
       for (const entry of entries) {
@@ -435,27 +605,46 @@ function _autoRegisterSkills(merged, configPath) {
         }
 
         if (!skillName || !skillFile) continue;
-        if (existingNames.has(skillName)) continue;
 
+        let metadata;
         try {
-          const metadata = _extractSkillMetadata(skillFile, skillName);
-          if (metadata && metadata.name) {
-            merged.builtinSkills.push(metadata);
-            existingNames.add(metadata.name);
-            discovered++;
-          }
+          metadata = _extractSkillMetadata(skillFile, skillName);
         } catch (err) {
           console.warn(`[ConfigLoader][AutoDiscovery] Failed to parse ${entry}: ${err.message}`);
+          continue;
+        }
+        if (!metadata || !metadata.name) continue;
+        metadata.filePath = skillFile;
+
+        const existingIdx = existingIndex.get(skillName);
+        if (existingIdx !== undefined) {
+          // Name already registered (usually from workflow.config.js hard-coded list).
+          // Enrich the existing entry in place — user's explicit fields are preserved,
+          // only empty fields get filled from YFM. filePath is runtime discovery metadata;
+          // it is safe to add when missing so ContextLoader can load directory-based skills.
+          _enrichSkillMetadata(merged.builtinSkills[existingIdx], metadata);
+          if (!merged.builtinSkills[existingIdx].filePath) {
+            merged.builtinSkills[existingIdx].filePath = skillFile;
+          }
+          enriched++;
+        } else {
+          merged.builtinSkills.push(metadata);
+          existingIndex.set(metadata.name, merged.builtinSkills.length - 1);
+          discovered++;
         }
       }
     } catch (err) {
       console.warn(`[ConfigLoader][AutoDiscovery] Failed to scan ${skillsDir}: ${err.message}`);
     }
 
-    if (discovered > 0) {
-      console.log(`[ConfigLoader][AutoDiscovery] Registered ${discovered} skill(s) from ${skillsDir}`);
+    if (discovered > 0 || enriched > 0) {
+      const parts = [];
+      if (discovered > 0) parts.push(`${discovered} new`);
+      if (enriched > 0) parts.push(`enriched ${enriched} existing`);
+      console.log(`[ConfigLoader][AutoDiscovery] Registered ${parts.join(', ')} skill(s) from ${skillsDir}`);
     }
     totalDiscovered += discovered;
+    totalEnriched += enriched;
   }
 }
 

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { COMPACTION } = require('./constants');
 const { CONVERSATION_PRIORITY } = require('./token-budget');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ConversationCompactor (C1) compresses long message histories via LLM summary
 // with a deterministic truncation fallback. Triggers by message count OR total
@@ -178,7 +179,13 @@ class ConversationCompactor {
     ].join('\n');
 
     const llmCall = llmCallOverride || this._cheapLlmCall;
-    const response = await llmCall(prompt, { maxTokens: 600, temperature: 0.2 });
+    const response = await llmCall(prepareGatewayPrompt(this, {
+      callSite: 'workflow/core/conversation-compactor.js:summarize',
+      role: 'conversation-compactor',
+      stage: 'COMPACTION',
+      runtimePrompt: prompt,
+      metadata: { category: 'injected-llm-call', messageCount: messages.length },
+    }), { maxTokens: 600, temperature: 0.2 });
     const text = typeof response === 'string' ? response : (response && response.content ? response.content : '');
     if (!text || text.trim().length === 0) {
       throw new Error('LLM returned empty summary');

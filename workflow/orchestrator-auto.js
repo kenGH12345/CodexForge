@@ -10,7 +10,20 @@
 'use strict';
 
 const fs = require('fs');
+const { LLMInjectionGateway } = require('./core/llm-injection-gateway');
 const { PATHS } = require('./core/constants');
+
+function prepareAutoDispatchPrompt(orch, prompt) {
+  const gateway = orch.llmInjectionGateway || new LLMInjectionGateway({ outputDir: orch._outputDir });
+  return gateway.prepare({
+    callSite: 'workflow/orchestrator-auto.js:runAuto.decomposition',
+    role: 'task-decomposer',
+    stage: 'ANALYSE',
+    runtimePrompt: prompt,
+    candidatePrompt: prompt,
+    metadata: { category: 'raw-orchestrator-call' },
+  }).promptToSend;
+}
 
 // ─── Auto-Dispatch Methods ──────────────────────────────────────────────────
 
@@ -107,7 +120,7 @@ async function runAuto(rawRequirement, concurrency = 3) {
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error(`LLM decomposition timed out after ${DECOMPOSITION_TIMEOUT_MS}ms`)), DECOMPOSITION_TIMEOUT_MS)
     );
-    const llmResponse = await Promise.race([this._rawLlmCall(decompositionPrompt), timeoutPromise]);
+    const llmResponse = await Promise.race([this._rawLlmCall(prepareAutoDispatchPrompt(this, decompositionPrompt)), timeoutPromise]);
     decompositionResult = this._parseDecompositionResponse(llmResponse, rawRequirement);
   } catch (err) {
     console.warn(`[Orchestrator] ⚠️  Task decomposition LLM call failed: ${err.message}. Falling back to sequential.`);

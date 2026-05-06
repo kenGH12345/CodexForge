@@ -7,6 +7,7 @@
  */
 
 const path = require('path');
+const { _buildShardFileIndex } = require('./code-graph-layered-reader');
 
 const GENERIC_NAMES = new Set([
   'parse', 'entries', 'filter', 'lines', 'line', 'process', 'summary', 'score',
@@ -41,6 +42,99 @@ function isGenericName(name) {
   return GENERIC_NAMES.has(name) || GENERIC_NAMES.has(name.toLowerCase());
 }
 
+const NOISE_MODULE_PATTERNS = [
+  /^Library(?:\/|$)/i,
+  /^PackageCache(?:\/|$)/i,
+  /^Extensions(?:\/|$)/i,
+  /^XLua(?:\/|$)/i,
+  /^Standard Assets(?:\/|$)/i,
+  /^Plugins(?:\/|$)/i,
+  /^Wwise(?:\/|$)/i,
+  /^MSDK(?:\/|$)/i,
+  /^Pandora(?:\/|$)/i,
+  /^GCloudSDK(?:\/|$)/i,
+  /^RDMBuild(?:\/|$)/i,
+  /^Editor(?:\/|$)/i,
+];
+
+function isNoiseModuleName(name) {
+  const normalized = String(name || '').replace(/\\/g, '/');
+  return NOISE_MODULE_PATTERNS.some(re => re.test(normalized));
+}
+
+function isNoisePath(filePath) {
+  const rp = String(filePath || '').replace(/\\/g, '/');
+  return /(^|\/)Library\//i.test(rp)
+    || /(^|\/)PackageCache\//i.test(rp)
+    || /(^|\/)Assets\/Extensions\//i.test(rp)
+    || /(^|\/)Assets\/XLua\//i.test(rp)
+    || /(^|\/)Assets\/Standard Assets\//i.test(rp)
+    || /(^|\/)Assets\/Plugins\//i.test(rp)
+    || /(^|\/)Assets\/Wwise\//i.test(rp)
+    || /(^|\/)Assets\/MSDK\//i.test(rp)
+    || /(^|\/)Assets\/Pandora\//i.test(rp)
+    || /(^|\/)Assets\/GCloudSDK\//i.test(rp)
+    || /(^|\/)RDMBuild\//i.test(rp);
+}
+
+function classifyDomainModule(nameOrPath) {
+  const s = String(nameOrPath || '').replace(/\\/g, '/');
+  const lower = s.toLowerCase();
+  if (lower.includes('scripts/uictrl')) return { name: 'Assets/Scripts/UICtrl', layer: 'ui', role: 'UI controllers, views, screen flow and UI state' };
+  if (lower.includes('scripts/systems')) return { name: 'Assets/Scripts/Systems', layer: 'systems', role: 'Domain game systems and feature services' };
+  if (lower.includes('scripts/litecore')) return { name: 'Assets/Scripts/LiteCore', layer: 'lite-core', role: 'Lightweight/mobile variant of core gameplay logic' };
+  if (lower.includes('scripts/core')) return { name: 'Assets/Scripts/Core', layer: 'core', role: 'Core gameplay loop, state machines and runtime logic' };
+  if (lower.includes('scripts/framework')) return { name: 'Assets/Scripts/Framework', layer: 'framework', role: 'Foundation classes, event bus, object pools and utilities' };
+  if (lower.includes('scripts/tdr')) return { name: 'Assets/Scripts/TDR', layer: 'protocol', role: 'Tencent TDR protocol schemas and generated contracts' };
+  if (lower.includes('xluawork')) return { name: 'Assets/XLuaWork', layer: 'lua-bridge', role: 'XLua runtime, hotfix and C#-Lua bridge' };
+  if (lower.includes('scripts/cabin')) return { name: 'Assets/Scripts/Cabin', layer: 'feature-module', role: 'Home/leisure feature module' };
+  if (lower.includes('scripts/farm')) return { name: 'Assets/Scripts/Farm', layer: 'feature-module', role: 'Farm gameplay feature module' };
+  if (lower.includes('scripts/openworldrace')) return { name: 'Assets/Scripts/OpenWorldRace', layer: 'gameplay', role: 'Open world racing gameplay' };
+  if (lower.includes('scripts/customtrack')) return { name: 'Assets/Scripts/CustomTrack', layer: 'gameplay-editor', role: 'Custom track editor and playback' };
+  if (lower.includes('scripts/gameeditor')) return { name: 'Assets/Scripts/GameEditor', layer: 'editor', role: 'Project-specific editor tooling' };
+  if (lower.includes('scripts/artcode')) return { name: 'Assets/Scripts/ArtCode', layer: 'art-code', role: 'Art-driven effects, shader and animation code' };
+  return null;
+}
+
+function inferDomainLayer(relPath) {
+  const domain = classifyDomainModule(relPath);
+  return domain ? domain.layer : null;
+}
+
+function modulePriority(moduleName) {
+  const domain = classifyDomainModule(moduleName);
+  if (!domain) return isNoiseModuleName(moduleName) ? -100 : 0;
+  const order = {
+    framework: 100,
+    core: 95,
+    'lite-core': 92,
+    systems: 90,
+    ui: 88,
+    protocol: 86,
+    'lua-bridge': 84,
+    'feature-module': 75,
+    gameplay: 72,
+    'gameplay-editor': 70,
+    'art-code': 65,
+    editor: 55,
+  };
+  return order[domain.layer] || 50;
+}
+
+function detectProjectKind(modules, filePaths = []) {
+  const joined = modules.map(m => m.name || '').concat(filePaths).join('\n').toLowerCase();
+  if (joined.includes('scripts/uictrl') || joined.includes('xluawork') || joined.includes('scripts/tdr')) {
+    return 'unity-csharp-game-client';
+  }
+  return 'library';
+}
+
+function inferProjectName(codeGraph, projectType) {
+  const root = codeGraph && codeGraph.projectRoot ? path.basename(codeGraph.projectRoot) : '';
+  if (root && !/^library$/i.test(root)) return root;
+  return projectType === 'unity-csharp-game-client' ? 'unity-project' : projectType || 'Project';
+}
+
 function inferModule(relPath) {
   const parts = relPath.split(/[\\/]/);
   if (parts.length >= 2) {
@@ -59,7 +153,10 @@ function inferModule(relPath) {
 }
 
 function inferLayer(relPath) {
+  const domainLayer = inferDomainLayer(relPath);
+  if (domainLayer) return domainLayer;
   const rp = relPath.toLowerCase().replace(/\\/g, '/');
+  if (isNoisePath(rp)) return 'external';
   if (rp.includes('/commands/') || rp.endsWith('/commands')) return 'entry';
   if (rp.includes('/agents/') || rp.endsWith('/agents')) return 'orchestration';
   if (rp.includes('/core/') || rp.endsWith('/core')) return 'core';
@@ -136,7 +233,10 @@ function extractModuleSignals({ symbols, filePaths }) {
 }
 
 function extractArchitectureLayers({ symbols, filePaths }) {
-  const layers = { entry: [], core: [], orchestration: [], utility: [], integration: [], test: [], doc: [], other: [] };
+  const layers = {
+    entry: [], core: [], orchestration: [], utility: [], integration: [], test: [], doc: [], other: [], external: [],
+    ui: [], systems: [], 'lite-core': [], framework: [], protocol: [], 'lua-bridge': [], 'feature-module': [], gameplay: [], 'gameplay-editor': [], 'art-code': [], editor: []
+  };
   for (const sym of symbols) {
     const fp = filePaths[sym.f] || 'unknown';
     const layer = inferLayer(fp);
@@ -342,21 +442,95 @@ function extractTriggerRoles({ architecture }) {
   return [...new Set(roles)];
 }
 
-function mapToLegacyScaffold({ modules, layers, patterns, highValueSymbols, codingConventions, moduleRelations }) {
+function mapToLegacyScaffold({ modules, layers, patterns, highValueSymbols, codingConventions, moduleRelations, codeGraph, filePaths }) {
+  const projectType = detectProjectKind(modules, filePaths || []);
+  const entryLayers = ['core', 'systems', 'ui', 'framework', 'lite-core'];
+  const entryPoints = entryLayers
+    .flatMap(layer => layers[layer] && layers[layer].keySymbols ? layers[layer].keySymbols.map(s => s.file) : [])
+    .filter(f => f && !isNoisePath(f));
+  const coreServices = ['core', 'systems', 'framework', 'lite-core']
+    .flatMap(layer => layers[layer] && layers[layer].keySymbols ? layers[layer].keySymbols.map(s => s.name) : [])
+    .filter(Boolean);
   return {
-    projectType: modules.length > 0 ? modules[0].layer === 'entry' ? 'cli' : 'library' : 'unknown',
-    modules: modules.map(m => m.name),
-    entryPoints: layers.entry ? layers.entry.keySymbols.map(s => s.file) : [],
-    coreServices: layers.core ? layers.core.keySymbols.map(s => s.name) : [],
+    projectName: inferProjectName(codeGraph || {}, projectType),
+    projectType,
+    modules: modules.filter(m => !m.noise).map(m => m.name),
+    entryPoints: [...new Set(entryPoints)].slice(0, 20),
+    coreServices: [...new Set(coreServices)].slice(0, 20),
     reusableComponents: highValueSymbols.slice(0, 15).map(s => s.name),
     dataModels: modules
-      .filter(m => m.name.includes('model') || m.name.includes('entity') || m.name.includes('schema'))
+      .filter(m => /model|entity|schema|tdr/i.test(m.name))
       .map(m => m.name),
     designPatterns: patterns.map(p => p.pattern),
-    architecture: layers.core ? 'layered' : 'flat',
-    projectRoot: null,
+    architecture: Object.keys(layers).some(k => !['other', 'external', 'test', 'doc'].includes(k)) ? 'layered' : 'flat',
+    projectRoot: codeGraph && codeGraph.projectRoot || null,
     estimatedLinesOfCode: null
   };
+}
+
+function buildLayeredDomainModules(codeGraph, fallbackModules) {
+  const grouped = new Map();
+  const rawModules = Array.isArray(codeGraph.modules) ? codeGraph.modules : [];
+  for (const m of rawModules) {
+    const rawName = m && m.name || '';
+    if (!rawName) continue;
+    const noise = isNoiseModuleName(rawName);
+    const domain = classifyDomainModule(rawName);
+    const name = domain ? domain.name : rawName;
+    if (!grouped.has(name)) {
+      grouped.set(name, {
+        name,
+        layer: domain ? domain.layer : (noise ? 'external' : 'other'),
+        role: domain ? domain.role : '',
+        symbolCount: 0,
+        fileCount: 0,
+        classCount: 0,
+        functionCount: 0,
+        keySymbols: [],
+        sourceModules: [],
+        noise,
+      });
+    }
+    const g = grouped.get(name);
+    g.symbolCount += m.symbolCount || 0;
+    g.fileCount += m.fileCount || 0;
+    g.sourceModules.push(rawName);
+    if (!g.noise && noise) g.noise = true;
+  }
+
+  for (const m of fallbackModules || []) {
+    const domain = classifyDomainModule(m.name);
+    if (!domain || grouped.has(domain.name)) continue;
+    grouped.set(domain.name, { ...m, name: domain.name, layer: domain.layer, role: domain.role, sourceModules: [m.name], noise: false });
+  }
+
+  return [...grouped.values()]
+    .sort((a, b) => (modulePriority(b.name) - modulePriority(a.name)) || ((b.symbolCount || 0) - (a.symbolCount || 0)));
+}
+
+function buildLayeredDomainLayers(modules, fallbackLayers) {
+  const result = { ...fallbackLayers };
+  for (const mod of modules) {
+    if (!mod.layer || mod.noise) continue;
+    const current = result[mod.layer] || { symbolCount: 0, fileCount: 0, keySymbols: [] };
+    current.symbolCount += mod.symbolCount || 0;
+    current.fileCount += mod.fileCount || 0;
+    current.keySymbols = (current.keySymbols || []).concat((mod.keySymbols || []).slice(0, 4));
+    result[mod.layer] = current;
+  }
+  return result;
+}
+
+function filterSemanticSymbols(symbols, filePaths) {
+  return symbols.filter(s => !isNoisePath(filePaths[s.f] || ''));
+}
+
+function filterSemanticFilePaths(filePaths) {
+  return filePaths.filter(fp => !isNoisePath(fp));
+}
+
+function filterSemanticRelations(relations) {
+  return (relations || []).filter(r => !isNoiseModuleName(r.from) && !isNoiseModuleName(r.to));
 }
 
 // ── Public API ─────────────────────────────────────────
@@ -369,8 +543,12 @@ class CapabilityMapper {
     const symbols = safe('symbols') || [];
     const filePaths = safe('filePaths') || [];
     const callEdges = safe('callEdges') || {};
-    const hotspots = safe('hotspots') || [];
+    const hotspots = safe('hotspots') || codeGraph.topHotspots || [];
     const categoryStats = safe('categoryStats') || {};
+
+    if (codeGraph.layered && Array.isArray(codeGraph.modules)) {
+      return this.mapLayeredCapabilities(codeGraph);
+    }
 
     if (symbols.length === 0 && filePaths.length === 0) {
       return this.buildFallback(capabilityData);
@@ -383,7 +561,7 @@ class CapabilityMapper {
     const conventions = extractCodingConventions({ filePaths, symbols });
     const relations = extractModuleRelations({ symbols, filePaths, callEdges });
 
-    const scaffold = mapToLegacyScaffold({ modules, layers, patterns, highValueSymbols, codingConventions: conventions, moduleRelations: relations });
+    const scaffold = mapToLegacyScaffold({ modules, layers, patterns, highValueSymbols, codingConventions: conventions, moduleRelations: relations, codeGraph, filePaths });
 
     const triggerKeywords = extractTriggerKeywords({ modules, patterns, highValueSymbols, codingStandards: { paradigm: conventions.find(c => c.type === 'paradigm')?.convention || '' } });
     const triggerRoles = extractTriggerRoles({ architecture: { layers } });
@@ -411,6 +589,155 @@ class CapabilityMapper {
       },
       highValueSymbols,
       categoryStats
+    };
+  }
+
+  mapLayeredCapabilities(codeGraph) {
+    // ── Flatten loaded shards into compact-format symbol arrays ──
+    // Shards contain: symbols[] with {f, k, n, l, s?, m?, w?}, callEdges{}, inboundEdges[], outboundEdges[]
+    const allSymbols = [];
+    const allFilePaths = new Set();
+    const allCallEdges = {};
+    const shardFilePaths = new Map(); // f-idx -> filePath (reconstructed from shard)
+
+    for (const [shardName, shard] of Object.entries(codeGraph.shards || {})) {
+      const shardFiles = shard.files || [];
+      // Build the correct global-f-index → filePath map. DO NOT use
+      // `shardFiles[sym.f]` directly: sym.f is a GLOBAL index, not shard-local.
+      // _buildShardFileIndex reconstructs the proper mapping from sorted unique
+      // sym.f values aligned with sorted shard.files (invariant enforced by
+      // code-graph-cache.js _writeLayeredOutput).
+      const fToFile = _buildShardFileIndex(shard);
+      for (const sym of (shard.symbols || [])) {
+        const fp = fToFile.get(sym.f) || shardFiles[0] || (shard.module || shardName);
+        shardFilePaths.set(`${shardName}::${sym.f}`, fp);
+        allFilePaths.add(fp);
+        allSymbols.push({
+          ...sym,
+          f: `${shardName}::${sym.f}`, // namespace the file index
+          filePath: fp,
+        });
+      }
+      // Merge call edges (caller = local compact id)
+      for (const [caller, callees] of Object.entries(shard.callEdges || {})) {
+        const nsCaller = `${shardName}::${caller}`;
+        if (!allCallEdges[nsCaller]) allCallEdges[nsCaller] = [];
+        for (const c of callees) {
+          allCallEdges[nsCaller].push(`${shardName}::${c}`);
+        }
+      }
+      // Cross-shard edges: from other shards → this shard
+      for (const edge of (shard.inboundEdges || [])) {
+        const fromShard = edge.fromModule || 'UNKNOWN';
+        const fromCaller = `${fromShard}::${edge.from}`;
+        const toCallee = `${shardName}::${edge.to}`;
+        if (!allCallEdges[fromCaller]) allCallEdges[fromCaller] = [];
+        allCallEdges[fromCaller].push(toCallee);
+      }
+    }
+
+    // Build unified filePath array for lookups
+    const unifiedFilePaths = [...allFilePaths];
+    const filePathToIdx = new Map(unifiedFilePaths.map((fp, i) => [fp, i]));
+    const normalizeSymbols = allSymbols.map(s => ({
+      f: filePathToIdx.get(s.filePath) ?? 0,
+      k: s.k,
+      n: s.n,
+      l: s.l,
+      s: s.s,
+      m: s.m,
+      w: s.w,
+    }));
+
+    // Re-normalize call edges to use unified file indices
+    const normalizedCallEdges = {};
+    for (const [caller, callees] of Object.entries(allCallEdges)) {
+      const callerParts = caller.split('::');
+      const callerShard = callerParts[0];
+      const callerName = callerParts.slice(1).join('::');
+      const callerFp = shardFilePaths.get(caller) || callerShard;
+      const callerIdx = filePathToIdx.get(callerFp);
+      if (callerIdx === undefined) continue;
+      const normalizedCaller = `${callerIdx}::${callerName}`;
+
+      if (!normalizedCallEdges[normalizedCaller]) normalizedCallEdges[normalizedCaller] = [];
+      for (const callee of callees) {
+        const calleeParts = callee.split('::');
+        const calleeShard = calleeParts[0];
+        const calleeName = calleeParts.slice(1).join('::');
+        const calleeFp = shardFilePaths.get(callee) || calleeShard;
+        const calleeIdx = filePathToIdx.get(calleeFp);
+        if (calleeIdx === undefined) continue;
+        normalizedCallEdges[normalizedCaller].push(`${calleeIdx}::${calleeName}`);
+      }
+    }
+
+    const categoryStats = codeGraph.categoryStats || {};
+
+    const semanticFilePaths = filterSemanticFilePaths(unifiedFilePaths);
+    const semanticSymbols = filterSemanticSymbols(normalizeSymbols, unifiedFilePaths);
+
+    // ── Run rich extraction on shard-derived semantic data ──
+    const fallbackModules = extractModuleSignals({ symbols: semanticSymbols, filePaths: unifiedFilePaths });
+    const modules = buildLayeredDomainModules(codeGraph, fallbackModules);
+    const fallbackLayers = extractArchitectureLayers({ symbols: semanticSymbols, filePaths: unifiedFilePaths });
+    const layers = buildLayeredDomainLayers(modules, fallbackLayers);
+    const patterns = extractDesignPatterns({ symbols: semanticSymbols, filePaths: unifiedFilePaths });
+    let highValueSymbols = extractHighValueSymbols({ symbols: semanticSymbols, filePaths: unifiedFilePaths, categoryStats })
+      .filter(s => !isNoisePath(s.file));
+    if (highValueSymbols.length === 0 && Array.isArray(codeGraph.reusableSymbols)) {
+      highValueSymbols = codeGraph.reusableSymbols
+        .map(s => ({
+          name: s.name || s.n,
+          kind: s.kind || s.k || s.c || 'symbol',
+          file: s.file || s.location || 'index',
+          line: s.line || s.l || 1,
+          weight: s.weight || s.w || s.cb || 0,
+          signature: s.signature || s.s || '',
+        }))
+        .filter(s => s.name && !isGenericName(s.name) && !isNoisePath(s.file))
+        .slice(0, 30);
+    }
+    const conventions = extractCodingConventions({ filePaths: semanticFilePaths, symbols: semanticSymbols });
+    const relations = filterSemanticRelations(extractModuleRelations({ symbols: semanticSymbols, filePaths: unifiedFilePaths, callEdges: normalizedCallEdges }));
+
+    const scaffold = mapToLegacyScaffold({ modules, layers, patterns, highValueSymbols, codingConventions: conventions, moduleRelations: relations, codeGraph, filePaths: semanticFilePaths });
+
+    const triggerKeywords = extractTriggerKeywords({
+      modules: modules.filter(m => !m.noise), patterns, highValueSymbols,
+      codingStandards: { paradigm: conventions.find(c => c.type === 'paradigm')?.convention || '' }
+    });
+    const triggerRoles = extractTriggerRoles({ architecture: { layers } });
+
+    return {
+      scaffold,
+      triggers: { keywords: triggerKeywords, roles: triggerRoles },
+      architecture: {
+        modules: modules.filter(m => !m.noise).slice(0, 20),
+        externalModules: modules.filter(m => m.noise).slice(0, 10),
+        layers,
+        moduleRelations: relations.slice(0, 20),
+      },
+      designPatterns: {
+        detected: patterns,
+        allPatterns: patterns.map(p => p.pattern),
+        confidence: patterns.length > 0 ? patterns.reduce((s, p) => s + p.confidence, 0) / patterns.length : 0
+      },
+      codingStandards: {
+        conventions,
+        namingStyle: conventions.find(c => c.type === 'file-naming')?.convention || 'unknown',
+        paradigm: conventions.find(c => c.type === 'paradigm')?.convention || 'unknown'
+      },
+      highValueSymbols,
+      categoryStats,
+      semanticConsumption: {
+        preservedLayeredModules: true,
+        filteredNoiseModules: modules.filter(m => m.noise).map(m => m.name),
+        semanticFileCount: semanticFilePaths.length,
+      },
+      _layered: true,
+      _shardCount: Object.keys(codeGraph.shards || {}).length,
+      _symbolCount: normalizeSymbols.length,
     };
   }
 

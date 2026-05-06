@@ -95,6 +95,7 @@ console.log = console.error;
 
 const fs = require('fs');
 const path = require('path');
+const { prepareGatewayPrompt } = require('../core/llm-injection-gateway');
 
 // --- IMMEDIATE LOG CLEARING & FIRST LOG ---
 if (process.argv.includes('run') || process.argv.includes('triage')) {
@@ -125,7 +126,7 @@ const { buildCapabilityCatalog, formatCapabilityCatalogForPrompt } = require('..
 const { requirementFingerprint: _sharedRequirementFingerprint } = require('../core/stage-context-store');
 const { normalizeRunCategory, resolveHealthPaths } = require('../core/health-observability');
 const { generatePreStageQuestions: _sharedGeneratePreStageQuestions } = require('../core/pre-stage-questions');
-const { buildRequiredObservation, buildRetryContext } = require('../core/stage-context');
+const { buildRequiredObservation, buildRetryContext, renderRequiredSchemaPrompt } = require('../core/stage-context');
 const { FileStateStore } = require('../core/runtime/file-state-store');
 const { extractMdSummary, extractDiffSummary } = require('../core/stage-output-reporter');
 const { RuntimeProjector } = require('../core/runtime/runtime-projector');
@@ -593,6 +594,16 @@ function parseArgs(argv) {
       case '--fail-threshold':
         args.failThreshold = argv[++i] || '50';
         break;
+      case '--approved':
+        args.approved = argv[++i] || 'false';
+        break;
+      case '--allowlist':
+        args.allowlist = argv[++i] || '';
+        break;
+      case '--percent':
+      case '--canary-percent':
+        args.percent = argv[++i] || '1';
+        break;
       case '--key':
         args.key = argv[++i] || '';
         break;
@@ -756,10 +767,29 @@ async function runContext(args) {
       'ARCHITECT': 'architect',
       'PLAN': 'planner',
       'CODE': 'developer',
+      'DEVELOP': 'developer',
       'TEST': 'test-report',
+      'REVIEW': 'test-report',
+      'DEPLOY': 'developer',
     };
     const role = stageToRole[args.stage.toUpperCase()] || args.role || 'developer';
     const taskText = args.task || args.requirement || '';
+
+    let contextDigestBlock = '';
+    let contextDigestSelection = null;
+    let requiredStageSkills = [];
+    try {
+      const { selectRelevantDigests, formatDigestBlock, getRequiredSkillsForStage } = require('../core/context-digest-store');
+      requiredStageSkills = getRequiredSkillsForStage(args.stage.toUpperCase());
+      contextDigestSelection = selectRelevantDigests(args.projectRoot || '.', {
+        stage: args.stage.toUpperCase(),
+        taskText,
+        maxItems: 3,
+      });
+      contextDigestBlock = formatDigestBlock(contextDigestSelection.selected, contextDigestSelection.safety);
+    } catch (digestErr) {
+      contextDigestSelection = { selected: [], skipped: [], error: digestErr.message };
+    }
 
     // Load workflow config for skill settings
     let config = {};
@@ -783,9 +813,10 @@ async function runContext(args) {
       workflowRoot,
       projectRoot: args.projectRoot,
       skillKeywords: config.skillKeywords || {},
-      alwaysLoadSkills: config.alwaysLoadSkills || [],
+      alwaysLoadSkills: Array.from(new Set([...(config.alwaysLoadSkills || []), ...requiredStageSkills])),
       globalSkills: config.globalSkills || [],
       projectSkills: config.projectSkills || [],
+      registeredSkills: config.builtinSkills || [],
       experienceStore: _bridgeExperienceStore,  // ADR-55
     });
 
@@ -798,7 +829,15 @@ async function runContext(args) {
     }
     if (args.modelTier) resolveOpts.modelTier = args.modelTier;
 
-    const { sections, tokenCount, sources } = await loader.resolve(taskText, role, resolveOpts);
+    const resolved = await loader.resolve(taskText, role, resolveOpts);
+    const sections = [...(resolved.sections || [])];
+    const sources = [...(resolved.sources || [])];
+    let tokenCount = resolved.tokenCount || 0;
+    if (contextDigestBlock) {
+      sections.unshift(contextDigestBlock);
+      sources.unshift('context-digests (fresh relevant)');
+      tokenCount += Math.ceil(contextDigestBlock.length / 4);
+    }
 
     // T-6: Log context loading result for observability
     try {
@@ -819,6 +858,16 @@ async function runContext(args) {
         injectedSections: sections.length,
         tokenCount,
         sources,
+        contextDigestSelection: contextDigestSelection ? {
+          selected: (contextDigestSelection.selected || []).map(d => ({
+            stage: d.stage,
+            score: d.relevanceScore,
+            source: d.source && d.source.path,
+          })),
+          skipped: (contextDigestSelection.skipped || []).slice(0, 10),
+          safety: contextDigestSelection.safety || null,
+          error: contextDigestSelection.error || null,
+        } : null,
         // Include the actual sections content for the IDE Agent to use
         sections: sections.map((s, i) => ({
           index: i,
@@ -1490,6 +1539,32 @@ function runRollbackCheck(args) {
   }
 }
 
+// ─── Sub-command: adoption-gate ──────────────────────────────────────────────
+
+function runAdoptionGate(args) {
+  try {
+    const projectRoot = args.projectRoot || '.';
+    const loaded = _loadCompletionContract(projectRoot);
+    if (!loaded.exists || loaded.error) {
+      return { success: false, subcommand: 'adoption-gate', error: loaded.error || 'completion contract missing' };
+    }
+    const contract = _normalizeCompletionContract(loaded.contract);
+    const { evaluateCompletionMechanisms } = require('../core/feature-adoption-gate');
+    const data = evaluateCompletionMechanisms(projectRoot, contract);
+    const outPath = path.join(projectRoot, 'output', 'feature-adoption-result.json');
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, JSON.stringify({ ...data, source: loaded.source, finishedAt: new Date().toISOString() }, null, 2));
+    return {
+      success: data.passed,
+      subcommand: 'adoption-gate',
+      data: { ...data, resultPath: path.relative(projectRoot, outPath) },
+      ...(data.passed ? {} : { error: 'Feature adoption / semantic quality gate failed' }),
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'adoption-gate', error: err.message };
+  }
+}
+
 // ─── Sub-command: quality-gate ───────────────────────────────────────────────
 
 /**
@@ -1554,14 +1629,34 @@ function runQualityGate(args) {
 
     const result = gate.validate(metrics);
 
+    const workflowRuntimeAnomalies = _detectWorkflowRuntimeAnomalies(args.projectRoot || '.');
+    if (workflowRuntimeAnomalies.length > 0) {
+      result.gates.push({
+        name: 'workflowRuntimeAnomalies',
+        passed: false,
+        advisory: true,
+        actual: `${workflowRuntimeAnomalies.length} recent anomaly hit(s)`,
+        threshold: '0 recent anomaly hits for workflow core changes',
+        message: `Workflow-core change encountered recent runtime anomaly markers (advisory): ${workflowRuntimeAnomalies.map(h => `${h.pattern}@${h.file}`).join(', ')}`,
+      });
+      if (!result.diagnostics) result.diagnostics = { failedGates: [], recommendations: [] };
+      result.diagnostics.advisoryGates = result.diagnostics.advisoryGates || [];
+      result.diagnostics.advisoryGates.push(result.gates[result.gates.length - 1]);
+    }
+    const blockingFailedGates = result.gates.filter(g => !g.passed && !g.advisory);
+    const advisoryGates = result.gates.filter(g => !g.passed && g.advisory);
+    result.passed = blockingFailedGates.length === 0;
+
     // T-4: Log quality-gate result for observability
     try {
-      const _failedNames = result.gates.filter(g => !g.passed).map(g => g.name);
+      const _failedNames = blockingFailedGates.map(g => g.name);
+      const _advisoryNames = advisoryGates.map(g => g.name);
       _writeProgressLog(args.projectRoot || '.', [
         `🏁 Quality Gate: ${result.passed ? 'PASSED' : 'FAILED'}`,
         `  mode     : ${result.mode || gateMode}`,
-        `  gates    : ${result.gates.length} total, ${_failedNames.length} failed`,
+        `  gates    : ${result.gates.length} total, ${_failedNames.length} blocking failed, ${_advisoryNames.length} advisory`,
         _failedNames.length > 0 ? `  failed   : ${_failedNames.join(', ')}` : null,
+        _advisoryNames.length > 0 ? `  advisory : ${_advisoryNames.join(', ')}` : null,
       ].filter(Boolean).join('\n'));
     } catch (_) { /* non-fatal */ }
 
@@ -1583,11 +1678,14 @@ function runQualityGate(args) {
         gates: result.gates.map(g => ({
           name: g.name,
           passed: g.passed,
+          advisory: g.advisory === true,
           actual: g.actual,
           threshold: g.threshold,
           message: g.message,
         })),
-        failedGates: result.gates.filter(g => !g.passed).map(g => g.name),
+        failedGates: blockingFailedGates.map(g => g.name),
+        blockingFailedGates: blockingFailedGates.map(g => g.name),
+        advisoryGates: advisoryGates.map(g => g.name),
         diagnostics: result.diagnostics || null,
         reflections: reflections.map(r => ({
           type: r.type,
@@ -1596,8 +1694,10 @@ function runQualityGate(args) {
           description: r.description,
         })),
         recommendation: result.passed
-          ? 'All quality gates passed. Workflow output meets quality standards.'
-          : `${result.gates.filter(g => !g.passed).length} gate(s) failed. Review the failed gates and address the issues before finalizing.`,
+          ? (advisoryGates.length > 0
+              ? 'All blocking quality gates passed. Review advisory gates separately for technical debt and historical/global signals.'
+              : 'All quality gates passed. Workflow output meets quality standards.')
+          : `${blockingFailedGates.length} blocking gate(s) failed. Review the failed gates and address the issues before finalizing.`,
       },
     };
   } catch (err) {
@@ -2589,7 +2689,13 @@ async function _performLlmRefinement(candidates, llmCall, engine) {
   for (const candidate of toProcess) {
     try {
       const prompt = _buildSkillRefinePrompt(candidate);
-      const refined = await llmCall(prompt);
+      const refined = await llmCall(prepareGatewayPrompt({ _outputDir: path.join(engine?.projectRoot || process.cwd(), 'output') }, {
+        callSite: 'workflow/tools/ide-workflow-bridge.js:performLlmRefinement',
+        role: 'skill-refine-check',
+        stage: 'EVOLVE',
+        runtimePrompt: prompt,
+        metadata: { category: 'injected-llm-call', candidateName: candidate.name },
+      }));
 
       if (!refined || refined.length < 100) {
         results.skipped.push({ name: candidate.name, reason: 'LLM output too short' });
@@ -2735,10 +2841,16 @@ function runContractCheck(args) {
         return new ExperienceStore(actualPath);
       }},
       { contract: 'ICodeGraph', factory: () => {
-        const graphPath = path.join(args.projectRoot, 'output', 'code-graph.json');
-        if (!fs.existsSync(graphPath)) return null;
-        const CodeGraph = require('../core/code-graph');
-        return new CodeGraph(args.projectRoot);
+        // Bug fix: use resolveCodeGraphPath so L1-only projects aren't flagged missing;
+        // also destructure { CodeGraph } and pass object config (prev: `new CodeGraph(string)` → not a constructor).
+        const { resolveCodeGraphPath } = require('../core/code-graph-layered-reader');
+        const resolved = resolveCodeGraphPath(args.projectRoot);
+        if (!resolved.exists) return null;
+        const { CodeGraph } = require('../core/code-graph');
+        return new CodeGraph({
+          projectRoot: args.projectRoot,
+          outputDir: path.join(args.projectRoot, 'output'),
+        });
       }},
     ];
 
@@ -2937,15 +3049,19 @@ async function runSkillGenerateAI(args) {
     const dryRun = args['dry-run'] === 'true' || args['dry-run'] === true || args.dryRun === true;
     const force = args.force === 'true' || args.force === true;
 
-    // Load code-graph.json for refined signal extraction
+    // Load layered code graph for refined signal extraction (L1 index + optional shards, fallback L3).
+    // Use dual budget (maxShards + maxSymbols) so post-split projects with many small
+    // shards (e.g. WePop after depth-2 drill-down) still get good coverage.
     let codeGraph = {};
     try {
-      const cgPath = path.join(projectRoot, 'output', 'code-graph.json');
-      if (fs.existsSync(cgPath)) {
-        codeGraph = JSON.parse(fs.readFileSync(cgPath, 'utf-8'));
-      }
+      const { loadLayeredCodeGraph } = require('../core/code-graph-layered-reader');
+      codeGraph = loadLayeredCodeGraph(projectRoot, {
+        includeTopShards: true,
+        maxShards: 6,
+        maxSymbols: 20000,
+      });
     } catch (cgErr) {
-      console.error(`[skill-generate-ai] Could not load code-graph.json: ${cgErr.message}`);
+      console.error(`[skill-generate-ai] Could not load layered code graph: ${cgErr.message}`);
     }
 
     // Build lightweight packaged context
@@ -3005,10 +3121,14 @@ async function runSkillGenerateAI(args) {
     const skillDir = path.join(projectRoot, '.workflow', 'skills', (skillName || path.basename(projectRoot)).toLowerCase());
     const skillPath = path.join(skillDir, 'SKILL.md');
 
-    // Write SKILL.md if not dryRun
+    const referenceFiles = result.referenceFiles || {};
+    let referencePaths = [];
+    let writeResult = null;
+
     if (!dryRun && result.skillMarkdown) {
-      if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true });
-      fs.writeFileSync(skillPath, result.skillMarkdown, 'utf-8');
+      const { atomicWriteShardedSkill } = require('../core/skill-sharding');
+      writeResult = atomicWriteShardedSkill(skillDir, result.skillMarkdown, referenceFiles);
+      referencePaths = Object.keys(referenceFiles).map(rel => path.join(skillDir, rel));
     }
 
     return {
@@ -3017,6 +3137,10 @@ async function runSkillGenerateAI(args) {
       data: {
         skillName: skillName || path.basename(projectRoot),
         skillPath: dryRun ? null : skillPath,
+        referencePaths: dryRun ? [] : referencePaths,
+        shardingMode: result.shardingMode || (Object.keys(referenceFiles).length > 0 ? 'sharded' : 'single'),
+        referenceFileCount: Object.keys(referenceFiles).length,
+        writeResult,
         tokenUsage: result.metadata && result.metadata.tokenEstimate,
         sectionCount: (result.skillMarkdown || '').split('##').length - 1,
         generationTimeMs: Date.now(),
@@ -3179,7 +3303,9 @@ async function runGenSkill(args) {
       console.error(`[gen-skill] Meta-skill resolve skipped: ${metaErr.message}`);
     }
 
-    const shouldGenerate = !skillExists || args.force;
+    const force = args.force === true || args.force === 'true';
+    const dryRun = args['dry-run'] === true || args['dry-run'] === 'true' || args.dryRun === true;
+    const shouldGenerate = !skillExists || force;
     const qualityRubric = {
       language: 'zh-CN',
       minWordCount: 3000,
@@ -3204,15 +3330,37 @@ async function runGenSkill(args) {
       forbiddenContent: ['通用软件工程建议', '未验证的文件路径', '空章节', 'TODO 占位'],
     };
 
-    const mandatoryNextAction = (shouldGenerate && skillAuthorGuide) ? {
+    let generationResult = null;
+    let generated = false;
+    let generationError = null;
+    if (shouldGenerate) {
+      try {
+        const { generate: generateProjectSkill } = require('../core/skill-generator-facade');
+        generationResult = await generateProjectSkill(targetProjectRoot, {
+          fileList: codeSignals.map(s => s.file || s.path || s.source).filter(Boolean),
+          force,
+          dryRun,
+          maxFiles: parseInt(args.maxFiles || args['max-files'] || args.files || 5000, 10),
+          llmAdapterPath: args.llmModule || args['llm-module'] || null,
+        });
+        generated = !!(generationResult && generationResult.skillPath && !generationResult.error);
+        if (generationResult && generationResult.error) generationError = generationResult.error;
+      } catch (genErr) {
+        generationError = genErr.message;
+        console.error(`[gen-skill] Automatic generation failed: ${genErr.message}`);
+      }
+    }
+
+    const mandatoryNextAction = (!generated && shouldGenerate && skillAuthorGuide) ? {
       type: 'READ_META_SKILL_FIRST',
       instruction: [
         '⛔ 在生成 SKILL.md 之前，你 MUST 按顺序执行：',
         `1. read_file ${skillAuthorGuide.path}`,
-        '2. read_file output/code-graph.json',
-        '3. read_file output/business-logic.json (如存在)',
-        '4. read_file output/api-endpoints.json (如存在)',
-        '5. 按 meta-skill §1 完成 4 个 read_file + 5 个源文件深读',
+        '2. read_file output/code-graph-index.json（L1 轻量索引；不要默认读 11MB code-graph.json）',
+        '3. 如需深读模块，再 read_file output/code-graph-shards/<module>.json',
+        '4. read_file output/business-logic.json (如存在)',
+        '5. read_file output/api-endpoints.json (如存在)',
+        '6. 按 meta-skill §1 完成 4 个 read_file + 5 个源文件深读',
         '',
         '📐 v2.1 分片产出要求（按 sharding-strategy.md）：',
         '- 产出结构：<project>/SKILL.md（主文件）+ <project>/references/d1~d4.md（4 分片）',
@@ -3226,7 +3374,8 @@ async function runGenSkill(args) {
       ].join('\n'),
       readOrder: [
         skillAuthorGuide.path,
-        'output/code-graph.json',
+        'output/code-graph-index.json',
+        'output/code-graph-shards/<relevant-module>.json',
         'output/business-logic.json',
         'output/api-endpoints.json',
       ],
@@ -3250,19 +3399,33 @@ async function runGenSkill(args) {
         hasArchitecture,
         hasPatterns,
         skillExists,
-        skillPath,
+        skillPath: (generationResult && generationResult.skillPath) || skillPath,
         skillDir,
         topSignals,
         signalsSummary: formatSignalsForLLM ? formatSignalsForLLM(allSignals) : null,
         recommendation,
-        nextStep: skillExists && !args.force
-          ? 'USER_CONFIRM_OVERWRITE'
-          : coverageLevel === 'low'
-            ? 'USER_CONFIRM_LOW_COVERAGE'
-            : 'USER_CONFIRM_GENERATE',
+        generated,
+        generationError,
+        generation: generationResult ? {
+          skillName: generationResult.skillName,
+          skillPath: generationResult.skillPath,
+          referencePaths: generationResult.referencePaths || [],
+          shardingMode: generationResult.shardingMode || 'unknown',
+          wasFallback: !!generationResult.wasFallback,
+          confidenceSummary: generationResult.confidenceSummary || null,
+          dryRun,
+        } : null,
+        nextStep: generated
+          ? 'GENERATED'
+          : skillExists && !force
+            ? 'USER_CONFIRM_OVERWRITE'
+            : coverageLevel === 'low'
+              ? 'USER_CONFIRM_LOW_COVERAGE'
+              : 'USER_CONFIRM_GENERATE',
         skillAuthorGuide,
         mandatoryReadBeforeGenerate: [
-          'output/code-graph.json',
+          'output/code-graph-index.json',
+          'output/code-graph-shards/<relevant-module>.json',
           'output/business-logic.json',
           'output/api-endpoints.json',
           ...(skillAuthorGuide ? [skillAuthorGuide.path] : []),
@@ -3678,6 +3841,467 @@ async function runExecutionValidate(args) {
  * Run PromptAutoOptimizer to analyze feedback history and generate suggestions.
  * Zero LLM calls — uses heuristic pattern analysis on feedback data.
  */
+function runPromptContextInventory(args) {
+  try {
+    const { writePromptContextInventory } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = writePromptContextInventory({ projectRoot });
+    return {
+      success: true,
+      subcommand: 'prompt-context-inventory',
+      data: {
+        mode: result.inventory.mode,
+        changedPromptOutput: result.inventory.changedPromptOutput,
+        totalBlocks: result.inventory.summary.totalBlocks,
+        totalEstimatedTokens: result.inventory.summary.totalEstimatedTokens,
+        byType: result.inventory.summary.byType,
+        byOwner: result.inventory.summary.byOwner,
+        duplicateSummary: result.duplicateReport.summary,
+        artifacts: {
+          inventory: path.relative(projectRoot, result.paths.inventory).replace(/\\/g, '/'),
+          duplicates: path.relative(projectRoot, result.paths.duplicates).replace(/\\/g, '/'),
+          duplicatesMarkdown: path.relative(projectRoot, result.paths.duplicatesMarkdown).replace(/\\/g, '/'),
+        },
+        recommendation: result.duplicateReport.summary.duplicateBlockCount > 0
+          ? 'Review prompt-context-duplicates.md before consolidating any content. This command is shadow-only and does not change prompt output.'
+          : 'No duplicate candidates found. This command is shadow-only and does not change prompt output.',
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'prompt-context-inventory', error: err.message };
+  }
+}
+
+function runPromptContextGovernance(args) {
+  try {
+    const { writePromptContextDuplicateGovernance } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = writePromptContextDuplicateGovernance({ projectRoot });
+    const governance = result.governance;
+    return {
+      success: true,
+      subcommand: 'prompt-context-governance',
+      data: {
+        mode: governance.mode,
+        changedPromptOutput: governance.changedPromptOutput,
+        summary: governance.summary,
+        rules: governance.rules,
+        artifacts: {
+          governance: path.relative(projectRoot, result.paths.governance).replace(/\\/g, '/'),
+          allowlist: path.relative(projectRoot, result.paths.allowlist).replace(/\\/g, '/'),
+          mergeSuggestions: path.relative(projectRoot, result.paths.mergeSuggestions).replace(/\\/g, '/'),
+          mergeSuggestionsMarkdown: path.relative(projectRoot, result.paths.mergeSuggestionsMarkdown).replace(/\\/g, '/'),
+        },
+        recommendation: governance.summary.mergeSuggestionCount > 0
+          ? 'Review prompt-context-merge-suggestions.md and apply changes manually; this command is shadow-only and does not change prompt output.'
+          : 'No actionable merge suggestions found; review allowlist before changing scanner filters.',
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'prompt-context-governance', error: err.message };
+  }
+}
+
+function runPromptContextRegistry(args) {
+  try {
+    const { writePromptContextRegistry } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = writePromptContextRegistry({ projectRoot });
+    return {
+      success: true,
+      subcommand: 'prompt-context-registry',
+      data: {
+        mode: result.registry.mode,
+        changedPromptOutput: result.registry.changedPromptOutput,
+        registrySummary: result.registry.summary,
+        shadowAssemblySummary: result.shadowAssembly.summary,
+        artifacts: {
+          registry: path.relative(projectRoot, result.paths.registry).replace(/\\/g, '/'),
+          shadowAssembly: path.relative(projectRoot, result.paths.shadowAssembly).replace(/\\/g, '/'),
+          shadowAssemblyMarkdown: path.relative(projectRoot, result.paths.shadowAssemblyMarkdown).replace(/\\/g, '/'),
+          inventory: path.relative(projectRoot, result.paths.inventory).replace(/\\/g, '/'),
+          governance: path.relative(projectRoot, result.paths.governance).replace(/\\/g, '/'),
+        },
+        recommendation: 'Review prompt-context-shadow-assembly.md before building a real assembler. This command is shadow-only and does not change prompt output.',
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'prompt-context-registry', error: err.message };
+  }
+}
+
+function runPromptContextAssemblerDiff(args) {
+  try {
+    const { writePromptContextAssemblerShadowDiff } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = writePromptContextAssemblerShadowDiff({ projectRoot });
+    return {
+      success: true,
+      subcommand: 'prompt-context-assembler-diff',
+      data: {
+        mode: result.assemblerDiff.mode,
+        changedPromptOutput: result.assemblerDiff.changedPromptOutput,
+        summary: result.assemblerDiff.summary,
+        artifacts: {
+          shadowCandidates: path.relative(projectRoot, result.paths.shadowCandidates).replace(/\\/g, '/'),
+          shadowDiff: path.relative(projectRoot, result.paths.shadowDiff).replace(/\\/g, '/'),
+          shadowDiffMarkdown: path.relative(projectRoot, result.paths.shadowDiffMarkdown).replace(/\\/g, '/'),
+          registry: path.relative(projectRoot, result.paths.registry).replace(/\\/g, '/'),
+          shadowAssembly: path.relative(projectRoot, result.paths.shadowAssembly).replace(/\\/g, '/'),
+        },
+        recommendation: 'Review prompt-context-shadow-diff.md before attempting any runtime PromptContextAssembler migration. This command is shadow-only and does not change prompt output.',
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'prompt-context-assembler-diff', error: err.message };
+  }
+}
+
+async function runPromptContextDynamicContextDiff(args) {
+  try {
+    const { writePromptContextDynamicContextShadowDiff } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = await writePromptContextDynamicContextShadowDiff({ projectRoot, requirement: args.requirement || args.task });
+    return {
+      success: true,
+      subcommand: 'prompt-context-dynamic-context-diff',
+      data: {
+        mode: result.dynamicContextDiff.mode,
+        changedPromptOutput: result.dynamicContextDiff.changedPromptOutput,
+        summary: result.dynamicContextDiff.summary,
+        artifacts: {
+          dynamicContextInjections: path.relative(projectRoot, result.paths.dynamicContextInjections).replace(/\\/g, '/'),
+          dynamicContextDiff: path.relative(projectRoot, result.paths.dynamicContextDiff).replace(/\\/g, '/'),
+          dynamicContextDiffMarkdown: path.relative(projectRoot, result.paths.dynamicContextDiffMarkdown).replace(/\\/g, '/'),
+          registry: path.relative(projectRoot, result.paths.registry).replace(/\\/g, '/'),
+        },
+        recommendation: 'Review prompt-context-dynamic-context-diff.md before migrating ContextLoader dynamic injections. This command is shadow-only and does not change prompt output.',
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'prompt-context-dynamic-context-diff', error: err.message };
+  }
+}
+
+async function runPromptContextSelectionBudget(args) {
+  try {
+    const { writePromptContextSelectionBudget } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = await writePromptContextSelectionBudget({ projectRoot, requirement: args.requirement || args.task });
+    return {
+      success: true,
+      subcommand: 'prompt-context-selection-budget',
+      data: {
+        mode: result.selectionBudget.mode,
+        changedPromptOutput: result.selectionBudget.changedPromptOutput,
+        summary: result.selectionBudget.summary,
+        budget: result.selectionBudget.budget,
+        artifacts: {
+          selectionBudget: path.relative(projectRoot, result.paths.selectionBudget).replace(/\\/g, '/'),
+          selectionBudgetMarkdown: path.relative(projectRoot, result.paths.selectionBudgetMarkdown).replace(/\\/g, '/'),
+          dynamicContextDiff: path.relative(projectRoot, result.paths.dynamicContextDiff).replace(/\\/g, '/'),
+          registry: path.relative(projectRoot, result.paths.registry).replace(/\\/g, '/'),
+        },
+        recommendation: 'Review prompt-context-selection-budget.md before any real PromptContextAssembler migration. This command is shadow-only and does not change prompt output.',
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'prompt-context-selection-budget', error: err.message };
+  }
+}
+
+async function runPromptContextFullPromptParity(args) {
+  try {
+    const { writePromptContextFullPromptShadowParity } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = await writePromptContextFullPromptShadowParity({ projectRoot, requirement: args.requirement || args.task });
+    return {
+      success: true,
+      subcommand: 'prompt-context-full-parity',
+      data: {
+        mode: result.fullPromptParity.mode,
+        changedPromptOutput: result.fullPromptParity.changedPromptOutput,
+        summary: result.fullPromptParity.summary,
+        artifacts: {
+          fullShadowCandidates: path.relative(projectRoot, result.paths.fullShadowCandidates).replace(/\\/g, '/'),
+          fullShadowParity: path.relative(projectRoot, result.paths.fullShadowParity).replace(/\\/g, '/'),
+          fullShadowParityMarkdown: path.relative(projectRoot, result.paths.fullShadowParityMarkdown).replace(/\\/g, '/'),
+          selectionBudget: path.relative(projectRoot, result.paths.selectionBudget).replace(/\\/g, '/'),
+          registry: path.relative(projectRoot, result.paths.registry).replace(/\\/g, '/'),
+        },
+        recommendation: 'Review prompt-context-full-shadow-parity.md before any dual-write or runtime migration. This command is shadow-only and does not change prompt output.',
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'prompt-context-full-parity', error: err.message };
+  }
+}
+
+async function runPromptContextDualWriteCanary(args) {
+  try {
+    const { writePromptContextDualWriteCanary } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = await writePromptContextDualWriteCanary({ projectRoot, requirement: args.requirement || args.task });
+    return {
+      success: true,
+      subcommand: 'prompt-context-dual-write-canary',
+      data: {
+        mode: result.dualWriteCanary.mode,
+        changedPromptOutput: result.dualWriteCanary.changedPromptOutput,
+        summary: result.dualWriteCanary.summary,
+        rollbackGate: {
+          passed: result.dualWriteCanary.rollbackGate.passed,
+          shouldRollback: result.dualWriteCanary.rollbackGate.shouldRollback,
+          summary: result.dualWriteCanary.rollbackGate.summary,
+        },
+        artifacts: {
+          dualWritePayloads: path.relative(projectRoot, result.paths.dualWritePayloads).replace(/\\/g, '/'),
+          dualWriteCanary: path.relative(projectRoot, result.paths.dualWriteCanary).replace(/\\/g, '/'),
+          dualWriteCanaryMarkdown: path.relative(projectRoot, result.paths.dualWriteCanaryMarkdown).replace(/\\/g, '/'),
+          dualWriteRollbackGate: path.relative(projectRoot, result.paths.dualWriteRollbackGate).replace(/\\/g, '/'),
+          fullShadowParity: path.relative(projectRoot, result.paths.fullShadowParity).replace(/\\/g, '/'),
+        },
+        recommendation: 'Review prompt-context-dual-write-canary.md and rollback gate before any runtime migration. This command is shadow-only and does not change prompt output.',
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'prompt-context-dual-write-canary', error: err.message };
+  }
+}
+
+async function runPromptContextMigrationGate(args) {
+  try {
+    const { writePromptContextMigrationGate } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = await writePromptContextMigrationGate({ projectRoot, requirement: args.requirement || args.task });
+    return {
+      success: true,
+      subcommand: 'prompt-context-migration-gate',
+      data: {
+        mode: result.migrationGate.mode,
+        changedPromptOutput: result.migrationGate.changedPromptOutput,
+        summary: result.migrationGate.summary,
+        rolloutSwitch: result.migrationGate.rolloutSwitch,
+        rollbackStrategy: result.migrationGate.rollbackStrategy,
+        artifacts: {
+          migrationGate: path.relative(projectRoot, result.paths.migrationGate).replace(/\\/g, '/'),
+          migrationGateMarkdown: path.relative(projectRoot, result.paths.migrationGateMarkdown).replace(/\\/g, '/'),
+          migrationRolloutPolicy: path.relative(projectRoot, result.paths.migrationRolloutPolicy).replace(/\\/g, '/'),
+          dualWriteRollbackGate: path.relative(projectRoot, result.paths.dualWriteRollbackGate).replace(/\\/g, '/'),
+          dualWriteCanaryMarkdown: path.relative(projectRoot, result.paths.dualWriteCanaryMarkdown).replace(/\\/g, '/'),
+        },
+        recommendation: 'Use migration gate artifacts in CI/manual review. Keep runtime mode until a separate runtime migration explicitly changes the rollout switch.',
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'prompt-context-migration-gate', error: err.message };
+  }
+}
+
+function runPromptContextMigrationCheck(args) {
+  try {
+    const { writePromptContextMigrationCheck } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = writePromptContextMigrationCheck({ projectRoot });
+    const data = {
+      mode: result.migrationCheck.mode,
+      changedPromptOutput: result.migrationCheck.changedPromptOutput,
+      summary: result.migrationCheck.summary,
+      failed: result.migrationCheck.failed,
+      artifacts: {
+        migrationCheck: path.relative(projectRoot, result.paths.migrationCheck).replace(/\\/g, '/'),
+        migrationCheckMarkdown: path.relative(projectRoot, result.paths.migrationCheckMarkdown).replace(/\\/g, '/'),
+      },
+      recommendation: result.migrationCheck.recommendation,
+    };
+    return {
+      success: result.migrationCheck.summary.passed === true,
+      subcommand: 'prompt-context-migration-check',
+      data,
+      ...(result.migrationCheck.summary.passed ? {} : { error: 'PromptContextAssembler migration check failed' }),
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'prompt-context-migration-check', error: err.message };
+  }
+}
+
+function runUnifiedLLMInjectionCallSiteInventory(args) {
+  try {
+    const { writeUnifiedLLMInjectionCallSiteInventory } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = writeUnifiedLLMInjectionCallSiteInventory({ projectRoot });
+    return {
+      success: true,
+      subcommand: 'unified-llm-injection-inventory',
+      data: {
+        mode: result.callSiteInventory.mode,
+        changedPromptOutput: result.callSiteInventory.changedPromptOutput,
+        summary: result.callSiteInventory.summary,
+        p3PromptBuilderGovernance: result.callSiteInventory.p3PromptBuilderGovernance,
+        recommendations: result.callSiteInventory.recommendations,
+        artifacts: {
+          inventory: path.relative(projectRoot, result.paths.unifiedLLMInjectionCallSiteInventory).replace(/\\/g, '/'),
+          inventoryMarkdown: path.relative(projectRoot, result.paths.unifiedLLMInjectionCallSiteInventoryMarkdown).replace(/\\/g, '/'),
+        },
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'unified-llm-injection-inventory', error: err.message };
+  }
+}
+
+function runUnifiedLLMInjectionRuntimeReadinessGate(args) {
+  try {
+    const { writeUnifiedLLMInjectionRuntimeReadinessGate } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = writeUnifiedLLMInjectionRuntimeReadinessGate({ projectRoot });
+    return {
+      success: true,
+      subcommand: 'unified-llm-injection-readiness-gate',
+      data: {
+        mode: result.readinessGate.mode,
+        changedPromptOutput: result.readinessGate.changedPromptOutput,
+        summary: result.readinessGate.summary,
+        priorityCoverage: result.readinessGate.priorityCoverage,
+        failed: result.readinessGate.failed,
+        recommendation: result.readinessGate.recommendation,
+        artifacts: {
+          readinessGate: path.relative(projectRoot, result.paths.unifiedLLMInjectionRuntimeReadinessGate).replace(/\\/g, '/'),
+          readinessGateMarkdown: path.relative(projectRoot, result.paths.unifiedLLMInjectionRuntimeReadinessGateMarkdown).replace(/\\/g, '/'),
+          inventory: path.relative(projectRoot, result.paths.unifiedLLMInjectionCallSiteInventory).replace(/\\/g, '/'),
+        },
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'unified-llm-injection-readiness-gate', error: err.message };
+  }
+}
+
+function runUnifiedLLMInjectionCandidateRuntimeCanary(args) {
+  try {
+    const { writeUnifiedLLMInjectionCandidateRuntimeCanary } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const allowlistArg = args.allowlist ?? args['allowlist'];
+    const allowlist = allowlistArg ? String(allowlistArg).split(',').map(s => s.trim()).filter(Boolean) : null;
+    const approvedArg = args.approved ?? args['approved'];
+    const percentArg = args.percent ?? args['percent'] ?? args.canaryPercent ?? args['canary-percent'] ?? 1;
+    const result = writeUnifiedLLMInjectionCandidateRuntimeCanary({
+      projectRoot,
+      approved: approvedArg === 'true' || approvedArg === true,
+      allowlist,
+      percent: percentArg,
+    });
+    return {
+      success: true,
+      subcommand: 'unified-llm-injection-canary',
+      data: {
+        mode: result.canary.mode,
+        changedPromptOutput: result.canary.changedPromptOutput,
+        summary: result.canary.summary,
+        envSwitches: result.canary.envSwitches,
+        sloGate: result.canary.sloGate,
+        recommendation: result.canary.recommendation,
+        artifacts: {
+          canary: path.relative(projectRoot, result.paths.unifiedLLMInjectionCandidateRuntimeCanary).replace(/\\/g, '/'),
+          canaryMarkdown: path.relative(projectRoot, result.paths.unifiedLLMInjectionCandidateRuntimeCanaryMarkdown).replace(/\\/g, '/'),
+          readinessGate: path.relative(projectRoot, result.paths.unifiedLLMInjectionRuntimeReadinessGate).replace(/\\/g, '/'),
+        },
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'unified-llm-injection-canary', error: err.message };
+  }
+}
+
+function runUnifiedLLMInjectionDefaultRuntimeReplacement(args) {
+  try {
+    const { writeUnifiedLLMInjectionDefaultRuntimeReplacement } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = writeUnifiedLLMInjectionDefaultRuntimeReplacement({ projectRoot });
+    return {
+      success: true,
+      subcommand: 'unified-llm-injection-default-replacement',
+      data: {
+        mode: result.defaultReplacement.mode,
+        changedPromptOutput: result.defaultReplacement.changedPromptOutput,
+        summary: result.defaultReplacement.summary,
+        defaultRuntimePolicy: result.defaultReplacement.defaultRuntimePolicy,
+        rollbackPolicy: result.defaultReplacement.rollbackPolicy,
+        recommendation: result.defaultReplacement.recommendation,
+        artifacts: {
+          defaultReplacement: path.relative(projectRoot, result.paths.unifiedLLMInjectionDefaultRuntimeReplacement).replace(/\\/g, '/'),
+          defaultReplacementMarkdown: path.relative(projectRoot, result.paths.unifiedLLMInjectionDefaultRuntimeReplacementMarkdown).replace(/\\/g, '/'),
+          readinessGate: path.relative(projectRoot, result.paths.unifiedLLMInjectionRuntimeReadinessGate).replace(/\\/g, '/'),
+          canary: path.relative(projectRoot, result.paths.unifiedLLMInjectionCandidateRuntimeCanary).replace(/\\/g, '/'),
+        },
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'unified-llm-injection-default-replacement', error: err.message };
+  }
+}
+
+function runUnifiedLLMInjectionCIGate(args) {
+  try {
+    const { writeUnifiedLLMInjectionCIGate } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = writeUnifiedLLMInjectionCIGate({ projectRoot });
+    const data = {
+      mode: result.ciGate.mode,
+      changedPromptOutput: result.ciGate.changedPromptOutput,
+      summary: result.ciGate.summary,
+      failed: result.ciGate.failed,
+      recommendation: result.ciGate.recommendation,
+      ciCommand: result.ciGate.ciCommand,
+      artifacts: {
+        ciGate: path.relative(projectRoot, result.paths.unifiedLLMInjectionCIGate).replace(/\\/g, '/'),
+        ciGateMarkdown: path.relative(projectRoot, result.paths.unifiedLLMInjectionCIGateMarkdown).replace(/\\/g, '/'),
+        defaultReplacement: path.relative(projectRoot, result.paths.unifiedLLMInjectionDefaultRuntimeReplacement).replace(/\\/g, '/'),
+        readinessGate: path.relative(projectRoot, result.paths.unifiedLLMInjectionRuntimeReadinessGate).replace(/\\/g, '/'),
+      },
+    };
+    return {
+      success: result.ciGate.summary.passed === true,
+      subcommand: 'unified-llm-injection-ci-gate',
+      data,
+      ...(result.ciGate.summary.passed === true ? {} : { error: 'Unified LLM Injection CI gate failed' }),
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'unified-llm-injection-ci-gate', error: err.message };
+  }
+}
+
+function runUnifiedLLMInjectionSLODashboard(args) {
+  try {
+    const { writeUnifiedLLMInjectionSLODashboard } = require('../core/prompt-context-inventory');
+    const projectRoot = path.resolve(args.projectRoot || '.');
+    const result = writeUnifiedLLMInjectionSLODashboard({ projectRoot });
+    return {
+      success: true,
+      subcommand: 'unified-llm-injection-slo-dashboard',
+      data: {
+        mode: result.sloDashboard.mode,
+        changedPromptOutput: result.sloDashboard.changedPromptOutput,
+        health: result.sloDashboard.summary.health,
+        releaseReady: result.sloDashboard.summary.releaseReady,
+        summary: result.sloDashboard.summary,
+        dataCoverage: result.sloDashboard.dataCoverage,
+        checks: result.sloDashboard.checks,
+        failed: result.sloDashboard.failed,
+        recommendation: result.sloDashboard.releaseRecommendation,
+        artifacts: {
+          dashboard: path.relative(projectRoot, result.paths.unifiedLLMInjectionSLODashboard).replace(/\\/g, '/'),
+          dashboardMarkdown: path.relative(projectRoot, result.paths.unifiedLLMInjectionSLODashboardMarkdown).replace(/\\/g, '/'),
+          releaseHealthSummary: path.relative(projectRoot, result.paths.unifiedLLMInjectionReleaseHealthSummary).replace(/\\/g, '/'),
+          ciGate: result.paths.unifiedLLMInjectionCIGate ? path.relative(projectRoot, result.paths.unifiedLLMInjectionCIGate).replace(/\\/g, '/') : null,
+        },
+      },
+    };
+  } catch (err) {
+    return { success: false, subcommand: 'unified-llm-injection-slo-dashboard', error: err.message };
+  }
+}
+
 function runPromptOptimize(args) {
   try {
     const { PromptAutoOptimizer } = require('../core/prompt-auto-optimizer');
@@ -3730,6 +4354,142 @@ function runPromptOptimize(args) {
 
 // ─── Sub-command: retrospective-signal ───────────────────────────────────────
 
+function _stripMarkdownCell(value) {
+  return String(value || '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+}
+
+function _splitMarkdownRow(line) {
+  const text = String(line || '').trim();
+  if (!text.startsWith('|')) return [];
+  return text
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map(_stripMarkdownCell);
+}
+
+function _extractRetrospectiveFromMarkdown(markdown) {
+  const lines = String(markdown || '').split(/\r?\n/);
+  const result = { prevention: '', capability: '', efficiency: '', found: false };
+  const headingStart = lines.findIndex(line => /^#{1,4}\s+.*(?:复盘\s*\/\s*Retrospective|Retrospective|复盘)/i.test(line));
+  const start = headingStart >= 0
+    ? headingStart
+    : lines.findIndex(line => /复盘\s*\/\s*Retrospective|Retrospective|复盘/i.test(line));
+  const scan = start >= 0 ? lines.slice(start + 1, start + 20) : lines;
+
+  for (const line of scan) {
+    if (!line.trim().startsWith('|')) continue;
+    if (/^\|?\s*-+\s*\|/.test(line)) continue;
+    const cells = _splitMarkdownRow(line);
+    if (cells.length < 3) continue;
+    const layer = cells[0].toLowerCase();
+    const answer = cells[cells.length - 1];
+    if (!answer || /^answer$/i.test(answer)) continue;
+    if (layer.includes('prevention') || layer.includes('预防')) result.prevention = answer;
+    if (layer.includes('capability') || layer.includes('能力')) result.capability = answer;
+    if (layer.includes('efficiency') || layer.includes('效率')) result.efficiency = answer;
+  }
+
+  result.found = !!(result.prevention || result.capability || result.efficiency);
+  return result;
+}
+
+function _readJsonlRecords(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  return fs.readFileSync(filePath, 'utf-8')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      try { return JSON.parse(line); } catch { return null; }
+    })
+    .filter(Boolean);
+}
+
+function _readRetrospectiveSources(projectRoot, outputDir) {
+  const candidates = [
+    path.join(outputDir, 'finished.md'),
+    path.join(outputDir, 'final-summary.md'),
+    path.join(outputDir, 'completion-summary.md'),
+    path.join(outputDir, 'deploy-output.md'),
+    path.join(outputDir, 'session-summary.md'),
+  ];
+  for (const filePath of candidates) {
+    if (!fs.existsSync(filePath)) continue;
+    const parsed = _extractRetrospectiveFromMarkdown(fs.readFileSync(filePath, 'utf-8'));
+    if (parsed.found) return { ...parsed, source: path.relative(projectRoot, filePath).replace(/\\/g, '/') };
+  }
+  return { prevention: '', capability: '', efficiency: '', found: false, source: null };
+}
+
+function _retrospectiveFingerprint(retrospective) {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(JSON.stringify({
+    source: retrospective.source || '',
+    prevention: retrospective.prevention || '',
+    capability: retrospective.capability || '',
+    efficiency: retrospective.efficiency || '',
+  })).digest('hex');
+}
+
+function _injectRetrospectiveSignals(args, retrospective) {
+  const projectRoot = args.projectRoot || '.';
+  const outputDir = path.join(projectRoot, 'output');
+  const capturePath = path.join(outputDir, 'retrospective-signals.json');
+  const sourceHash = _retrospectiveFingerprint(retrospective);
+  if (fs.existsSync(capturePath)) {
+    try {
+      const previous = JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
+      if (previous && previous.sourceHash === sourceHash) {
+        return { ...previous, reused: true };
+      }
+    } catch { /* stale or invalid cache; reprocess */ }
+  }
+
+  const feedbackPath = path.join(projectRoot, 'output', 'agent-feedback-history.jsonl');
+  const { ExperienceStore } = require('../core/experience-store');
+  const beforeStore = new ExperienceStore({ projectRoot });
+  const beforeIds = new Set((beforeStore.experiences || []).map(exp => exp.id));
+  const beforeFeedbackIds = new Set(_readJsonlRecords(feedbackPath).map(record => record.id).filter(Boolean));
+
+  const signalResult = runRetrospectiveSignal({
+    projectRoot,
+    stage: args.stage || 'FINISHED',
+    prevention: retrospective.prevention || '',
+    capability: retrospective.capability || '',
+    efficiency: retrospective.efficiency || '',
+  });
+
+  const afterStore = new ExperienceStore({ projectRoot });
+  const experienceIds = (afterStore.experiences || [])
+    .map(exp => exp.id)
+    .filter(id => !beforeIds.has(id));
+  const promptFeedbackIds = _readJsonlRecords(feedbackPath)
+    .map(record => record.id)
+    .filter(id => id && !beforeFeedbackIds.has(id));
+
+  const capture = {
+    source: retrospective.source || 'args',
+    sourceHash,
+    reused: false,
+    capturedAt: new Date().toISOString(),
+    signalsProcessed: signalResult?.data?.signalsProcessed || 0,
+    experienceIds,
+    promptFeedbackIds,
+    signalResult,
+  };
+  try {
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+    fs.writeFileSync(capturePath, JSON.stringify(capture, null, 2), 'utf-8');
+  } catch { /* non-fatal */ }
+  return capture;
+}
+
 /**
  * Inject retrospective insights from FINISHED stage into EvolutionLoop.
  * Retrospective signals have confidence=1.0 (human-confirmed, highest quality).
@@ -3761,10 +4521,19 @@ function runRetrospectiveSignal(args) {
     }
 
     const projectRoot = args.projectRoot || '.';
+    const feedbackPath = path.join(projectRoot, 'output', 'agent-feedback-history.jsonl');
+    const beforeFeedbackIds = new Set(_readJsonlRecords(feedbackPath).map(record => record.id).filter(Boolean));
     const experienceStore = new ExperienceStore({ projectRoot });
+    const beforeExperienceIds = new Set((experienceStore.experiences || []).map(exp => exp.id));
     const loop = new EvolutionLoop({ experienceStore, outputDir: require('path').join(projectRoot, 'output') });
 
     const results = loop.processRetrospective(stage, { prevention, capability, efficiency });
+    const experienceIds = (experienceStore.experiences || [])
+      .map(exp => exp.id)
+      .filter(id => !beforeExperienceIds.has(id));
+    const promptFeedbackIds = _readJsonlRecords(feedbackPath)
+      .map(record => record.id)
+      .filter(id => id && !beforeFeedbackIds.has(id));
 
     return {
       success: true,
@@ -3772,7 +4541,9 @@ function runRetrospectiveSignal(args) {
       data: {
         stage,
         signalsProcessed: results.length,
-        results: results.map(r => ({ type: r?.type || 'processed', status: r?.status || 'ok' })),
+        experienceIds,
+        promptFeedbackIds,
+        results: results.map(r => ({ type: r?.type || 'processed', status: r?.status || 'ok', action: r?.action || null })),
         recommendation: results.length > 0
           ? `${results.length} retrospective signal(s) injected into EvolutionLoop. Run experience-evolve to distill.`
           : 'No valid signals (content too short or generic). Provide more specific retrospective content.',
@@ -5141,6 +5912,34 @@ function runSessionSummary(args) {
     const planContent     = readArtifact('execution-plan.md');
     const diffContent     = readArtifact('code.diff');
 
+    const retrospectiveInput = (args.prevention || args.capability || args.efficiency)
+      ? {
+          prevention: args.prevention || '',
+          capability: args.capability || '',
+          efficiency: args.efficiency || '',
+          found: true,
+          source: 'session-summary args',
+        }
+      : _readRetrospectiveSources(args.projectRoot || '.', outputDir);
+    const retrospectiveCapture = retrospectiveInput.found
+      ? _injectRetrospectiveSignals({ ...args, projectRoot: args.projectRoot || '.', stage: 'FINISHED' }, retrospectiveInput)
+      : (() => {
+          const capturePath = path.join(outputDir, 'retrospective-signals.json');
+          if (fs.existsSync(capturePath)) {
+            try {
+              return { ...JSON.parse(fs.readFileSync(capturePath, 'utf-8')), reused: true };
+            } catch { /* ignore invalid capture */ }
+          }
+          return {
+            source: null,
+            signalsProcessed: 0,
+            experienceIds: [],
+            promptFeedbackIds: [],
+            signalResult: null,
+            reused: false,
+          };
+        })();
+
     // ── Extract key sections from test-report.md ──────────────────────────────
     function extractSection(content, heading) {
       if (!content) return null;
@@ -5252,6 +6051,24 @@ function runSessionSummary(args) {
       lines.push(``);
     }
 
+    // Retrospective capture
+    lines.push(`## ♻️ Retrospective Signals`);
+    lines.push(``);
+    lines.push(`| Metric | Value |`);
+    lines.push(`|---|---|`);
+    lines.push(`| source | ${retrospectiveCapture.source || '(not found)'} |`);
+    lines.push(`| signalsProcessed | ${retrospectiveCapture.signalsProcessed} |`);
+    lines.push(`| experienceIds | ${retrospectiveCapture.experienceIds.length > 0 ? retrospectiveCapture.experienceIds.map(id => `\`${id}\``).join(', ') : '(none)'} |`);
+    lines.push(`| promptFeedbackIds | ${retrospectiveCapture.promptFeedbackIds.length > 0 ? retrospectiveCapture.promptFeedbackIds.map(id => `\`${id}\``).join(', ') : '(none)'} |`);
+    lines.push(`| reused | ${retrospectiveCapture.reused ? 'yes' : 'no'} |`);
+    if (!retrospectiveInput.found) {
+      lines.push(``);
+      lines.push(`> No Retrospective table or --prevention/--capability/--efficiency args found. Nothing was injected into EvolutionLoop.`);
+    }
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(``);
+
     // Footer
     lines.push(`## 📁 All Artifacts`);
     lines.push(``);
@@ -5355,6 +6172,13 @@ function runSessionSummary(args) {
         sessionId,
         artifactsFound: artifacts.filter(([, c]) => c !== null).map(([n]) => n),
         artifactsMissing: artifacts.filter(([, c]) => c === null).map(([n]) => n),
+        retrospective: {
+          source: retrospectiveCapture.source,
+          signalsProcessed: retrospectiveCapture.signalsProcessed,
+          experienceIds: retrospectiveCapture.experienceIds,
+          promptFeedbackIds: retrospectiveCapture.promptFeedbackIds,
+          reused: !!retrospectiveCapture.reused,
+        },
       },
     };
   } catch (err) {
@@ -6065,6 +6889,86 @@ function printHelp() {
           args: '[--error-count <n>] [--test-pass-rate <0-1>] [--duration-ms <ms>] [--llm-calls <n>] [--token-waste <0-1>] [--diagnostic-mode] [--project-root <dir>]',
           example: 'node workflow/tools/ide-workflow-bridge.js quality-gate --error-count 2 --test-pass-rate 0.85 --duration-ms 120000 --diagnostic-mode --project-root .',
         },
+        'adoption-gate': {
+          description: 'Validate Feature Adoption Proof, downstream consumers, semantic quality, regression and fallback policy from completion contract',
+          args: '[--project-root <dir>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js adoption-gate --project-root .',
+        },
+        'prompt-context-inventory': {
+          description: 'Generate shadow-only PromptContextBlock inventory and duplicate reports',
+          args: '[--project-root <dir>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js prompt-context-inventory --project-root .',
+        },
+        'prompt-context-governance': {
+          description: 'Classify PromptContextBlock duplicate groups, generate allowlist and merge suggestions without changing prompt output',
+          args: '[--project-root <dir>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js prompt-context-governance --project-root .',
+        },
+        'prompt-context-registry': {
+          description: 'Generate shadow-only PromptContextRegistry and shadow assembly views from inventory/governance',
+          args: '[--project-root <dir>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js prompt-context-registry --project-root .',
+        },
+        'prompt-context-assembler-diff': {
+          description: 'Generate shadow candidate prompts from PromptContextRegistry shadow assembly and compare with runtime fixed prefixes without changing prompt output',
+          args: '[--project-root <dir>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js prompt-context-assembler-diff --project-root .',
+        },
+        'prompt-context-dynamic-context-diff': {
+          description: 'Compare actual ContextLoader injected sections with PromptContextRegistry skill/context blocks without changing prompt output',
+          args: '[--project-root <dir>] [--requirement <text>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js prompt-context-dynamic-context-diff --project-root .',
+        },
+        'prompt-context-selection-budget': {
+          description: 'Generate shadow selection budget and drift alerts for context-loader-doc/artifact registry blocks without changing prompt output',
+          args: '[--project-root <dir>] [--requirement <text>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js prompt-context-selection-budget --project-root .',
+        },
+        'prompt-context-full-parity': {
+          description: 'Generate full shadow candidate prompts and compare with runtime prompt snapshots without changing prompt output',
+          args: '[--project-root <dir>] [--requirement <text>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js prompt-context-full-parity --project-root .',
+        },
+        'prompt-context-dual-write-canary': {
+          description: 'Record runtime prompt payloads and shared-builder candidate payloads with rollback gate without changing prompt output',
+          args: '[--project-root <dir>] [--requirement <text>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js prompt-context-dual-write-canary --project-root .',
+        },
+        'prompt-context-migration-gate': {
+          description: 'Consume dual-write rollback gate and produce CI/manual migration gate, rollout switch, and rollback strategy without changing prompt output',
+          args: '[--project-root <dir>] [--requirement <text>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js prompt-context-migration-gate --project-root .',
+        },
+        'prompt-context-migration-check': {
+          description: 'CI/manual check that consumes prompt-context-migration-gate.json and exits non-zero when the gate fails',
+          args: '[--project-root <dir>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js prompt-context-migration-check --project-root .',
+        },
+        'unified-llm-injection-inventory': {
+          description: 'Scan prompt construction and LLM call sites, producing a unified LLM injection coverage matrix without changing prompt output',
+          args: '[--project-root <dir>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js unified-llm-injection-inventory --project-root .',
+        },
+        'unified-llm-injection-readiness-gate': {
+          description: 'Check P0/P1/P2 shadow coverage, prompt leakage, rollback signals, and gate evidence before candidate runtime canary without changing prompt output',
+          args: '[--project-root <dir>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js unified-llm-injection-readiness-gate --project-root .',
+        },
+        'unified-llm-injection-canary': {
+          description: 'Generate guarded candidate-runtime canary policy with manual approval, low-risk allowlist, rollback switch, and SLO gate',
+          args: '[--project-root <dir>] [--approved true] [--allowlist <a,b>] [--percent <1-100>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js unified-llm-injection-canary --project-root . --approved true --percent 1',
+        },
+        'unified-llm-injection-default-replacement': {
+          description: 'Generate default runtime replacement policy after readiness/canary evidence passes, with rollback and SLO gates',
+          args: '[--project-root <dir>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js unified-llm-injection-default-replacement --project-root .',
+        },
+        'unified-llm-injection-ci-gate': {
+          description: 'CI blocking gate for Unified LLM Injection: default replacement, readiness, P3 governance, prompt leakage, rollback signal, and legacy call sites',
+          args: '[--project-root <dir>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js unified-llm-injection-ci-gate --project-root .',
+        },
         'experience-evolve': {
           description: 'Trigger experience evolution: purge expired, distill similar, analyze duplicates, check layer health',
           args: '[--project-root <dir>]',
@@ -6116,9 +7020,9 @@ function printHelp() {
           example: 'node workflow/tools/ide-workflow-bridge.js skill-generate-ai --project-root . --skill-name myapp --llm-module workflow/tools/ide-llm-adapter.js',
         },
         'gen-skill': {
-          description: '(IDE Agent) Two-step skill generation: signal discovery (zero LLM) + preview for user confirmation',
-          args: '[--path <dir>] [--project-root <dir>] [--force]',
-          example: 'node workflow/tools/ide-workflow-bridge.js gen-skill --path ./my-project',
+          description: 'Generate project-expert skill from layered CodeGraph with automatic SKILL.md + references/ sharded output',
+          args: '[--path <dir>] [--project-root <dir>] [--force] [--dry-run] [--llm-module <path>]',
+          example: 'node workflow/tools/ide-workflow-bridge.js gen-skill --project-root ./my-project --force',
         },
         'experience-transfer': {
           description: 'Cross-project experience discovery, export, and import',
@@ -6305,7 +7209,8 @@ function runTestExecute(args) {
     // Calculate metrics for quality-gate
     const totalTests = result.totalTests || 0;
     const failedTests = result.failedTests || 0;
-    const passedTests = totalTests - failedTests;
+    const passedTests = Number.isInteger(result.passedTests) ? result.passedTests : totalTests - failedTests;
+    const skippedTests = Number.isInteger(result.skippedTests) ? result.skippedTests : 0;
     const passRate = totalTests > 0 ? passedTests / totalTests : 0;
 
     // P1 Rev.2: Write test-execution-proof.json + bind to trace (Trace-Bound Proof).
@@ -6327,8 +7232,10 @@ function runTestExecute(args) {
         totalTests,
         passedTests,
         failedTests,
+        skippedTests,
         durationMs: result.durationMs || durationMs,
         passRate: Number(passRate.toFixed(4)),
+        testStatus: result.testStatus || null,
       };
       // Compute hash of the core fields (deterministic, excludes proofHash itself)
       const proofHash = crypto.createHash('sha256')
@@ -6349,7 +7256,7 @@ function runTestExecute(args) {
             seq: 99,
             event: 'test_execute',
             stage: 'TEST',
-            data: { proofHash, passed: result.passed, totalTests, passedTests, failedTests },
+            data: { proofHash, passed: result.passed, totalTests, passedTests, failedTests, skippedTests },
           };
           fs.appendFileSync(tracePath, JSON.stringify(traceEvent) + '\n', 'utf-8');
           console.error(`[runTestExecute] ✅ P1 Rev.2: test_execute trace event written, session=${sessionId}`);
@@ -6370,11 +7277,16 @@ function runTestExecute(args) {
         totalTests,
         passedTests,
         failedTests,
+        skippedTests,
         passRate: Number(passRate.toFixed(4)),
         durationMs: result.durationMs || durationMs,
         command: result.command,
         testProfile: normalizedProfile || null,
         failureSummary: result.failureSummary || [],
+        stderr: result.stderr?.slice(0, 3000),
+        testStatus: result.testStatus || null,
+        rootCause: result.testStatus?.rootCause || (result.passed ? 'tests_passed' : 'unknown_test_failure'),
+        statusReasons: result.testStatus?.reasons || [],
         output: result.output?.slice(0, 5000), // Truncate for JSON size
         qualityGateMetrics: {
           testPassRate: passRate,
@@ -6449,6 +7361,282 @@ function _detectTestCommand(projectRoot) {
   }
 
   return null;
+}
+
+function _extractJsonBlock(content, label) {
+  const escaped = String(label || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const patterns = [
+    new RegExp('```json:' + escaped + '\\s*([\\s\\S]*?)```', 'i'),
+    new RegExp('```' + escaped + '\\s*([\\s\\S]*?)```', 'i'),
+    new RegExp('<!--\\s*' + escaped + '\\s*([\\s\\S]*?)-->', 'i'),
+  ];
+  for (const re of patterns) {
+    const match = String(content || '').match(re);
+    if (match && match[1]) return match[1].trim();
+  }
+  return null;
+}
+
+function _loadCompletionContract(projectRoot) {
+  const outputDir = path.join(projectRoot, 'output');
+  const jsonPath = path.join(outputDir, 'completion-contract.json');
+  const planPath = path.join(outputDir, 'execution-plan.md');
+
+  if (fs.existsSync(jsonPath)) {
+    try {
+      return { exists: true, source: 'output/completion-contract.json', contract: JSON.parse(fs.readFileSync(jsonPath, 'utf-8')) };
+    } catch (err) {
+      return { exists: true, source: 'output/completion-contract.json', error: `Invalid JSON: ${err.message}` };
+    }
+  }
+
+  if (fs.existsSync(planPath)) {
+    const plan = fs.readFileSync(planPath, 'utf-8');
+    const block = _extractJsonBlock(plan, 'completion-contract');
+    if (block) {
+      try {
+        return { exists: true, source: 'output/execution-plan.md#completion-contract', contract: JSON.parse(block) };
+      } catch (err) {
+        return { exists: true, source: 'output/execution-plan.md#completion-contract', error: `Invalid JSON: ${err.message}` };
+      }
+    }
+  }
+
+  return { exists: false, source: null, error: 'Missing completion contract. Add a ```json:completion-contract block to output/execution-plan.md or write output/completion-contract.json.' };
+}
+
+function _normalizeCompletionContract(raw) {
+  const c = raw || {};
+  const commands = c.commands || c.userEntryCommands || c.entryCommands || [];
+  const expectedArtifacts = c.expectedArtifacts || c.artifacts || [];
+  const mustNotContain = c.mustNotContain || c.mustFailIfLogsContain || [];
+  const logFiles = c.logFiles || ['output/workflow-progress.log', 'output/test-report.md', 'output/health/prod/workflow-trace.jsonl'];
+  return {
+    commands: Array.isArray(commands) ? commands.map(String).filter(Boolean) : [],
+    expectedArtifacts: Array.isArray(expectedArtifacts) ? expectedArtifacts.map(String).filter(Boolean) : [],
+    mustNotContain: Array.isArray(mustNotContain) ? mustNotContain.map(String).filter(Boolean) : [],
+    logFiles: Array.isArray(logFiles) ? logFiles.map(String).filter(Boolean) : [],
+    timeoutMs: parseInt(c.timeoutMs || c.timeout || '120000', 10) || 120000,
+    featureAdoption: c.featureAdoption || null,
+    downstreamConsumers: c.downstreamConsumers || null,
+    semanticQuality: c.semanticQuality || null,
+    semanticRegression: c.semanticRegression || c.oldVsNewRegression || null,
+    fallbackPolicy: c.fallbackPolicy || null,
+    capabilityChange: !!(c.capabilityChange || c.dataSourceChange || c.schemaChange || c.bottomCapabilityChange),
+  };
+}
+
+function _runCompletionContract(projectRoot, opts = {}) {
+  const loaded = _loadCompletionContract(projectRoot);
+  const resultPath = path.join(projectRoot, 'output', 'completion-contract-result.json');
+  const finishedAt = new Date().toISOString();
+
+  if (!loaded.exists || loaded.error) {
+    const result = { passed: false, source: loaded.source, error: loaded.error, finishedAt, checks: [] };
+    fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  const { execSync } = require('child_process');
+  const contract = _normalizeCompletionContract(loaded.contract);
+  const checks = [];
+  let passed = true;
+
+  if (contract.commands.length === 0) {
+    checks.push({ type: 'commands', passed: false, message: 'No user entry commands defined in completion contract' });
+    passed = false;
+  }
+
+  for (const command of contract.commands) {
+    try {
+      const output = execSync(command, {
+        cwd: projectRoot,
+        encoding: 'utf-8',
+        timeout: contract.timeoutMs,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      checks.push({ type: 'command', command, passed: true, output: String(output || '').slice(0, 2000) });
+    } catch (err) {
+      passed = false;
+      checks.push({
+        type: 'command',
+        command,
+        passed: false,
+        exitCode: err.status ?? err.code ?? null,
+        output: String((err.stdout || '') + (err.stderr || '') || err.message).slice(0, 4000),
+      });
+    }
+  }
+
+  for (const artifact of contract.expectedArtifacts) {
+    const full = path.resolve(projectRoot, artifact);
+    const ok = fs.existsSync(full);
+    if (!ok) passed = false;
+    checks.push({ type: 'artifact', path: artifact, passed: ok });
+  }
+
+  for (const pattern of contract.mustNotContain) {
+    const hits = [];
+    for (const logFile of contract.logFiles) {
+      const full = path.resolve(projectRoot, logFile);
+      if (!fs.existsSync(full)) continue;
+      const content = fs.readFileSync(full, 'utf-8');
+      if (content.includes(pattern)) hits.push(logFile);
+    }
+    const ok = hits.length === 0;
+    if (!ok) passed = false;
+    checks.push({ type: 'mustNotContain', pattern, passed: ok, hits });
+  }
+
+  if (contract.featureAdoption || contract.downstreamConsumers || contract.semanticQuality || contract.semanticRegression || contract.fallbackPolicy) {
+    try {
+      const { evaluateCompletionMechanisms } = require('../core/feature-adoption-gate');
+      const mechanismResult = evaluateCompletionMechanisms(projectRoot, contract);
+      if (!mechanismResult.passed) passed = false;
+      checks.push(...(mechanismResult.checks || []));
+    } catch (err) {
+      passed = false;
+      checks.push({ type: 'mechanismGate.error', passed: false, message: err.message });
+    }
+  }
+
+  const result = { passed, source: loaded.source, contract, checks, finishedAt };
+  fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
+  return result;
+}
+
+function _validateCompletionContractResult(projectRoot) {
+  const resultPath = path.join(projectRoot, 'output', 'completion-contract-result.json');
+  if (!fs.existsSync(resultPath)) {
+    return { valid: false, error: '[COMPLETION_CONTRACT_NOT_EXECUTED] output/completion-contract-result.json missing. TEST must execute the completion contract before REVIEW.' };
+  }
+  let result;
+  try {
+    result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+  } catch (err) {
+    return { valid: false, error: `[COMPLETION_CONTRACT_RESULT_INVALID] ${err.message}` };
+  }
+  const ageMs = Date.now() - new Date(result.finishedAt || 0).getTime();
+  if (!Number.isFinite(ageMs) || ageMs > 30 * 60 * 1000) {
+    return { valid: false, error: '[COMPLETION_CONTRACT_RESULT_STALE] completion contract result is missing timestamp or older than 30 minutes.' };
+  }
+  if (result.passed !== true) {
+    const failed = (result.checks || []).filter(c => c.passed === false).map(c => `${c.type}:${c.command || c.path || c.pattern || c.message}`).join('; ');
+    return { valid: false, error: `[COMPLETION_CONTRACT_FAILED] ${result.error || failed || 'Unknown completion contract failure'}`, result };
+  }
+  return { valid: true, result };
+}
+
+function _requiresAdoptionMechanisms(projectRoot) {
+  const files = ['output/analysis.md', 'output/architecture.md', 'output/execution-plan.md'];
+  const text = files.map(f => {
+    const full = path.join(projectRoot, f);
+    return fs.existsSync(full) ? fs.readFileSync(full, 'utf-8') : '';
+  }).join('\n');
+  return /(数据源|底层能力|schema|CodeGraph|layered|分层|fallback|adoption|consumer|消费者|语义质量|新旧|regression)/i.test(text);
+}
+
+function _hasAdoptionMechanisms(contract) {
+  return !!(contract.featureAdoption && (contract.downstreamConsumers || contract.featureAdoption.downstreamConsumers) && (contract.semanticQuality || contract.semanticRegression || contract.fallbackPolicy));
+}
+
+function _planHasCompletionContract(projectRoot) {
+  const loaded = _loadCompletionContract(projectRoot);
+  if (!loaded.exists || loaded.error) return { ok: false, reason: loaded.error };
+  const c = _normalizeCompletionContract(loaded.contract);
+  if (c.commands.length === 0) return { ok: false, reason: 'completion contract must define commands/userEntryCommands' };
+  if (c.expectedArtifacts.length === 0) return { ok: false, reason: 'completion contract must define expectedArtifacts' };
+  if ((c.capabilityChange || _requiresAdoptionMechanisms(projectRoot)) && !_hasAdoptionMechanisms(c)) {
+    return {
+      ok: false,
+      reason: 'capability/data-source changes must define featureAdoption + downstreamConsumers + semanticQuality/semanticRegression/fallbackPolicy in completion contract',
+    };
+  }
+  return { ok: true, contract: c };
+}
+
+function _hasWorkflowCoreChanges(projectRoot) {
+  const diffPath = path.join(projectRoot, 'output', 'code.diff');
+  if (!fs.existsSync(diffPath)) return false;
+  const diff = fs.readFileSync(diffPath, 'utf-8');
+  return /workflow\/(tools|core|commands)\//.test(diff) || /ide-workflow-bridge\.js|quality-gate\.js|state-manager\.js/.test(diff);
+}
+
+function _detectWorkflowRuntimeAnomalies(projectRoot) {
+  if (!_hasWorkflowCoreChanges(projectRoot)) return [];
+  const patterns = ['invalid_transition', 'sessionId is not defined', 'rollback non-fatal', 'RollbackCoordinator validation failed', '14/14 passed (FAIL)'];
+  const files = ['output/workflow-progress.log', 'output/test-report.md', 'output/health/prod/workflow-trace.jsonl'];
+  const hits = [];
+  for (const rel of files) {
+    const full = path.join(projectRoot, rel);
+    if (!fs.existsSync(full)) continue;
+    const content = fs.readFileSync(full, 'utf-8').split(/\r?\n/).slice(-500).join('\n');
+    for (const p of patterns) {
+      if (content.includes(p)) hits.push({ pattern: p, file: rel });
+    }
+  }
+  return hits;
+}
+
+function _buildVisibleStageConclusion({
+  stage,
+  stageNumber,
+  totalStages = 7,
+  summary,
+  outputArtifact,
+  outputExists,
+  outputSize,
+  metricsLine,
+  taskCoverageLine,
+  nextStage,
+  remainingStages = [],
+  workflowComplete = false,
+}) {
+  const statusLine = workflowComplete
+    ? `✅ Stage ${stageNumber}/${totalStages} ${stage} done — workflow complete`
+    : `✅ Stage ${stageNumber}/${totalStages} ${stage} done`;
+  const lines = [
+    statusLine,
+    `结论：${summary || `${stage} stage completed`}`,
+    `产物：${outputArtifact || '(unknown)'}${outputExists ? (outputSize || '') : ' (not found)'}`,
+  ];
+  if (metricsLine) lines.push(metricsLine.trim());
+  if (taskCoverageLine) lines.push(taskCoverageLine.trim());
+  lines.push(workflowComplete
+    ? '下一步：输出最终总结 / session-summary。'
+    : `下一步：${nextStage || '(none)'}${remainingStages.length > 0 ? `（剩余：${remainingStages.join(' → ')}）` : ''}`);
+  return lines.join('\n');
+}
+
+function _summarizeTestStageFailure(testData, completionContract, runtimeAnomalies) {
+  const status = testData.testStatus || {};
+  const contractPassed = completionContract ? !!completionContract.passed : null;
+  const lines = [
+    `rootCause=${testData.rootCause || status.rootCause || 'unknown'}`,
+    `testCounts=${testData.passedTests}/${testData.totalTests} passed, failedTests=${testData.failedTests}, skippedTests=${testData.skippedTests || 0}`,
+    `processExit=${testData.exitCode}`,
+    `processPassed=${status.processPassed}`,
+    `countsPassed=${status.countsPassed}`,
+    `stderrPresent=${!!(testData.stderr || status.stderrPresent)}`,
+    `completionContract=${contractPassed === null ? 'not-run' : (contractPassed ? 'passed' : 'failed')}`,
+    `runtimeAnomalies=${(runtimeAnomalies || []).length}`,
+  ];
+  if (status.contradiction) {
+    lines.push('contradiction=parsed test counts passed but process exit failed');
+  }
+  if (Array.isArray(status.reasons) && status.reasons.length > 0) {
+    lines.push(`reasons=${status.reasons.map(r => `${r.dimension}:${r.passed}`).join(',')}`);
+  }
+  if (testData.stderr) {
+    lines.push(`stderr=${String(testData.stderr).slice(0, 500)}`);
+  }
+  if (completionContract && !completionContract.passed) {
+    lines.push(`completionError=${completionContract.error || 'see output/completion-contract-result.json'}`);
+  }
+  if (runtimeAnomalies && runtimeAnomalies.length > 0) {
+    lines.push(`runtimeAnomalyHits=${runtimeAnomalies.slice(0, 5).map(h => `${h.pattern}@${h.file}`).join(',')}`);
+  }
+  return lines.join(' | ');
 }
 
 // ─── Sub-command: workflow-stage ─────────────────────────────────────────────
@@ -6648,6 +7836,12 @@ async function runWorkflowStage(args) {
     };
     const role = stageToRole[stage] || 'developer';
 
+    let requiredStageSkills = [];
+    try {
+      const { getRequiredSkillsForStage } = require('../core/context-digest-store');
+      requiredStageSkills = getRequiredSkillsForStage(stage);
+    } catch (_) { /* non-fatal */ }
+
     // Build context for the stage using ContextLoader directly
     const ContextLoader = require('../core/context-loader').ContextLoader;
     // ADR-55: inject ExperienceStore for Prevention Rule injection (MemGPT retrieval pattern)
@@ -6659,6 +7853,7 @@ async function runWorkflowStage(args) {
     const loader = new ContextLoader({
       workflowRoot: path.resolve(path.join(__dirname, '..')),
       projectRoot: args.projectRoot,
+      alwaysLoadSkills: requiredStageSkills,
       experienceStore: _bridgeExpStore,  // ADR-55
     });
 
@@ -7039,13 +8234,78 @@ async function runWorkflowStage(args) {
         autoTestResult = runTestExecute(testArgs);
         if (autoTestResult.success) {
           const d = autoTestResult.data;
-          console.error(`[runWorkflowStage] 🧪 Test execution complete: ${d.passedTests}/${d.totalTests} passed (${d.passed ? 'PASS' : 'FAIL'})`);
+          const contractResult = _runCompletionContract(args.projectRoot || '.', { session: args.session || '' });
+          const runtimeAnomalies = _detectWorkflowRuntimeAnomalies(args.projectRoot || '.');
+          const failureSummary = _summarizeTestStageFailure(d, contractResult, runtimeAnomalies);
+          console.error(`[runWorkflowStage] 🧪 Test execution complete: counts=${d.passedTests}/${d.totalTests}, processExit=${d.exitCode}, rootCause=${d.rootCause}, status=${d.passed ? 'PASS' : 'FAIL'}`);
+
+          if (!d.passed) {
+            return {
+              success: false,
+              subcommand: 'workflow-stage',
+              error: `[TEST_EXECUTION_FAILED] ${failureSummary}`,
+              data: { autoTestResult, completionContract: contractResult, runtimeAnomalies },
+              MANDATORY_FIX: {
+                instruction: 'Fix the reported root cause. Check process exit code, stderr, parsed test counts, completion contract result, and runtime anomaly hits separately; then re-run workflow-stage --stage TEST.',
+                enforcement: 'HARD — TEST stage cannot proceed when test process status, parsed counts, or runner diagnosis fails.',
+              },
+            };
+          }
+
+          if (!contractResult.passed) {
+            console.error(`[runWorkflowStage] ❌ Completion contract failed: ${contractResult.error || 'see output/completion-contract-result.json'}`);
+            return {
+              success: false,
+              subcommand: 'workflow-stage',
+              error: `[COMPLETION_CONTRACT_FAILED] ${failureSummary}`,
+              data: { autoTestResult, completionContract: contractResult, runtimeAnomalies },
+              MANDATORY_FIX: {
+                instruction: 'Fix the failing completion contract command/artifact/log assertion, then re-run workflow-stage --stage TEST.',
+                enforcement: 'HARD — TEST stage must pass the user-entry completion contract before REVIEW.',
+              },
+            };
+          }
+          console.error(`[runWorkflowStage] ✅ Completion contract passed (${(contractResult.checks || []).length} check(s)); runtimeAnomalies=${runtimeAnomalies.length}`);
         } else {
-          console.error(`[runWorkflowStage] ⚠️ Test execution failed (non-fatal): ${autoTestResult.error}`);
+          return {
+            success: false,
+            subcommand: 'workflow-stage',
+            error: `[TEST_EXECUTION_FAILED] ${autoTestResult.error}`,
+            MANDATORY_FIX: {
+              instruction: 'Fix test execution setup or provide a valid test command, then re-run workflow-stage --stage TEST.',
+              enforcement: 'HARD — test auto-execution is required for TEST stage.',
+            },
+          };
         }
       } catch (testErr) {
-        console.error(`[runWorkflowStage] ⚠️ Test auto-execution error (non-fatal): ${testErr.message}`);
+        return {
+          success: false,
+          subcommand: 'workflow-stage',
+          error: `[TEST_AUTO_EXECUTION_ERROR] ${testErr.message}`,
+          MANDATORY_FIX: {
+            instruction: 'Fix the TEST auto-execution error, then re-run workflow-stage --stage TEST.',
+            enforcement: 'HARD — TEST stage cannot proceed after auto-execution exception.',
+          },
+        };
       }
+    }
+
+    // ── Context Digest Merge Rule: load fresh relevant digests ───────────────
+    let contextDigestBlock = '';
+    let contextDigestSelection = null;
+    try {
+      const { selectRelevantDigests, formatDigestBlock } = require('../core/context-digest-store');
+      contextDigestSelection = selectRelevantDigests(args.projectRoot || '.', {
+        stage,
+        taskText: [args.requirement || '', args.task || '', args.stageInput || ''].join(' '),
+        maxItems: 3,
+      });
+      contextDigestBlock = formatDigestBlock(contextDigestSelection.selected, contextDigestSelection.safety);
+      if (contextDigestSelection.selected.length > 0) {
+        console.error(`[runWorkflowStage] 🧠 Context digests injected: ${contextDigestSelection.selected.map(d => `${d.stage}:${d.relevanceScore}`).join(', ')}`);
+      }
+    } catch (digestErr) {
+      console.error(`[runWorkflowStage] ⚠️ Context digest selection skipped: ${digestErr.message}`);
     }
 
     // ── O1: Fast Path detection — triageScore < 20 means Simple task ──────────
@@ -7081,6 +8341,12 @@ async function runWorkflowStage(args) {
     const baseInstructions = [
       `Execute the ${stage} stage using the provided context and prompt.`,
       `Write output to: ${outputPath}`,
+      // Context Digest Merge Rule: inject fresh relevant digest before legacy decisions
+      ...(contextDigestBlock ? [
+        ``,
+        contextDigestBlock,
+        ``,
+      ] : []),
       // F4: Inject previous stage decisions as semantic context
       ...(previousStageDecisions.length > 0 ? [
         ``,
@@ -7107,6 +8373,9 @@ async function runWorkflowStage(args) {
         `  Command  : ${autoTestResult.data.command || 'npm test'}`,
         `  Status   : ${autoTestResult.data.passed ? '✅ PASSED' : '❌ FAILED'}`,
         `  Results  : ${autoTestResult.data.passedTests}/${autoTestResult.data.totalTests} tests passed`,
+        `  ExitCode : ${autoTestResult.data.exitCode}`,
+        `  RootCause: ${autoTestResult.data.rootCause || 'unknown'}`,
+        `  Stderr   : ${autoTestResult.data.stderr ? 'present' : 'none'}`,
         `  Duration : ${autoTestResult.data.durationMs}ms`,
         `  Profile  : ${autoTestResult.data.testProfile || 'default'}`,
         ...(autoTestResult.data.failureSummary?.length > 0 ? [
@@ -7125,9 +8394,11 @@ async function runWorkflowStage(args) {
         `🧪 ═══════════════════════════════════════════════════════`,
         `🧪  REQUIRED in test-report.md:`,
         `🧪  1. Include the EXACT pass/fail counts from above`,
-        `🧪  2. If failures exist: analyze root cause of each failure`,
-        `🧪  3. Verify DEVELOP changes are covered by passing tests`,
-        `🧪  4. Include the test command used: ${autoTestResult.data.command || 'npm test'}`,
+        `🧪  2. Distinguish parsed test counts, process exit code, stderr, completion contract, and runtime anomalies`,
+        `🧪  3. If failures exist: analyze root cause of each failure`,
+        `🧪  4. Verify DEVELOP changes are covered by passing tests`,
+        `🧪  5. Include the test command used: ${autoTestResult.data.command || 'npm test'}`,
+        `🧪  6. Include completion contract evidence from output/completion-contract-result.json`,
         `🧪 ═══════════════════════════════════════════════════════`,
         ``,
       ] : stage === 'TEST' && autoTestResult && !autoTestResult.success ? [
@@ -7146,17 +8417,7 @@ async function runWorkflowStage(args) {
         `DO NOT write test-report.md from memory — it will be REJECTED.`,
         ``,
       ] : []),
-      stage === 'ANALYSE' ? [
-        ``,
-        `⚠️ ANALYSE output schema for ${outputPath} (CRITICAL — write ONLY these sections):`,
-        `  ## 根因 / Root Cause       — What is the real problem? (evidence-backed)`,
-        `  ## 受影响位置               — Which files/modules/lines are affected?`,
-        `  ## 修改范围                 — What needs to change? (file | location | change)`,
-        `  ## 风险评估                 — What could go wrong? (P0/P1/P2 severity)`,
-        `❌ NO generic templates: User Stories / Functional Requirements / Acceptance Criteria`,
-      `❌ NO Socratic dimension list — use the 11 dimensions as internal thinking only`,
-        `✅ Socratic thinking MUST happen internally — output conclusions, NOT the dimension list`,
-      ].join('\n') : null,
+      renderRequiredSchemaPrompt(stage, outputPath, ARTIFACT_SCHEMA[stage] || null),
       _fastPath ? [
         ``,
         `⚡ ═══════════════════════════════════════════════════════`,
@@ -7226,7 +8487,8 @@ async function runWorkflowStage(args) {
           ] : stage === 'PLAN' ? [
             '1. MUST identify exact files to modify via grep_search or codebase_search',
             '2. MUST include real file paths in execution-plan.md tasks',
-            '3. execution-plan.md without concrete file paths will be REJECTED',
+            '3. MUST include a ```json:completion-contract block with real user entry commands and expectedArtifacts',
+            '4. execution-plan.md without concrete file paths or completion contract will be REJECTED',
           ] : stage === 'TEST' ? [
             '1. MUST actually run the test suite (not describe what tests should do)',
             '2. MUST include real test output (pass/fail counts, error messages)',
@@ -7259,6 +8521,11 @@ async function runWorkflowStage(args) {
         promptSummary: `Built prompt for ${role}`,
         inputArtifacts,
         previousStageDecisions,  // F4: Semantic context from previous stages
+        contextDigestSelection: contextDigestSelection ? {
+          selected: (contextDigestSelection.selected || []).map(d => ({ stage: d.stage, score: d.relevanceScore, source: d.source && d.source.path })),
+          skipped: (contextDigestSelection.skipped || []).slice(0, 10),
+          safety: contextDigestSelection.safety || null,
+        } : null,
         autoTestResult: stage === 'TEST' ? (autoTestResult || null) : undefined,  // TEST stage: real test execution results
         traceWritten: traceStartResult.success,
         isRetry: !!pendingRetryContext,
@@ -7815,7 +9082,7 @@ function _stageToOutputFile(stage) {
 const ARTIFACT_SCHEMA = {
   ANALYSE: {
     file: 'analysis.md',
-    requiredSections: ['## 根因', '## 修改范围', '## 风险评估'],
+    requiredSections: ['## 根因', '## 修改范围', '## 下游消费影响', '## 风险评估'],
     recommendedSections: ['## 受影响位置', '## 思考摘要'],
     // ── B++ Slot-Based Semantic Validation (2026-04) ─────────────────────────
     // Replaces brittle exact-string matching with alias-regex + minContentLines.
@@ -7836,6 +9103,12 @@ const ARTIFACT_SCHEMA = {
         aliases: [/^##\s*修改范围(?:\s|$|[（(\/、])/im, /^##\s*Change\s*Scope\b/im, /^##\s*Scope\s+of\s+Change\b/im],
         minContentLines: 3,
         description: 'Change scope — which files/locations need modification?',
+      },
+      {
+        id: 'downstream_consumers',
+        aliases: [/^##\s*下游消费影响(?:\s|$|[（(\/、])/im, /^##\s*下游消费者(?:\s|$|[（(\/、])/im, /^##\s*Downstream\s*Consumers\b/im, /^##\s*Consumer\s*Impact\b/im],
+        minContentLines: 2,
+        description: 'Downstream consumers — who consumes the produced artifact/capability and what must change?',
       },
       {
         id: 'risk_assessment',
@@ -7859,9 +9132,9 @@ const ARTIFACT_SCHEMA = {
       '## Socratic Validation',
     ],
     forbiddenError: '[TEMPLATE_POLLUTION] analysis.md contains generic requirement template sections (User Stories / Functional Requirements / Acceptance Criteria / Socratic Validation). These sections are NEVER valid in analysis.md. analysis.md is a task-specific diagnostic document, not a requirements document.',
-    forbiddenFixInstruction: 'Delete all generic template sections from analysis.md. Keep ONLY: ## 根因, ## 受影响位置, ## 修改范围, ## 风险评估. Do NOT copy Socratic dimension definitions into the artifact — use them as internal thinking framework only.',
+    forbiddenFixInstruction: 'Delete all generic template sections from analysis.md. Keep ONLY: ## 根因, ## 受影响位置, ## 修改范围, ## 下游消费影响, ## 风险评估. Do NOT copy Socratic dimension definitions into the artifact — use them as internal thinking framework only.',
     minLines: 10,
-    description: 'analysis.md must contain root cause, affected locations, change scope, and risk assessment',
+    description: 'analysis.md must contain root cause, affected locations, change scope, downstream consumers, and risk assessment',
     // ADR-37 Evidence Gate: ANALYSE must reference actual code locations found via IDE tools
     evidencePatterns: [
       // File path patterns (must reference real files found via codebase_search/grep_search)
@@ -7911,9 +9184,15 @@ const ARTIFACT_SCHEMA = {
         minContentLines: 3,
         description: 'Scenario Coverage — which scenarios this architecture addresses',
       },
+      {
+        id: 'consumer_adoption_design',
+        aliases: [/^##\s*下游消费方案(?:\s|$|[（(\/、])/im, /^##\s*Consumer\s*Adoption\s*Design\b/im, /^##\s*Downstream\s*Adoption\b/im],
+        minContentLines: 2,
+        description: 'Consumer Adoption Design — how downstream consumers use the produced artifact/capability',
+      },
     ],
     minLines: 16,
-    description: 'architecture.md must include a structured Architecture Scorecard plus fixed Failure Model, Migration Safety Case, and Scenario Coverage sections',
+    description: 'architecture.md must include Architecture Scorecard, Failure Model, Migration Safety Case, Scenario Coverage, and Consumer Adoption Design sections',
     // ADR-37 Evidence Gate: ARCHITECT must reference actual modules/files found via IDE tools
     evidencePatterns: [
       /\b\w[\w/-]*\.(js|ts|jsx|tsx|py|go|java|cs|cpp|c|rb|rs|md|json|yaml|yml)\b/,
@@ -7963,10 +9242,11 @@ const ARTIFACT_SCHEMA = {
       /(?:pass|fail|error|skip|✅|❌|PASS|FAIL|ERROR)\b/i,
       /\d+\s*(?:\/\s*\d+\s*)?(?:test|spec|suite|case)s?\s*(?:pass|fail|run|total)/i,
       /(?:npm test|jest|mocha|pytest|go test|cargo test|vitest|run-all-tests|dotnet test|mvn test|gradle test)/i,
+      /(?:completion contract|completion-contract-result|end-to-end|端到端)/i,
     ],
-    evidenceMinMatches: 2,  // Raised from 1 to 2: must match BOTH pass/fail counts AND test runner evidence
-    evidenceError: '[EVIDENCE_MISSING] test-report.md lacks real test execution evidence. Must contain BOTH: (1) pass/fail counts from actual test run, AND (2) test runner/command reference. Tests must be RUN, not described from memory.',
-    evidenceFixInstruction: 'Run: node workflow/tools/ide-workflow-bridge.js test-execute --project-root . — then include the real output (pass/fail counts + command used) in test-report.md. Do NOT write test results from memory.',
+    evidenceMinMatches: 3,  // Must include pass/fail counts, runner command, and completion-contract/end-to-end evidence
+    evidenceError: '[EVIDENCE_MISSING] test-report.md lacks real test execution or end-to-end completion evidence. Must contain: (1) pass/fail counts, (2) test runner/command reference, (3) completion contract evidence.',
+    evidenceFixInstruction: 'Run: node workflow/tools/ide-workflow-bridge.js test-execute --project-root . and workflow-stage --stage TEST to execute completion contract. Then include pass/fail counts, command used, and output/completion-contract-result.json evidence in test-report.md.',
   },
 };
 
@@ -8141,6 +9421,32 @@ function _validateArtifact(stage, projectRoot) {
     }
   }
 
+  if (stage === 'PLAN') {
+    const contractCheck = _planHasCompletionContract(projectRoot);
+    if (!contractCheck.ok) {
+      return {
+        valid: false,
+        error: `[COMPLETION_CONTRACT_MISSING] execution-plan.md must include a machine-readable completion contract: ${contractCheck.reason}`,
+        fixInstruction: 'Add a ```json:completion-contract block with commands/userEntryCommands and expectedArtifacts. This contract must represent the real user entry command and concrete output assertions.',
+        missingSections: ['completion-contract'],
+        completionContractMissing: true,
+      };
+    }
+  }
+
+  if (stage === 'TEST') {
+    const contractResult = _validateCompletionContractResult(projectRoot);
+    if (!contractResult.valid) {
+      return {
+        valid: false,
+        error: contractResult.error,
+        fixInstruction: 'Re-run workflow-stage --stage TEST so the completion contract is executed, then fix any failing command/artifact/log assertion before calling stage-complete.',
+        missingSections: [],
+        completionContractFailed: true,
+      };
+    }
+  }
+
   // ── P1 Rev.2: Execution Proof Gate (TEST stage only) ─────────────────────
   // Validates that test-execution-proof.json exists, is fresh (< 30 min),
   // AND is bound to the trace (proofHash in proof matches trace test_execute event).
@@ -8307,6 +9613,19 @@ function _validateStageDependencies(stage, projectRoot) {
   if (!deps || deps.length === 0) return { valid: true, skipped: true, reason: `No hard deps for stage ${stage}` };
 
   const missingDeps = deps.filter(dep => !fs.existsSync(path.join(projectRoot, dep.file)));
+
+  if (stage === 'REVIEW') {
+    const contractGate = _validateCompletionContractResult(projectRoot);
+    if (!contractGate.valid) {
+      return {
+        valid: false,
+        error: `[DEPENDENCY_MISSING] Cannot start REVIEW: ${contractGate.error}`,
+        fixInstruction: 'Complete TEST successfully with a passing completion contract before starting REVIEW.',
+        missingDeps: ['output/completion-contract-result.json'],
+        requiredStage: 'TEST',
+      };
+    }
+  }
 
   if (missingDeps.length > 0) {
     const missingList = missingDeps.map(d => `${d.file} (from ${d.stage}: ${d.description})`).join('; ');
@@ -8737,7 +10056,37 @@ async function runStageComplete(args) {
         console.error(`[runStageComplete] ✅ StateManager.completeStage(${stage}) synced for session=${args.session}`);
       }
     } catch (smErr) {
-      console.error(`[runStageComplete] ⚠️ StateManager.completeStage failed (non-fatal): ${smErr.message}`);
+      if (/stage not started|invalid_transition/i.test(smErr.message || '')) {
+        try {
+          const rt = _getRuntimeStateManager(args.projectRoot || '.');
+          if (rt.stateManager && args.session) {
+            rt.stateManager.beginStage({ sessionId: args.session, stage, stageInput: 'auto-recovered before completeStage' });
+            rt.stateManager.completeStage({
+              sessionId: args.session,
+              stage,
+              outputRefs: args.stageOutput ? [{ path: args.stageOutput }] : [],
+            });
+            console.error(`[runStageComplete] ✅ StateManager.completeStage(${stage}) recovered after missing start`);
+          }
+        } catch (recoverErr) {
+          if (_hasWorkflowCoreChanges(args.projectRoot || '.')) {
+            return {
+              success: false,
+              subcommand: 'stage-complete',
+              error: `[WORKFLOW_RUNTIME_ANOMALY] StateManager.completeStage failed for workflow-core change: ${recoverErr.message}`,
+            };
+          }
+          console.error(`[runStageComplete] ⚠️ StateManager.completeStage failed (non-fatal): ${recoverErr.message}`);
+        }
+      } else if (_hasWorkflowCoreChanges(args.projectRoot || '.')) {
+        return {
+          success: false,
+          subcommand: 'stage-complete',
+          error: `[WORKFLOW_RUNTIME_ANOMALY] StateManager.completeStage failed for workflow-core change: ${smErr.message}`,
+        };
+      } else {
+        console.error(`[runStageComplete] ⚠️ StateManager.completeStage failed (non-fatal): ${smErr.message}`);
+      }
     }
     try {
       const rt = _getRuntimeStateManager(args.projectRoot || '.');
@@ -9072,10 +10421,17 @@ async function runStageComplete(args) {
             }
             statusData2.activeWorkflow.currentStage = nextStage || stage;
           }
-          _writeStatusFile(statusFilePath2, statusData2, args.projectRoot, sessionId);
+          _writeStatusFile(statusFilePath2, statusData2, args.projectRoot || '.', args.session);
         }
       }
     } catch (activeWfErr2) {
+      if (_hasWorkflowCoreChanges(args.projectRoot || '.')) {
+        return {
+          success: false,
+          subcommand: 'stage-complete',
+          error: `[WORKFLOW_RUNTIME_ANOMALY] Failed to update activeWorkflow for workflow-core change: ${activeWfErr2.message}`,
+        };
+      }
       console.error(`[runStageComplete] ⚠️ Failed to update activeWorkflow (non-fatal): ${activeWfErr2.message}`);
     }
 
@@ -9274,6 +10630,31 @@ async function runStageComplete(args) {
       ].filter(Boolean).join('\n'));
     }
 
+    const visibleStageConclusion = _buildVisibleStageConclusion({
+      stage,
+      stageNumber: stageCompleteNum,
+      totalStages: stageOrder.length,
+      summary: args.summary || '(no summary)',
+      outputArtifact: `output/${outputArtifactFile}`,
+      outputExists,
+      outputSize,
+      metricsLine,
+      taskCoverageLine,
+      nextStage,
+      remainingStages,
+      workflowComplete: mandatoryNextAction.type === 'WORKFLOW_COMPLETE',
+    });
+
+    if (mandatoryNextAction.type === 'STOP_HOOK_INJECT') {
+      mandatoryNextAction.beforeCommand = 'OUTPUT_VISIBLE_STAGE_CONCLUSION';
+      mandatoryNextAction.visibleStageConclusion = visibleStageConclusion;
+      mandatoryNextAction.instruction = `✅ FIRST output VISIBLE_STAGE_CONCLUSION to the user, then execute the command. Stage ${stage} is done but the workflow is NOT complete. Remaining: [${remainingStages.join(' → ')}]`;
+    } else if (mandatoryNextAction.type === 'WORKFLOW_COMPLETE') {
+      mandatoryNextAction.beforeCommand = 'OUTPUT_VISIBLE_STAGE_CONCLUSION';
+      mandatoryNextAction.visibleStageConclusion = visibleStageConclusion;
+      mandatoryNextAction.instruction = '✅ FIRST output VISIBLE_STAGE_CONCLUSION to the user, then run session-summary. Check output/workflow-progress.log for full execution evidence.';
+    }
+
     // ── stderr MANDATORY banner (Hook Enhancement 2.1) ──────────────────────
     // Output a visually prominent banner to stderr so LLM cannot miss the next action.
     // stderr is shown to LLM as debug output — more attention-grabbing than JSON fields.
@@ -9301,12 +10682,14 @@ async function runStageComplete(args) {
         ``,
         `╔══════════════════════════════════════════════════════════════╗`,
         `║  ⛔ WORKFLOW CONTINUES — DO NOT STOP                        ║`,
+        `║  ✅ FIRST OUTPUT STAGE CONCLUSION, THEN CONTINUE            ║`,
         `╠══════════════════════════════════════════════════════════════╣`,
         ...sqLines,
         `║  Next: ${(nextStage || '').padEnd(10)} (${stageOrder.indexOf(nextStage) + 1}/7)                                ║`,
         `║  Remaining: ${remainingStages.join(' → ').slice(0, 44).padEnd(44)} ║`,
         `╚══════════════════════════════════════════════════════════════╝`,
-        `⛔ RUN NOW: ${mandatoryNextAction.command.slice(0, 100)}`,
+        `✅ OUTPUT VISIBLE_STAGE_CONCLUSION FIRST`,
+        `⛔ THEN RUN: ${mandatoryNextAction.command.slice(0, 100)}`,
         ``,
       ].join('\n'));
     } else if (mandatoryNextAction.type === 'RETRY_STAGE') {
@@ -9328,7 +10711,8 @@ async function runStageComplete(args) {
         `╔══════════════════════════════════════════════════════════════╗`,
         `║  ✅ ALL 7 STAGES COMPLETE — Run session-summary now         ║`,
         `╚══════════════════════════════════════════════════════════════╝`,
-        `✅ RUN NOW: ${mandatoryNextAction.command.slice(0, 100)}`,
+        `✅ OUTPUT VISIBLE_STAGE_CONCLUSION FIRST`,
+        `✅ THEN RUN: ${mandatoryNextAction.command.slice(0, 100)}`,
         ``,
       ].join('\n'));
     }
@@ -9407,30 +10791,22 @@ async function runStageComplete(args) {
       const stageMap = { ANALYSE: 'ANALYSE', ARCHITECT: 'ARCHITECT', PLAN: 'PLAN', DEVELOP: 'CODE', TEST: 'TEST', REVIEW: 'REVIEW', DEPLOY: 'DEPLOY' };
       const rcStage = stageMap[stage] || stage;
 
-      // Import and call RollbackCoordinator validation directly
-      const RollbackCoordinatorPlugin = require('../core/plugins/rollback-coordinator-plugin');
-      const coordinator = new RollbackCoordinatorPlugin();
-
-      // Build input context for validation
-      const validationInput = {
-        stage: rcStage,
+      const bridgeStageForRollback = rcStage === 'CODE' ? 'CODE' : rcStage;
+      const check = runRollbackCheck({
         projectRoot: args.projectRoot || '.',
-        outputFile: rcStage === 'ANALYSE' ? 'output/analysis.md'
-          : rcStage === 'ARCHITECT' ? 'output/architecture.md'
-          : rcStage === 'PLAN' ? 'output/execution-plan.md'
-          : rcStage === 'CODE' ? 'output/code.diff'
-          : rcStage === 'TEST' ? 'output/test-report.md'
-          : null,
-        outputSummary: args.summary || '',
-        timestamp: new Date().toISOString(),
-      };
-
-      rollbackCheckResult = coordinator.validate ? coordinator.validate(validationInput)
-        : { passed: true, skipped: true, reason: 'validate method not found' };
-
+        stage: bridgeStageForRollback,
+        files: [],
+      });
+      rollbackCheckResult = check.data || { passed: check.success !== false, skipped: true };
       console.error(`[runStageComplete] T-2: RollbackCoordinator validation ${rollbackCheckResult.passed ? '✅ passed' : '❌ failed'} for stage ${rcStage}`);
     } catch (rcErr) {
-      // Non-fatal: rollback check must not break the pipeline
+      if (_hasWorkflowCoreChanges(args.projectRoot || '.')) {
+        return {
+          success: false,
+          subcommand: 'stage-complete',
+          error: `[WORKFLOW_RUNTIME_ANOMALY] Rollback validation failed for workflow-core change: ${rcErr.message}`,
+        };
+      }
       console.error(`[runStageComplete] ⚠️ T-2: RollbackCoordinator validation failed (non-fatal): ${rcErr.message}`);
       rollbackCheckResult = { passed: true, skipped: true, error: rcErr.message };
     }
@@ -9486,7 +10862,7 @@ async function runStageComplete(args) {
     try {
       const artifactAbs = artifactValidation && artifactValidation.path
         ? artifactValidation.path
-        : null;
+        : path.join(args.projectRoot || '.', 'output', _stageToOutputFile(stage));
       if (artifactAbs && fs.existsSync(artifactAbs)) {
         const content = fs.readFileSync(artifactAbs, 'utf-8');
         if (artifactAbs.endsWith('.diff')) {
@@ -9509,11 +10885,46 @@ async function runStageComplete(args) {
       stageOutputReport = { error: `report-extraction-failed: ${e.message}` };
     }
 
+    // Context Digest Merge Rule: persist artifact-level digest for later stages.
+    let contextDigestResult = null;
+    try {
+      const artifactAbs = artifactValidation && artifactValidation.path
+        ? artifactValidation.path
+        : path.join(args.projectRoot || '.', 'output', _stageToOutputFile(stage));
+      if (artifactAbs && fs.existsSync(artifactAbs)) {
+        const { buildOrUpdateStageDigest } = require('../core/context-digest-store');
+        let requirementFingerprint = '';
+        try {
+          const statusPath = path.join(args.projectRoot || '.', 'output', 'workflow-status.json');
+          if (fs.existsSync(statusPath)) {
+            const statusData = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+            requirementFingerprint = statusData && statusData.activeWorkflow && statusData.activeWorkflow.requirementFingerprint || '';
+          }
+        } catch { /* non-fatal */ }
+        contextDigestResult = buildOrUpdateStageDigest(args.projectRoot || '.', {
+          stage,
+          artifactPath: artifactAbs,
+          session: args.session,
+          requirement: args.requirement || '',
+          requirementFingerprint,
+          stageOutputReport,
+        });
+        if (contextDigestResult && contextDigestResult.success) {
+          console.error(`[runStageComplete] 🧠 Context digest ${contextDigestResult.reused ? 'reused' : 'updated'} for ${stage}: ${contextDigestResult.path}`);
+        }
+      }
+    } catch (digestErr) {
+      contextDigestResult = { success: false, error: digestErr.message };
+      console.error(`[runStageComplete] ⚠️ Context digest update failed (non-fatal): ${digestErr.message}`);
+    }
+
     return {
       success: true,
       subcommand: 'stage-complete',
       // ⛔ MANDATORY_NEXT_ACTION is at TOP LEVEL — not in data — so LLM cannot ignore it
       MANDATORY_NEXT_ACTION: mandatoryNextAction,
+      // ✅ Also top-level: Agent must show this to the user before following the next command.
+      VISIBLE_STAGE_CONCLUSION: visibleStageConclusion,
       data: {
         stage,
         session: args.session,
@@ -9528,6 +10939,13 @@ async function runStageComplete(args) {
         artifactHash: artifactValidation.hash || null,
         artifactLines: artifactValidation.lineCount || null,
         stageOutputReport,
+        visibleStageConclusion,
+        contextDigest: contextDigestResult ? {
+          success: contextDigestResult.success,
+          reused: !!contextDigestResult.reused,
+          path: contextDigestResult.path || null,
+          error: contextDigestResult.error || null,
+        } : null,
         architectureScorecard: stage === 'ARCHITECT'
           ? architectureGovernance?.scorecard || null
           : null,
@@ -10495,6 +11913,9 @@ async function main() {
         case 'quality-gate':
           innerResult = runQualityGate(args);
           break;
+        case 'adoption-gate':
+          innerResult = runAdoptionGate(args);
+          break;
         case 'experience-evolve':
           innerResult = await runExperienceEvolve(args);
           break;
@@ -10557,6 +11978,54 @@ async function main() {
           break;
         case 'execution-validate':
           innerResult = await runExecutionValidate(args);
+          break;
+        case 'prompt-context-inventory':
+          innerResult = runPromptContextInventory(args);
+          break;
+        case 'prompt-context-governance':
+          innerResult = runPromptContextGovernance(args);
+          break;
+        case 'prompt-context-registry':
+          innerResult = runPromptContextRegistry(args);
+          break;
+        case 'prompt-context-assembler-diff':
+          innerResult = runPromptContextAssemblerDiff(args);
+          break;
+        case 'prompt-context-dynamic-context-diff':
+          innerResult = await runPromptContextDynamicContextDiff(args);
+          break;
+        case 'prompt-context-selection-budget':
+          innerResult = await runPromptContextSelectionBudget(args);
+          break;
+        case 'prompt-context-full-parity':
+          innerResult = await runPromptContextFullPromptParity(args);
+          break;
+        case 'prompt-context-dual-write-canary':
+          innerResult = await runPromptContextDualWriteCanary(args);
+          break;
+        case 'prompt-context-migration-gate':
+          innerResult = await runPromptContextMigrationGate(args);
+          break;
+        case 'prompt-context-migration-check':
+          innerResult = runPromptContextMigrationCheck(args);
+          break;
+        case 'unified-llm-injection-inventory':
+          innerResult = runUnifiedLLMInjectionCallSiteInventory(args);
+          break;
+        case 'unified-llm-injection-readiness-gate':
+          innerResult = runUnifiedLLMInjectionRuntimeReadinessGate(args);
+          break;
+        case 'unified-llm-injection-canary':
+          innerResult = runUnifiedLLMInjectionCandidateRuntimeCanary(args);
+          break;
+        case 'unified-llm-injection-default-replacement':
+          innerResult = runUnifiedLLMInjectionDefaultRuntimeReplacement(args);
+          break;
+        case 'unified-llm-injection-ci-gate':
+          innerResult = runUnifiedLLMInjectionCIGate(args);
+          break;
+        case 'unified-llm-injection-slo-dashboard':
+          innerResult = runUnifiedLLMInjectionSLODashboard(args);
           break;
         case 'prompt-optimize':
           innerResult = runPromptOptimize(args);
@@ -10986,6 +12455,22 @@ module.exports = {
   runTaskHistory,
   runArchCache,
   runExecutionValidate,
+  runPromptContextInventory,
+  runPromptContextGovernance,
+  runPromptContextRegistry,
+  runPromptContextAssemblerDiff,
+  runPromptContextDynamicContextDiff,
+  runPromptContextSelectionBudget,
+  runPromptContextFullPromptParity,
+  runPromptContextDualWriteCanary,
+  runPromptContextMigrationGate,
+  runPromptContextMigrationCheck,
+  runUnifiedLLMInjectionCallSiteInventory,
+  runUnifiedLLMInjectionRuntimeReadinessGate,
+  runUnifiedLLMInjectionCandidateRuntimeCanary,
+  runUnifiedLLMInjectionDefaultRuntimeReplacement,
+  runUnifiedLLMInjectionCIGate,
+  runUnifiedLLMInjectionSLODashboard,
   runPromptOptimize,
   runRetrospectiveSignal,
   runSessionScore,
@@ -10997,6 +12482,7 @@ module.exports = {
   runExpertBlock,
   runExpertGenerate,
   runTestExecute,
+  runSessionSummary,
   runInputReceived,
   runWorkflowStage,
   runStageComplete,
@@ -11016,5 +12502,6 @@ module.exports = {
     ARTIFACT_SCHEMA,
     _matchSlot,
     _validateArtifact,
+    _buildVisibleStageConclusion,
   },
 };

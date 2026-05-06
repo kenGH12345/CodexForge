@@ -133,7 +133,8 @@ function registerWorkflowCommands(registerCommand) {
 
         // Check project initialization status
         const isInitialized = fs.existsSync(path.join(projectRoot, 'AGENTS.md'));
-        const hasCodeGraph = fs.existsSync(path.join(projectRoot, 'output', 'code-graph.json'));
+        const { resolveCodeGraphPath } = require('../core/code-graph-layered-reader');
+        const hasCodeGraph = resolveCodeGraphPath(projectRoot).exists;
 
         // Generate capability matrix
         const caps = detection.capabilities;

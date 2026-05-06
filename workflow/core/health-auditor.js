@@ -12,6 +12,7 @@
 'use strict';
 
 const { ReflectionType, ReflectionSeverity } = require('./self-reflection-types');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 class HealthAuditor {
   /**
@@ -279,7 +280,13 @@ Write a brief narrative summary (3-5 sentences) that:
 
 Keep output under 400 characters. Use plain language, no bullet points.`;
 
-    const result = await this._cheapLlmCall(prompt);
+    const result = await this._cheapLlmCall(prepareGatewayPrompt(this, {
+      callSite: 'workflow/core/health-auditor.js:narrativeSummary',
+      role: 'health-auditor',
+      stage: 'HEALTH',
+      runtimePrompt: prompt,
+      metadata: { category: 'llm-lite-call', sessionCount },
+    }));
     if (result && result.trim().length > 20) {
       console.log(`[HealthAuditor] 🤖 LLM narrative summary generated (${result.trim().length} chars).`);
       return result.trim();

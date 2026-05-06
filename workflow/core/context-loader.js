@@ -22,6 +22,7 @@ const path = require('path');
 const { PATHS } = require('./constants');
 const { estimateTokens } = require('../tools/thin-tools');
 const UnifiedSkillComposer = require('./unified-skill-composer');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 // ─── Configuration (extracted to context-loader-config.js) ──────────────────
 
@@ -88,6 +89,7 @@ class ContextLoader {
     alwaysLoadSkills = [],
     globalSkills    = [],    // Level 1: always loaded for every task
     projectSkills   = [],    // Level 2: loaded for all tasks in the project
+    registeredSkills = [],   // ConfigLoader-discovered skill metadata (includes .workflow project experts)
     retiredSkills   = null,  // Set<string> of retired skill names to exclude
     codeGraph       = null,  // P0: externally-provided CodeGraph instance (avoids re-creation)
     orchestrator    = null,  // ADR-45: Orchestrator reference for lazy skill enrichment
@@ -107,6 +109,8 @@ class ContextLoader {
     this._alwaysLoadSkills = alwaysLoadSkills;
     this._globalSkills     = globalSkills;
     this._projectSkills    = projectSkills;
+    this._registeredSkills = Array.isArray(registeredSkills) ? registeredSkills.filter(s => s && s.name) : [];
+    this._registeredSkillMap = new Map(this._registeredSkills.map(s => [s.name, s]));
     /** @type {Set<string>} Retired skill names – excluded from matching and loading */
     this._retiredSkills    = retiredSkills instanceof Set ? retiredSkills : new Set(retiredSkills || []);
     /** @type {Set<string>} Track loaded skills to avoid duplicates across layers */
@@ -335,12 +339,15 @@ class ContextLoader {
     // or instance defaults, with safe fallback to MAX_INJECT_TOKENS.
     const effectiveBudget = this._resolveBudget(opts);
 
-    // P2: Set progressive loading context before loading skills
-    // Extract task keywords for progressive skill disclosure
-    const taskKeywords = taskText
+    // P2: Set progressive loading context before loading skills.
+    // Use a post-analysis skill query, not only raw taskText, so project experts
+    // can be triggered by projectRoot / analysis.md / symbols / business-logic / code-graph.
+    const skillMatchQuery = this._buildSkillMatchQuery(taskText, opts);
+    const taskKeywords = skillMatchQuery
       .toLowerCase()
       .split(/[\s\W]+/)
-      .filter(w => w.length > 3 && !/^(the|this|that|with|from|into|onto|upon)$/i.test(w));
+      .filter(w => w.length > 3 && !/^(the|this|that|with|from|into|onto|upon)$/i.test(w))
+      .slice(0, 300);
     const {
       setProgressiveLoadContext,
     } = require('./context-loader-skills');
@@ -571,7 +578,9 @@ class ContextLoader {
     if (budget < taskSkillReserve) {
       budget = Math.min(taskSkillReserve, effectiveBudget);
     }
-    const matchedSkills = await this._matchSkillsAsync(taskText, role);
+    const directMatchedSkills = this._matchRegisteredSkillsBySignals(skillMatchQuery, role);
+    const rankedMatchedSkills = await this._matchSkillsAsync(skillMatchQuery, role);
+    const matchedSkills = Array.from(new Set([...directMatchedSkills, ...rankedMatchedSkills]));
     const admitted = [];
     const demoted = [];
     for (const skillName of matchedSkills) {
@@ -768,6 +777,142 @@ class ContextLoader {
 
   // ─── Skill Matching ───────────────────────────────────────────────────────
 
+  _buildSkillMatchQuery(taskText, opts = {}) {
+    const terms = [];
+    const push = (v) => this._pushSkillSignalTerms(terms, v);
+
+    push(taskText || '');
+    if (this._projectRoot) {
+      push(path.basename(this._projectRoot));
+      push(this._projectRoot.split(/[\\/]+/).slice(-4).join(' '));
+    }
+    push(opts.skillSignals);
+
+    if (this._projectRoot) {
+      push(this._extractTextSignals(path.join(this._projectRoot, 'output', 'analysis.md'), 120));
+      push(this._extractJsonSignals(path.join(this._projectRoot, 'output', 'business-logic.json'), 120, 'business'));
+      const semanticSignals = this._extractSemanticCodeGraphSignals(120);
+      const indexSignals = semanticSignals.length > 0 ? semanticSignals : this._extractJsonSignals(path.join(this._projectRoot, 'output', 'code-graph-index.json'), 120, 'codegraph-index');
+      push(indexSignals.length > 0 ? indexSignals : this._extractJsonSignals(path.join(this._projectRoot, 'output', 'code-graph.json'), 120, 'codegraph'));
+    }
+
+    return Array.from(new Set(terms.filter(Boolean))).slice(0, 300).join(' ');
+  }
+
+  _pushSkillSignalTerms(terms, value) {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      for (const v of value) this._pushSkillSignalTerms(terms, v);
+      return;
+    }
+    if (typeof value === 'object') {
+      for (const v of Object.values(value)) this._pushSkillSignalTerms(terms, v);
+      return;
+    }
+    const text = String(value);
+    const matches = text.match(/[A-Za-z_][A-Za-z0-9_]{2,}|[\w.-]+\.(?:js|ts|jsx|tsx|cs|cpp|h|lua|proto|md)|[\u4e00-\u9fff]{2,}/g) || [];
+    for (const m of matches) {
+      const cleaned = m.replace(/["'`,:;()\[\]{}]/g, '').trim();
+      if (cleaned.length > 1) terms.push(cleaned);
+    }
+  }
+
+  _extractSemanticCodeGraphSignals(limit = 120) {
+    try {
+      if (!this._projectRoot) return [];
+      const indexPath = path.join(this._projectRoot, 'output', 'code-graph-index.json');
+      if (!fs.existsSync(indexPath)) return [];
+      const { loadSemanticCodeGraph } = require('./semantic-code-graph-adapter');
+      return loadSemanticCodeGraph(this._projectRoot, { includeTopShards: true, maxShards: 20, maxSymbols: 80000 }).getSkillSignalTerms(limit);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  _extractTextSignals(filePath, limit = 120) {
+    try {
+      if (!fs.existsSync(filePath)) return [];
+      const content = fs.readFileSync(filePath, 'utf8').slice(0, 30000);
+      const terms = [];
+      this._pushSkillSignalTerms(terms, content);
+      return terms.slice(0, limit);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  _extractJsonSignals(filePath, limit = 120, mode = 'generic') {
+    try {
+      if (!fs.existsSync(filePath)) return [];
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const json = JSON.parse(raw);
+      const terms = [];
+
+      if (mode === 'codegraph-index') {
+        this._pushSkillSignalTerms(terms, (json.modules || []).slice(0, 40).map(m => m.name));
+        this._pushSkillSignalTerms(terms, (json.reusableSymbols || []).slice(0, 40).map(s => s.name || s.n || s.symbol));
+        this._pushSkillSignalTerms(terms, (json.topHotspots || []).slice(0, 40).map(s => s.name || s.n || s.symbol));
+        this._pushSkillSignalTerms(terms, Object.keys(json.symbolLookupTable || {}).slice(0, 80));
+      } else if (mode === 'codegraph') {
+        const modules = json.modules && typeof json.modules === 'object' ? Object.keys(json.modules) : [];
+        this._pushSkillSignalTerms(terms, modules.slice(0, 40));
+        this._pushSkillSignalTerms(terms, (json.reusableSymbols || []).slice(0, 40).map(s => s.name || s.n || s.symbol));
+        this._pushSkillSignalTerms(terms, (json.hotspots || []).slice(0, 40).map(s => s.name || s.n || s.symbol));
+        this._pushSkillSignalTerms(terms, (json.filePaths || []).slice(0, 80).map(f => path.basename(f)));
+      } else {
+        this._walkJsonSignals(json, terms, limit);
+      }
+      return Array.from(new Set(terms)).slice(0, limit);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  _walkJsonSignals(value, terms, limit) {
+    if (terms.length >= limit || value === null || value === undefined) return;
+    if (typeof value === 'string' || typeof value === 'number') {
+      this._pushSkillSignalTerms(terms, String(value));
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 50)) this._walkJsonSignals(item, terms, limit);
+      return;
+    }
+    if (typeof value === 'object') {
+      for (const [key, val] of Object.entries(value)) {
+        if (/^(name|file|module|layer|description|entryPoints|businessFlows|coreServices|symbols?)$/i.test(key)) {
+          this._walkJsonSignals(val, terms, limit);
+        } else if (typeof val === 'object') {
+          this._walkJsonSignals(val, terms, limit);
+        }
+        if (terms.length >= limit) break;
+      }
+    }
+  }
+
+  _matchRegisteredSkillsBySignals(skillMatchQuery, role) {
+    const lower = (skillMatchQuery || '').toLowerCase();
+    const matched = [];
+    for (const meta of this._registeredSkills) {
+      if (!meta || !meta.name) continue;
+      if (this._retiredSkills.has(meta.name)) continue;
+      const allowedRoles = meta.triggers && Array.isArray(meta.triggers.roles) ? meta.triggers.roles : null;
+      if (allowedRoles && allowedRoles.length > 0 && !allowedRoles.includes(role)) continue;
+      const terms = [meta.name, ...(meta.domains || [])];
+      if (meta.filePath) terms.push(...meta.filePath.split(/[\\/]+/).slice(-4));
+      if (meta.triggers && typeof meta.triggers === 'object') {
+        for (const v of Object.values(meta.triggers)) {
+          if (Array.isArray(v)) terms.push(...v);
+          else if (v) terms.push(String(v));
+        }
+      }
+      if (terms.some(t => t && lower.includes(String(t).toLowerCase()))) {
+        matched.push(meta.name);
+      }
+    }
+    return matched.slice(0, 3);
+  }
+
   /**
    * Returns skill names ranked by relevance to the task text.
    *
@@ -890,6 +1035,33 @@ class ContextLoader {
         keywords,
         contentSnippet: firstParagraph.slice(0, 300),
       });
+    }
+
+    // Include ConfigLoader-discovered skills (workflow/skills + .workflow/skills).
+    // These include generated project-expert skills with filePath metadata.
+    const seenSkillNames = new Set(skills.map(s => s.name));
+    for (const meta of this._registeredSkills) {
+      if (!meta || !meta.name) continue;
+      if (this._retiredSkills.has(meta.name)) continue;
+      if (seenSkillNames.has(meta.name)) continue;
+
+      const skillPath = meta.filePath || path.join(this._skillsDir, `${meta.name}.md`);
+      const content = this._readFileCached(skillPath) || '';
+      const firstParagraph = content.split('\n\n').find(p => p.trim() && !p.startsWith('---') && !p.startsWith('#')) || '';
+      const triggerTerms = meta.triggers && typeof meta.triggers === 'object'
+        ? Object.values(meta.triggers).flat().filter(Boolean)
+        : [];
+      skills.push({
+        name: meta.name,
+        description: meta.description || '',
+        keywords: [
+          ...(meta.domains || []),
+          ...triggerTerms,
+          ...(meta.filePath ? meta.filePath.split(/[\\/]+/).slice(-4) : []),
+        ],
+        contentSnippet: firstParagraph.slice(0, 300),
+      });
+      seenSkillNames.add(meta.name);
     }
 
     // Also include project-specific skills from registry (custom filePath)
@@ -1213,7 +1385,13 @@ class ContextLoader {
         `--- END ---`,
       ].join('\n');
 
-      const response = await this._cheapLlmCall(prompt);
+      const response = await this._cheapLlmCall(prepareGatewayPrompt(this, {
+        callSite: 'workflow/core/context-loader.js:extractRelevantADRs',
+        role: 'context-loader',
+        stage: this._defaultStage || 'CONTEXT',
+        runtimePrompt: prompt,
+        metadata: { category: 'llm-lite-call', adrCount: adrBlocks.length },
+      }));
       if (response && typeof response === 'string' && response.trim().length > 30) {
         const digest = response.trim().slice(0, maxChars);
         this._adrDigestCache.set(cacheKey, digest);
@@ -1289,7 +1467,7 @@ _loadSkill(skillName, tokenBudget, isDep = false) {
     // stored outside workflow/skills/, e.g. <projectRoot>/.workflow/skills/)
     const skillRegistry = this._orchestrator && this._orchestrator.skillEvolution
       ? this._orchestrator.skillEvolution.registry
-      : null;
+      : this._registeredSkillMap;
     return loadSkill({
       skillName,
       tokenBudget,

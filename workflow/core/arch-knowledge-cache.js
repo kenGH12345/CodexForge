@@ -300,6 +300,32 @@ function _collectTechStack(projectRoot, profileOverride) {
 function _collectCodeGraph(projectRoot) {
   const result = { symbolCount: 0, modules: [], hotspots: [] };
   try {
+    const indexPath = path.join(projectRoot, 'output', 'code-graph-index.json');
+    if (fs.existsSync(indexPath)) {
+      try {
+        const { loadSemanticCodeGraph } = require('./semantic-code-graph-adapter');
+        return loadSemanticCodeGraph(projectRoot, { includeTopShards: true, maxShards: 20, maxSymbols: 80000 })
+          .getArchitectureSummary({ maxModules: MAX_MODULE_ENTRIES, maxHotspots: MAX_HOTSPOT_ENTRIES });
+      } catch (_) {
+        const index = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
+        result.symbolCount = index.symbolCount || 0;
+        result.modules = (index.modules || []).slice(0, MAX_MODULE_ENTRIES).map(m => ({
+          dir: m.name,
+          files: m.fileCount || 0,
+          classes: 0,
+          functions: m.symbolCount || 0,
+        }));
+        result.hotspots = (index.topHotspots || []).slice(0, MAX_HOTSPOT_ENTRIES).map(hs => ({
+          name: hs.n || hs.name,
+          refs: hs.cb || hs.refs,
+          calls: hs.co || hs.calls,
+          category: hs.c || hs.category,
+          file: hs.file || '',
+        }));
+        return result;
+      }
+    }
+
     const graphPath = path.join(projectRoot, 'output', 'code-graph.json');
     if (!fs.existsSync(graphPath)) return result;
     const raw = JSON.parse(fs.readFileSync(graphPath, 'utf-8'));
@@ -310,7 +336,6 @@ function _collectCodeGraph(projectRoot) {
 
     result.symbolCount = raw.symbolCount || symbols.length;
 
-    // Module buckets
     const buckets = {};
     for (const sym of symbols) {
       const filePath = filePaths[sym.f] || '';
@@ -325,7 +350,6 @@ function _collectCodeGraph(projectRoot) {
       .sort((a, b) => (b.classes + b.functions) - (a.classes + a.functions))
       .slice(0, MAX_MODULE_ENTRIES);
 
-    // Hotspots: { f, n, cb, co, c }
     result.hotspots = hotspots.slice(0, MAX_HOTSPOT_ENTRIES).map(hs => ({
       name: hs.n,
       refs: hs.cb,

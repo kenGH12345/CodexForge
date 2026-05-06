@@ -32,6 +32,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS, HOOK_EVENTS } = require('./constants');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 const { ExperienceType, ExperienceCategory, KnowledgeLayer, getLayerForCategory } = require('./experience-types');
 const { ComplaintStatus } = require('./complaint-wall');
 const { SessionSignalDetector } = require('./session-signal-detector');
@@ -193,7 +194,13 @@ const OrchestratorTeardownMixin = {
               errorLog: errorLogContent,
             });
 
-            this._rawLlmCall(extractionPrompt, 'session-signal-extraction')
+            this._rawLlmCall(prepareGatewayPrompt(this, {
+              callSite: 'workflow/core/orchestrator-teardown-impl.js:sessionSignalExtraction',
+              role: 'session-signal',
+              stage: 'FINISHED',
+              runtimePrompt: extractionPrompt,
+              metadata: { category: 'raw-orchestrator-call', signalCount: signalResult.signals.length },
+            }), 'session-signal-extraction')
               .then(response => {
                 if (!response) return;
 

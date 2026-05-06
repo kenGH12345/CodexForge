@@ -43,7 +43,10 @@ registerCommand(
       const modeLabel = result.incremental
         ? `🔄 Incremental (${result.changedFiles} changed)`
         : '🔨 Full rebuild';
-      return [
+      // Legacy L3 may be disabled by default; reflect actual state in the tip.
+      const legacyEnv = String(process.env.WF_CODE_GRAPH_LEGACY || '').toLowerCase();
+      const legacyEnabled = legacyEnv === '1' || legacyEnv === 'true';
+      const lines = [
         `✅ **Code Graph Built**`,
         ``,
         `- Mode:            **${modeLabel}**`,
@@ -51,14 +54,21 @@ registerCommand(
         `- Files scanned:   **${result.fileCount}**`,
         `- Call edges:      **${result.edgeCount}**`,
         ``,
-        `📄 Index: \`output/code-graph.json\``,
-        `📄 Summary: \`output/code-graph.md\``,
+        `📄 L1 Index: \`output/code-graph-index.json\``,
+        `📁 L2 Shards: \`output/code-graph-shards/\``,
+        `📄 Summary:  \`output/code-graph.md\``,
+      ];
+      if (legacyEnabled) {
+        lines.push(`📄 L3 Legacy: \`output/code-graph.json\` (WF_CODE_GRAPH_LEGACY enabled)`);
+      }
+      lines.push(
         ``,
         `> Use \`/graph search <keyword>\` to query the index.`,
         `> Use \`/graph hotspot\` to view hotspot analysis.`,
         `> Use \`/graph reusable\` to see recommended reusable symbols.`,
         `> Use \`/graph build --force\` to force a full rebuild.`,
-      ].join('\n');
+      );
+      return lines.join('\n');
     }
 
     // Load existing graph from disk for queries.

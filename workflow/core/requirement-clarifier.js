@@ -22,6 +22,8 @@
 
 'use strict';
 
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
+
 const { detectSignals, parseSemanticSignals } = require('./clarification-engine');
 
 // ─── Semantic Detection for Human Requirements ───────────────────────────────
@@ -123,7 +125,13 @@ async function detectRequirementSignals(text, llmCall, logFn) {
   logFn('[RequirementClarifier] 🧠 Running semantic signal detection (LLM)...');
   try {
     const prompt = buildRequirementSemanticPrompt(text);
-    const response = await llmCall(prompt);
+    const response = await llmCall(prepareGatewayPrompt({ _outputDir: null }, {
+      callSite: 'workflow/core/requirement-clarifier.js:detectRequirementSignals',
+      role: 'requirement-clarifier',
+      stage: 'ANALYSE',
+      runtimePrompt: prompt,
+      metadata: { category: 'injected-llm-call' },
+    }));
     const signals = parseSemanticSignals(response);
 
     if (signals.length > 0) {
@@ -236,7 +244,13 @@ async function mergeAnswers(requirement, qa, llmCall, logFn) {
     try {
       logFn && logFn('[RequirementClarifier] 🔀 Fusing answers into requirement via LLM...');
       const prompt = buildMergePrompt(requirement, qa);
-      const merged = await llmCall(prompt);
+      const merged = await llmCall(prepareGatewayPrompt({ _outputDir: null }, {
+        callSite: 'workflow/core/requirement-clarifier.js:mergeAnswers',
+        role: 'requirement-clarifier',
+        stage: 'ANALYSE',
+        runtimePrompt: prompt,
+        metadata: { category: 'injected-llm-call', answerCount: qa.length },
+      }));
       if (merged && merged.trim().length > 0) {
         // Sanity check: merged result should be at least 50% the length of the original
         // to guard against LLM returning a truncated or empty-ish response.

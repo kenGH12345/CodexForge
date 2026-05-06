@@ -201,15 +201,17 @@ class RequestTriage {
       }
     }
 
-    // Check code-graph.json
-    const codeGraphPaths = [
-      path.join(projectRoot, 'workflow', 'output', 'code-graph.json'),
-      path.join(projectRoot, 'output', 'code-graph.json'),
+    // Check code-graph presence (L1 index preferred; L3 legacy fallback)
+    const { resolveCodeGraphPath: _resolveCG1 } = require('./code-graph-layered-reader');
+    const _cgRoots1 = [
+      path.join(projectRoot, 'workflow'),  // legacy dual-output layout
+      projectRoot,                          // standard layout
     ];
-    for (const cgp of codeGraphPaths) {
-      if (fs.existsSync(cgp)) {
+    for (const _root of _cgRoots1) {
+      const _resolved = _resolveCG1(_root);
+      if (_resolved.exists) {
         checks.hasCodeGraph = true;
-        checks.codeGraphPath = cgp;
+        checks.codeGraphPath = _resolved.primaryPath;
         break;
       }
     }
@@ -259,26 +261,24 @@ class RequestTriage {
     const now = Date.now();
     const dayMs = 24 * 60 * 60 * 1000;
 
-    // Check CodeGraph staleness
-    const codeGraphPaths = [
-      path.join(projectRoot, 'workflow', 'output', 'code-graph.json'),
-      path.join(projectRoot, 'output', 'code-graph.json'),
+    // Check CodeGraph staleness — use newest of L1/L3 so fresh L1 isn't masked by stale L3
+    const { resolveCodeGraphPath } = require('./code-graph-layered-reader');
+    const candidateRoots = [
+      path.join(projectRoot, 'workflow'),
+      projectRoot,
     ];
-    for (const cgp of codeGraphPaths) {
-      if (fs.existsSync(cgp)) {
-        try {
-          const stat = fs.statSync(cgp);
-          const ageDays = Math.round((now - stat.mtimeMs) / dayMs);
-          if (ageDays > this._stalenessConfig.CODE_GRAPH_MAX_AGE_DAYS) {
-            warnings.push({
-              type: 'code_graph_stale',
-              message: `⚠️ CodeGraph is ${ageDays} days old (threshold: ${this._stalenessConfig.CODE_GRAPH_MAX_AGE_DAYS} days). Consider running \`/wf init\` to refresh.`,
-              ageDays,
-            });
-          }
-        } catch (_) { /* ignore stat errors */ }
-        break;
+    for (const root of candidateRoots) {
+      const resolved = resolveCodeGraphPath(root);
+      if (!resolved.exists || resolved.newestMtimeMs == null) continue;
+      const ageDays = Math.round((now - resolved.newestMtimeMs) / dayMs);
+      if (ageDays > this._stalenessConfig.CODE_GRAPH_MAX_AGE_DAYS) {
+        warnings.push({
+          type: 'code_graph_stale',
+          message: `⚠️ CodeGraph is ${ageDays} days old (threshold: ${this._stalenessConfig.CODE_GRAPH_MAX_AGE_DAYS} days). Consider running \`/wf init\` to refresh.`,
+          ageDays,
+        });
       }
+      break;
     }
 
     // Check workflow.config.js staleness

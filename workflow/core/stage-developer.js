@@ -27,6 +27,7 @@ const {
 const { ContractViolationError } = require('./file-ref-bus');
 const { buildRetryContext } = require('./retry-divergence-guard');
 const { buildAgentPrompt } = require('./prompt-builder');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 const { getStandardTools } = require('./agent-tools');
 
 // ── ADR-48: Micro-Planning — local task amendment during CODE stage ──────────
@@ -442,7 +443,14 @@ let outputPath = await this.agents[AgentRole.DEVELOPER].run(inputPath, null, dev
     } catch (err) {
       console.warn(`[Orchestrator] ⚠️  Reviewer prompt optimisation failed (non-fatal): ${err.message}`);
     }
-    return this._rawLlmCall(optimisedPrompt);
+    return this._rawLlmCall(prepareGatewayPrompt(this, {
+      callSite: 'workflow/core/stage-developer.js:reviewLlmCall',
+      role: 'code-reviewer',
+      stage: 'CODE',
+      runtimePrompt: optimisedPrompt,
+      candidatePrompt: optimisedPrompt,
+      metadata: { category: 'raw-orchestrator-call' },
+    }));
   };
   const reviewer = new CodeReviewAgent(
     reviewLlmCall,

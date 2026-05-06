@@ -34,6 +34,12 @@ const { DeveloperAgent } = require('./agents/developer-agent');
 const { TesterAgent } = require('./agents/tester-agent');
 const { PlannerAgent } = require('./agents/planner-agent');
 const { buildAgentPrompt, setPromptSlotManager, getPromptSlotManager, setSelfReflectionEngine, setSkillEvolutionEngine, setOrchestrator, setEmbeddingService, setContextLoaderCheapLlm, setContextLoaderExperienceStore, setAdmissionMatrixConfig, preloadAdrDigest } = require('./core/prompt-builder');
+const {
+  MODES: PROMPT_CONTEXT_ASSEMBLER_MODES,
+  resolvePromptContextAssemblerMode,
+  appendRuntimeModeCanary,
+} = require('./core/prompt-context-assembler-mode');
+const { LLMInjectionGateway } = require('./core/llm-injection-gateway');
 const { PromptSlotManager } = require('./core/prompt-slot-manager');
 const { WorkflowState, AgentRole, STATE_ORDER } = require('./core/types');
 const { PATHS, HOOK_EVENTS, outputPath, getDefaultOutputDir } = require('./core/constants');
@@ -176,6 +182,7 @@ this.projectId = projectId;
     // all instance methods (StageContextStore, buildDeveloperContextBlock, etc.) can use
     // it instead of the global constant.
     this._outputDir = outputDir || getDefaultOutputDir();
+    this.llmInjectionGateway = new LLMInjectionGateway({ outputDir: this._outputDir });
     this._runCategory = ['prod', 'test', 'diag'].includes(String(runCategory || '').toLowerCase())
       ? String(runCategory).toLowerCase()
       : 'prod';
@@ -838,6 +845,7 @@ this.projectId = projectId;
       // crash the entire task worker – fall back to the raw prompt instead.
       let optimisedPrompt = prompt;
       let routeMetaRef = null;
+      let gatewayResultRef = null;
       try {
         // Pre-populate ADR digest cache using cheap LLM (if available).
         // This must happen BEFORE buildAgentPrompt() because resolve() is synchronous
@@ -854,13 +862,16 @@ this.projectId = projectId;
           developer: 'CODE',  tester: 'TEST',          reviewer: 'ARCHITECT',
         };
         const _buildOpts = _roleToStage[role] ? { stage: _roleToStage[role] } : {};
-        const result = buildAgentPrompt(role, prompt, [], _buildOpts);
+        const _assemblerMode = resolvePromptContextAssemblerMode();
+        const result = _assemblerMode.mode === PROMPT_CONTEXT_ASSEMBLER_MODES.RUNTIME
+          ? buildAgentPrompt(role, prompt, [], _buildOpts)
+          : await buildAgentPrompt(role, prompt, [], _buildOpts);
         
         // Defensive: Handle undefined/null result from buildAgentPrompt
         if (!result || typeof result !== 'object') {
           console.warn(`[Orchestrator] buildAgentPrompt returned ${result === undefined ? 'undefined' : typeof result} for role "${role}". Using raw prompt.`);
         } else {
-          optimisedPrompt = result.prompt || prompt;
+          let candidatePrompt = result.prompt || prompt;
 
           // Optimization C: API Prompt Caching – when buildAgentPrompt returns
           // cache breakpoint metadata, convert to messages array format so the
@@ -869,7 +880,7 @@ this.projectId = projectId;
           // is stable across calls for the same role, achieving ~90% cost reduction
           // on cached tokens. Falls back to string format if the adapter rejects arrays.
           if (result.meta && result.meta.cacheBreakpoint && result.meta.cacheablePrefix && result.meta.dynamicSuffix) {
-            optimisedPrompt = [
+            candidatePrompt = [
               {
                 role: 'system',
                 content: result.meta.cacheablePrefix,
@@ -881,6 +892,29 @@ this.projectId = projectId;
               },
             ];
           }
+
+          if (_assemblerMode.shouldRecordCanary) {
+            appendRuntimeModeCanary({
+              outputDir: this._outputDir,
+              role,
+              stage: _buildOpts.stage,
+              mode: _assemblerMode.mode,
+              runtimePrompt: prompt,
+              candidatePrompt,
+              candidateMeta: result.meta || {},
+            });
+          }
+          const gatewayResult = this.llmInjectionGateway.prepare({
+            callSite: 'workflow/index.js:wrappedLlm',
+            role,
+            stage: _buildOpts.stage,
+            runtimePrompt: prompt,
+            candidatePrompt,
+            metadata: { category: 'agent-wrapper', assemblerMode: _assemblerMode.mode },
+            deferAppend: true,
+          });
+          gatewayResultRef = gatewayResult;
+          optimisedPrompt = gatewayResult.promptToSend;
 
           const estimatedTokens = (result.meta && result.meta.estimatedTokens) || 0;
           console.error(`[Orchestrator] LLM call for ${role}: ~${estimatedTokens} tokens`);
@@ -960,6 +994,7 @@ this.projectId = projectId;
       let rawResponse = null;
       let lastError = null;
       const fallbackChain = [];
+      const llmStartedAt = Date.now();
 
       for (let hop = 0; hop < 4; hop++) {
         const modelId = `${role}:${activeTier}`;
@@ -1005,7 +1040,16 @@ this.projectId = projectId;
       }
 
       if (!rawResponse) {
+        const latencyMs = Date.now() - llmStartedAt;
+        if (gatewayResultRef && typeof gatewayResultRef.recordOutcome === 'function') {
+          gatewayResultRef.recordOutcome({ status: 'error', runtimeLatencyMs: latencyMs, candidateLatencyMs: latencyMs });
+        }
         throw lastError || new Error(`LLM routing failed for role ${role}`);
+      }
+
+      const llmLatencyMs = Date.now() - llmStartedAt;
+      if (gatewayResultRef && typeof gatewayResultRef.recordOutcome === 'function') {
+        gatewayResultRef.recordOutcome({ status: 'ok', runtimeLatencyMs: llmLatencyMs, candidateLatencyMs: llmLatencyMs });
       }
 
       if (routeMetaRef) {
@@ -1083,7 +1127,7 @@ this.projectId = projectId;
     };
 
     // P2-b: pass instance-level outputDir so agents write to the correct directory
-    const agentOpts = { outputDir: this._outputDir };
+    const agentOpts = { outputDir: this._outputDir, llmInjectionGateway: this.llmInjectionGateway };
     this.agents = {
       [AgentRole.ANALYST]:   new AnalystAgent(wrappedLlm(AgentRole.ANALYST), emitter, agentOpts),
       [AgentRole.ARCHITECT]: new ArchitectAgent(wrappedLlm(AgentRole.ARCHITECT), emitter, agentOpts),
@@ -1123,6 +1167,7 @@ this.projectId = projectId;
     this.services.registerValue('sandbox', this.sandbox);
     this.services.registerValue('agents', this.agents);
     this.services.registerValue('rawLlmCall', this._rawLlmCall);
+    this.services.registerValue('llmInjectionGateway', this.llmInjectionGateway);
     this.services.registerValue('adaptiveStrategy', this._adaptiveStrategy);
     this.services.registerValue('llmRouter', this.llmRouter);
     this.services.registerValue('modelHealth', this.modelHealth);

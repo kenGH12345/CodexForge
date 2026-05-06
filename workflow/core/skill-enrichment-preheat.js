@@ -9,7 +9,9 @@
 
 'use strict';
 
+const path = require('path');
 const { webSearchHelper } = require('./web-search-helpers');
+const { prepareGatewayPrompt } = require('./llm-injection-gateway');
 
 /**
  * Preheats the ExperienceStore with seed experiences from external knowledge.
@@ -210,7 +212,13 @@ try {
 
     let experiences = null;
     if (llmCall) {
-      const llmResponse = await llmCall(analysisPrompt);
+      const llmResponse = await llmCall(prepareGatewayPrompt({ _outputDir: path.join(orch.projectRoot || process.cwd(), 'output') }, {
+        callSite: 'workflow/core/skill-enrichment-preheat.js:preheatExperienceStore',
+        role: 'skill-enrichment-preheat',
+        stage: 'EVOLVE',
+        runtimePrompt: analysisPrompt,
+        metadata: { category: 'injected-llm-call' },
+      }));
       experiences = _parsePreheatResponse(llmResponse);
     }
 

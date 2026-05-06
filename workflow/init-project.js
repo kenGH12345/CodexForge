@@ -31,6 +31,7 @@ const { generateConfigFromProfile, _generateInitSh, _generateFeatureListTemplate
 const { _copyProjectTemplates } = require('./core/project-template');
 const { ProjectProfiler } = require('./core/project-profiler');
 const { generateIDEAgents } = require('./core/agent-generator');
+const { LLMInjectionGateway } = require('./core/llm-injection-gateway');
 
 // ─── CLI Args ─────────────────────────────────────────────────────────────────
 
@@ -673,6 +674,7 @@ How it works:
 
   // ── Shared: Initialise LLM router for skill generation & auto-distillation ─
   let cheapLlmCall = null;
+  const initLlmInjectionGateway = new LLMInjectionGateway({ outputDir: path.join(projectRoot, 'output') });
   try {
     const { LlmRouter } = require('./core/llm-router');
     // Only create cheapLlmCall if a real LLM is configured
@@ -682,15 +684,22 @@ How it works:
           const apiKey = config.llm.apiKey;
           const model = config.llm.model || 'gpt-3.5-turbo';
           const axios = require('axios');
-          const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-            model,
-            messages: [
-              { role: 'system', content: 'You are a technical documentation specialist.' },
-              { role: 'user', content: prompt }
-            ],
-            max_tokens: 12000,
-            temperature: 0.3
-          }, {
+          const requestBody = initLlmInjectionGateway.prepare({
+            callSite: 'workflow/init-project.js:defaultLlm.chatCompletions',
+            role: 'init-project',
+            stage: 'INIT',
+            runtimePrompt: {
+              model,
+              messages: [
+                { role: 'system', content: 'You are a technical documentation specialist.' },
+                { role: 'user', content: prompt }
+              ],
+              max_tokens: 12000,
+              temperature: 0.3
+            },
+            metadata: { category: 'external-provider-call', model },
+          }).promptToSend;
+          const response = await axios.post('https://api.openai.com/v1/chat/completions', requestBody, {
             headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
             timeout: 300000
           });
@@ -945,6 +954,7 @@ How it works:
   }
 
   let codeGraphResult = null;
+  let initialCodeGraph = null;
   if (!args.dryRun) {
     try {
       const { CodeGraph } = require('./core/code-graph');
@@ -965,8 +975,10 @@ How it works:
         outputDir,
         ignoreDirs:     cfg.ignoreDirs,
         scopeDirs:      cfg.codeGraph?.scopeDirs,
+        writeLegacyGraph: cfg.codeGraph?.writeLegacyGraph === true,
       });
       codeGraphResult = await graph.build({ incremental: true, force: true });
+      initialCodeGraph = graph;
       const ps = codeGraphResult.parserStats;
       if (ps && ps.astParsed > 0) {
         console.log(`      ✅ Code graph built: ${codeGraphResult.symbolCount} symbols, ${codeGraphResult.edgeCount} call edges, ${codeGraphResult.fileCount} files`);
@@ -975,7 +987,13 @@ How it works:
         console.log(`      ✅ Code graph built: ${codeGraphResult.symbolCount} symbols, ${codeGraphResult.edgeCount} call edges, ${codeGraphResult.fileCount} files`);
         console.log(`      ⚠️  AST parsing: 0 symbols — tree-sitter may not be active for this file set`);
       }
-      console.log(`      📄 Index: ${path.join(outputDir, 'code-graph.json')}`);
+      console.log(`      📄 L1 Index: ${path.join(outputDir, 'code-graph-index.json')}`);
+      console.log(`      📁 L2 Shards: ${path.join(outputDir, 'code-graph-shards')}`);
+      if (cfg.codeGraph?.writeLegacyGraph === true || ['1', 'true'].includes(String(process.env.WF_CODE_GRAPH_LEGACY || '').toLowerCase())) {
+        console.log(`      📄 L3 Legacy full graph: ${path.join(outputDir, 'code-graph.json')}`);
+      } else {
+        console.log(`      ⏭️  L3 Legacy full graph: disabled by default`);
+      }
       console.log(`      📄 Summary: ${path.join(outputDir, 'code-graph.md')}\n`);
     } catch (err) {
       console.warn(`      ⚠️  Code graph generation warning (non-fatal): ${err.message}\n`);
@@ -1042,14 +1060,13 @@ How it works:
       const outputDir = path.join(projectRoot, 'output');
       const cfg = config || {};
 
-      // Load existing code graph (built in Step 6)
-      const graph = new CodeGraph({
+      const graph = initialCodeGraph || new CodeGraph({
         projectRoot,
         outputDir,
         ignoreDirs:     cfg.ignoreDirs,
         scopeDirs:      cfg.codeGraph?.scopeDirs,
       });
-      graph._loadFromDisk();
+      if (!initialCodeGraph) graph._loadFromDisk();
 
       // Detect IDE environment for IDE-First strategy
       const ideDetection = detectIDEEnvironment({ config: cfg });
@@ -1130,14 +1147,13 @@ How it works:
       const outputDir = path.join(projectRoot, 'output');
       const cfg = config || {};
 
-      // Load existing code graph (built in Step 6)
-      const graph = new CodeGraph({
+      const graph = initialCodeGraph || new CodeGraph({
         projectRoot,
         outputDir,
         ignoreDirs:     cfg.ignoreDirs,
         scopeDirs:      cfg.codeGraph?.scopeDirs,
       });
-      graph._loadFromDisk();
+      if (!initialCodeGraph) graph._loadFromDisk();
 
       // Detect IDE environment for IDE-First strategy
       const ideDetection = detectIDEEnvironment({ config: cfg });
@@ -1182,14 +1198,13 @@ How it works:
       const outputDir = path.join(projectRoot, 'output');
       const cfg = config || {};
 
-      // Load existing code graph (built in Step 6)
-      const graph = new CodeGraph({
+      const graph = initialCodeGraph || new CodeGraph({
         projectRoot,
         outputDir,
         ignoreDirs:     cfg.ignoreDirs,
         scopeDirs:      cfg.codeGraph?.scopeDirs,
       });
-      graph._loadFromDisk();
+      if (!initialCodeGraph) graph._loadFromDisk();
 
       // Detect IDE environment for IDE-First strategy
       const ideDetection = detectIDEEnvironment({ config: cfg });
@@ -1382,9 +1397,11 @@ How it works:
   console.log(`    • init.sh                    – Run at the start of every Coding Agent session`);
   console.log(`    • output/feature-list.json   – Track feature completion (all start passes:false)`);
   console.log(`  Code intelligence files:`);
-  console.log(`    • output/code-graph.json     – Structured symbol index + call graph (auto-updated)`);
-  console.log(`    • output/code-graph.md       – Human-readable code graph summary`);
-  console.log(`    • output/project-profile.md  – Deep architecture profile (frameworks, layers, data, infra)`);
+  console.log(`    • output/code-graph-index.json      – L1 lightweight symbol/module index`);
+  console.log(`    • output/code-graph-shards/         – L2 module shards for on-demand deep reads`);
+  console.log(`    • output/code-graph.md              – Human-readable code graph summary`);
+  console.log(`    • output/code-graph.json            – L3 legacy full graph, only when explicitly enabled`);
+  console.log(`    • output/project-profile.md         – Deep architecture profile (frameworks, layers, data, infra)`);
   console.log(`    • output/business-logic.json – Extracted business logic patterns (entry points, flows)`);
   console.log(`    • output/business-logic.md   – Human-readable business logic summary`);
   console.log(`    • output/api-endpoints.json  – Extracted REST API endpoints (routes, handlers)`);
