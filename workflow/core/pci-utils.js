@@ -1,76 +1,110 @@
-'use strict';
+﻿'use strict';
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 1;
+const DEFAULT_PREVIEW_CHARS = 240;
 
-function rel(projectRoot, filePath) {
-  return path.relative(projectRoot, filePath).replace(/\\/g, '/');
+function sha256(value) {
+  return crypto.createHash('sha256').update(String(value || '')).digest('hex');
 }
 
-function safeRead(filePath) {
-  try { return fs.readFileSync(filePath, 'utf-8'); } catch { return ''; }
-}
-
-function createCollector(projectRoot) {
-  const blocks = [];
-  return {
-    blocks,
-    projectRoot,
-    addBlock(block) { blocks.push(block); },
-  };
-}
-
-function normalizeContent(content) {
-  if (!content) return '';
-  return content
-    .replace(/[\r\n]+/g, '\n')
+function normalizeContent(value) {
+  return String(value || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/[*_#>|\-[\](){},.;:!?'"\\/]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
 }
 
-function readJsonArtifact(projectRoot, relPath) {
-  const filePath = path.join(projectRoot, relPath);
+function estimateTokens(value) {
+  return Math.ceil(String(value || '').length / 4);
+}
+
+function safeRead(filePath) {
   try {
-    if (!fs.existsSync(filePath)) return { exists: false, path: filePath, value: null, error: `${relPath} not found` };
-    return { exists: true, path: filePath, value: JSON.parse(fs.readFileSync(filePath, 'utf-8')), error: null };
-  } catch (err) {
-    return { exists: false, path: filePath, value: null, error: err.message };
+    if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return '';
+    return fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return '';
   }
 }
 
-function asFiniteNumber(value) {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
+function sourceHash(filePath) {
+  const content = safeRead(filePath);
+  return content ? sha256(content) : null;
 }
 
-function readPathValue(object, paths) {
-  for (const pathExpr of paths) {
-    const value = String(pathExpr).split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), object);
-    if (value !== undefined && value !== null && value !== '') return value;
+function rel(projectRoot, filePath) {
+  return path.relative(projectRoot, filePath).replace(/\\/g, '/');
+}
+
+function collectFiles(dir, predicate, bucket = []) {
+  if (!dir || !fs.existsSync(dir)) return bucket;
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return bucket; }
+  for (const entry of entries) {
+    if (entry.name === 'node_modules' || entry.name === '.git') continue;
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) collectFiles(abs, predicate, bucket);
+    else if (entry.isFile() && predicate(abs, entry.name)) bucket.push(abs);
   }
-  return null;
+  return bucket;
 }
 
-function formatPercent(value) {
-  return value == null ? 'n/a' : `${(value * 100).toFixed(2)}%`;
-}
+function createCollector(projectRoot) {
+  const blocks = [];
+  const seenIds = new Set();
 
-function formatNumber(value, digits = 2) {
-  return value == null ? 'n/a' : Number(value).toFixed(digits);
+  function addBlock(input) {
+    const content = String(input.content || '').trim();
+    if (!content) return null;
+    const normalized = normalizeContent(content);
+    if (!normalized) return null;
+    const baseId = String(input.id || `${input.type}.${blocks.length + 1}`).replace(/[^a-zA-Z0-9_.:-]+/g, '-');
+    let id = baseId;
+    let suffix = 2;
+    while (seenIds.has(id)) id = `${baseId}.${suffix++}`;
+    seenIds.add(id);
+
+    const block = {
+      id,
+      type: input.type || 'unknown',
+      owner: input.owner || 'unknown',
+      source: input.source || null,
+      sourceHash: input.sourcePath ? sourceHash(input.sourcePath) : input.sourceHash || null,
+      version: input.version || '1',
+      stage: Array.isArray(input.stage) ? input.stage : [],
+      role: Array.isArray(input.role) ? input.role : [],
+      priority: Number.isFinite(Number(input.priority)) ? Number(input.priority) : 50,
+      dedupePolicy: input.dedupePolicy || 'semantic-shadow',
+      dedupeKey: `normalized:${sha256(normalized).slice(0, 16)}`,
+      contentHash: sha256(content),
+      normalizedHash: sha256(normalized),
+      tokenEstimate: estimateTokens(content),
+      charCount: content.length,
+      preview: content.slice(0, DEFAULT_PREVIEW_CHARS),
+    };
+    blocks.push(block);
+    return block;
+  }
+
+  return { blocks, addBlock };
 }
 
 module.exports = {
   SCHEMA_VERSION,
-  rel,
-  safeRead,
-  createCollector,
+  DEFAULT_PREVIEW_CHARS,
+  sha256,
   normalizeContent,
-  readJsonArtifact,
-  asFiniteNumber,
-  readPathValue,
-  formatPercent,
-  formatNumber,
+  estimateTokens,
+  safeRead,
+  sourceHash,
+  rel,
+  collectFiles,
+  createCollector,
 };
