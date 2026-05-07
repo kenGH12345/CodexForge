@@ -305,3 +305,35 @@ The `production-readiness-scanner.js` tool scans the codebase and emits
 | Weekly Maintenance | Isolation modules older than 2 weeks raise a HIGH-severity item in `health-report.md` |
 
 **See also:** [ADR-56 Production-First Principle](./adr-56-production-first-principle.md)
+
+## Error Handling
+
+1. All async operations MUST use try/catch or `.catch()` — unhandled rejections are P0 bugs
+2. Empty catch blocks are forbidden — at minimum log the error with `logger.error()`
+3. Error messages MUST include operation context (what failed + input summary), not just the error object
+4. Retry logic MUST use exponential backoff with jitter; max 3 retries for non-idempotent operations
+5. Throw early, return late — validate preconditions at function entry, not scattered throughout
+
+## Async Patterns
+
+1. `await` MUST only be used inside `async` functions — top-level await is forbidden in workflow modules
+2. Concurrent independent operations MUST use `Promise.all()` (not sequential awaits)
+3. Race conditions on shared state MUST use mutex/lock (`FileLockManager` for files, `AsyncMutex` for in-memory)
+4. Callback-style APIs MUST be promisified before use in workflow code — no raw callbacks
+5. Streams and long-running iterators MUST respect `AbortSignal` for graceful cancellation
+
+## Dependency Introduction
+
+1. New npm dependencies MUST be approved via ADR — no `npm install` without a decision record
+2. Prefer Node.js built-in modules (`fs`, `path`, `http`, `crypto`) over third-party equivalents
+3. If a dependency exists in `package.json` that covers the need, reuse it — no duplicate functionality
+4. Pin exact versions in `package.json` — no `^` or `~` for production dependencies
+5. Every new dependency MUST have a production call path (see Production-First Principle above)
+
+## Resource Safety
+
+1. File handles, streams, and network sockets MUST be closed in `finally` blocks or via `using` pattern
+2. Temporary files MUST be cleaned up in `finally` — never rely on process exit for cleanup
+3. Locks (`FileLockManager`) MUST be released in `finally` — a held lock after crash = deadlock
+4. Event listeners on long-lived objects MUST be removed when the listener owner is destroyed
+5. Memory-heavy buffers (parsed JSON >1MB, large arrays) MUST be nullified when no longer needed

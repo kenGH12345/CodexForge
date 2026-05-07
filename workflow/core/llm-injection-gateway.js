@@ -9,6 +9,8 @@ const CANARY_APPROVED_ENV = 'WF_LLM_INJECTION_CANARY_APPROVED';
 const CANARY_ALLOWLIST_ENV = 'WF_LLM_INJECTION_CANARY_ALLOWLIST';
 const CANARY_PERCENT_ENV = 'WF_LLM_INJECTION_CANARY_PERCENT';
 const CANARY_ROLLBACK_ENV = 'WF_LLM_INJECTION_CANARY_ROLLBACK';
+const DRIFT_THRESHOLD_ENV = 'WF_LLM_INJECTION_DRIFT_THRESHOLD';
+const DEFAULT_DRIFT_THRESHOLD = 0.3;
 const MODES = Object.freeze({
   OFF: 'off',
   SHADOW: 'shadow',
@@ -174,12 +176,22 @@ function prepareGatewayPrompt(owner, options = {}) {
   }
 }
 
+function _parseDriftThreshold(env) {
+  const raw = env[DRIFT_THRESHOLD_ENV];
+  if (raw == null) return DEFAULT_DRIFT_THRESHOLD;
+  const val = Number(raw);
+  return Number.isFinite(val) && val >= 0 && val <= 1 ? val : DEFAULT_DRIFT_THRESHOLD;
+}
+
 class LLMInjectionGateway {
   constructor(options = {}) {
     this.outputDir = options.outputDir || null;
     this.env = options.env || process.env;
     this.modeOverride = options.mode || null;
     this.artifactName = options.artifactName || 'unified-llm-injection-shadow.jsonl';
+    this._otelExporter = options.otelExporter || null;
+    this._heartbeat = options.heartbeat || null;
+    this._driftThreshold = _parseDriftThreshold(this.env);
   }
 
   resolveMode() {
@@ -194,17 +206,30 @@ class LLMInjectionGateway {
     const callSite = options.callSite || 'unknown';
     const canary = resolveCanaryDecision({ env: this.env, callSite, metadata: options.metadata || {}, modeInfo });
     const shouldSendCandidate = modeInfo.shouldSendCandidate && canary.allowed;
-    const promptToSend = shouldSendCandidate ? candidatePrompt : runtimePrompt;
+    let promptToSend = shouldSendCandidate ? candidatePrompt : runtimePrompt;
+    let driftBlocked = false;
+    let driftThreshold = this._driftThreshold;
+    if (shouldSendCandidate && this._driftThreshold < 1) {
+      const rtNorm = normalizePromptPayload(runtimePrompt);
+      const ctNorm = normalizePromptPayload(candidatePrompt);
+      const driftScore = computeQualityDriftScore(rtNorm.length, ctNorm.length);
+      if (driftScore > this._driftThreshold) {
+        promptToSend = runtimePrompt;
+        driftBlocked = true;
+      }
+    }
     const runtimeText = normalizePromptPayload(runtimePrompt);
     const candidateText = normalizePromptPayload(candidatePrompt);
     const record = applyTelemetry({
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),
       mode: modeInfo.mode,
-      changedPromptOutput: shouldSendCandidate,
+      changedPromptOutput: shouldSendCandidate && !driftBlocked,
       callSite,
       role: options.role || null,
       stage: options.stage || null,
+      driftBlocked,
+      driftThreshold,
       runtime: {
         hash: sha256(runtimeText),
         length: runtimeText.length,
@@ -217,7 +242,7 @@ class LLMInjectionGateway {
       canary: {
         allowed: canary.allowed,
         approved: canary.approved,
-        rollback: canary.rollback,
+        rollback: canary.rollback || driftBlocked,
         allowlistMatched: canary.allowlistMatched,
         percent: canary.percent,
         bucket: canary.bucket,
@@ -245,7 +270,7 @@ class LLMInjectionGateway {
       promptToSend,
       candidatePrompt,
       mode: modeInfo.mode,
-      changedPromptOutput: shouldSendCandidate,
+      changedPromptOutput: shouldSendCandidate && !driftBlocked,
       canary,
       record,
       recordOutcome,
@@ -258,6 +283,8 @@ class LLMInjectionGateway {
       const target = path.join(this.outputDir, this.artifactName);
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.appendFileSync(target, `${JSON.stringify(record)}\n`, 'utf-8');
+      if (this._otelExporter) this._otelExporter.export(record);
+      if (this._heartbeat) this._heartbeat.verify(target, record);
     } catch (err) {
       record.telemetryError = err.message;
     }
@@ -270,10 +297,13 @@ module.exports = {
   CANARY_ALLOWLIST_ENV,
   CANARY_PERCENT_ENV,
   CANARY_ROLLBACK_ENV,
+  DRIFT_THRESHOLD_ENV,
+  DEFAULT_DRIFT_THRESHOLD,
   MODES,
   LLMInjectionGateway,
   resolveGatewayMode,
   resolveCanaryDecision,
   normalizePromptPayload,
+  computeQualityDriftScore,
   prepareGatewayPrompt,
 };

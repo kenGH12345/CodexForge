@@ -132,6 +132,7 @@ const BUILTIN_SKILL_KEYWORDS = {
   'structured-output':           ['structured output', 'write clearly', 'structure this', 'organize this', 'reduce redundancy', 'be concise', 'information density', 'token compression', 'concise', 'non-redundant'],
   // ── Documentation Skills (Agent Skills 9-category coverage) ────────────────
   'documentation-generation':      ['document', 'documentation', 'doc', 'readme', 'changelog', 'api doc', 'jsdoc', 'javadoc', 'docstring', 'comment', 'wiki', 'guide', 'tutorial', 'migration guide'],
+  'domain-constraint-template':    ['domain-constraint-template', 'domain constraint', 'constraint template'],
 };
 
 // ─── Skill → Allowed Roles filtering ──────────────────────────────────────────
@@ -150,6 +151,7 @@ const SKILL_ROLE_FILTER = {
   'git-conventions': ['developer', 'reviewer'],
   'documentation-generation': ['analyst', 'architect', 'developer', 'reviewer'],
   'javascript-dev': ['architect', 'planner', 'developer', 'reviewer', 'coding-agent'],
+  'domain-constraint-template': ['architect', 'planner', 'developer'],
 };
 
 // ─── Role → architecture-constraints.md section filtering ─────────────────────
@@ -193,6 +195,10 @@ const ROLE_CONSTRAINT_SECTIONS = {
     'TypeScript Support',
     'Core Module Contracts',
     'Dual-Path Unification Rule',
+    'Error Handling',
+    'Async Patterns',
+    'Dependency Introduction',
+    'Resource Safety',
   ],
 
   // tester: only constraints relevant to test design and validation
@@ -202,6 +208,7 @@ const ROLE_CONSTRAINT_SECTIONS = {
     'Communication Protocol',
     'State Management',
     'Core Module Contracts',
+    'Error Handling',
   ],
 
   // reviewer: review-focused constraints for quality and contract checks
@@ -211,6 +218,7 @@ const ROLE_CONSTRAINT_SECTIONS = {
     'Communication Protocol',
     'Core Module Contracts',
     'Dual-Path Unification Rule',
+    'Dependency Introduction',
   ],
 
   // coding-agent: same as developer (direct code generation)
@@ -226,6 +234,10 @@ const ROLE_CONSTRAINT_SECTIONS = {
     'TypeScript Support',
     'Core Module Contracts',
     'Dual-Path Unification Rule',
+    'Error Handling',
+    'Async Patterns',
+    'Dependency Introduction',
+    'Resource Safety',
   ],
 
   // init-agent: no constraints needed (project initialization)

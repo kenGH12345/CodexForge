@@ -147,6 +147,7 @@ module.exports = {
     { name: "web-access", description: "Web access strategy skill: when to search, how to construct queries,", domains: ["web", "search", "research", "documentation"] },
     { name: "WePop_trunk-domain", description: "Domain-specific skill for WePop mobile racing game (Unity 2020.3, C#). State-machine, int-key event bus, XLua, custom GC-friendly collections.", domains: ["unity", "csharp", "game", "xlua", "racing-game", "wepop"] },
     { name: "workflow-orchestration", description: "Multi-agent workflow orchestration SOP", domains: ["workflow", "orchestration"] },
+    { name: "domain-constraint-template", description: "Template for creating domain-specific constraint skills. Copy this template to .workflow/skills/ and customize for your project's domain rules and conventions.", domains: ["template", "constraint", "domain"] },
   ],
 
   // ─── Default Skills ───────────────────────────────────────────────────────

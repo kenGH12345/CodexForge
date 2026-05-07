@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { LLMInjectionGateway, MODES, resolveGatewayMode, prepareGatewayPrompt } = require('./llm-injection-gateway');
+const { LLMInjectionGateway, MODES, resolveGatewayMode, prepareGatewayPrompt, CANARY_APPROVED_ENV, CANARY_ALLOWLIST_ENV, CANARY_PERCENT_ENV, DRIFT_THRESHOLD_ENV } = require('./llm-injection-gateway');
 
 const pendingTests = [];
 
@@ -152,6 +152,94 @@ test('prepareGatewayPrompt reuses owner gateway and returns runtime payload', ()
   const jsonl = fs.readFileSync(path.join(outputDir, 'unified-llm-injection-shadow.jsonl'), 'utf-8');
   assert(!jsonl.includes('private helper prompt'));
   assert(!jsonl.includes('candidate helper prompt'));
+});
+
+test('AC-4.1: Drift blocking sets changedPromptOutput=false when driftScore > threshold', () => {
+  const outputDir = tempDir();
+  const gw = new LLMInjectionGateway({
+    outputDir,
+    mode: MODES.CANDIDATE_RUNTIME,
+    env: { ...process.env, [CANARY_APPROVED_ENV]: 'true', [CANARY_ALLOWLIST_ENV]: '*', [CANARY_PERCENT_ENV]: '100', [DRIFT_THRESHOLD_ENV]: '0.01' },
+  });
+  const result = gw.prepare({
+    callSite: 'test:drift-block',
+    runtimePrompt: 'short',
+    candidatePrompt: 'a very long candidate prompt that causes significant quality drift compared to the short runtime prompt because the length difference is massive and exceeds the threshold',
+    metadata: { category: 'agent-wrapper' },
+  });
+  assert.strictEqual(result.changedPromptOutput, false, 'Drift should block candidate');
+  assert.strictEqual(result.promptToSend, 'short', 'Should fall back to runtime prompt');
+});
+
+test('AC-4.2: Drift blocked record contains driftBlocked=true and driftThreshold', () => {
+  const outputDir = tempDir();
+  const gw = new LLMInjectionGateway({
+    outputDir,
+    mode: MODES.CANDIDATE_RUNTIME,
+    env: { ...process.env, [CANARY_APPROVED_ENV]: 'true', [CANARY_ALLOWLIST_ENV]: '*', [CANARY_PERCENT_ENV]: '100', [DRIFT_THRESHOLD_ENV]: '0.01' },
+  });
+  const result = gw.prepare({
+    callSite: 'test:drift-fields',
+    runtimePrompt: 'short',
+    candidatePrompt: 'a very long candidate prompt that causes significant quality drift compared to the short runtime prompt because the length difference is massive',
+    metadata: { category: 'agent-wrapper' },
+  });
+  const record = result.record;
+  assert.strictEqual(record.driftBlocked, true);
+  assert.strictEqual(record.driftThreshold, 0.01);
+});
+
+test('AC-4.3: Drift blocking sets canary.rollback=true', () => {
+  const outputDir = tempDir();
+  const gw = new LLMInjectionGateway({
+    outputDir,
+    mode: MODES.CANDIDATE_RUNTIME,
+    env: { ...process.env, [CANARY_APPROVED_ENV]: 'true', [CANARY_ALLOWLIST_ENV]: '*', [CANARY_PERCENT_ENV]: '100', [DRIFT_THRESHOLD_ENV]: '0.01' },
+  });
+  const result = gw.prepare({
+    callSite: 'test:drift-rollback',
+    runtimePrompt: 'short',
+    candidatePrompt: 'a very long candidate prompt that causes significant quality drift compared to the short runtime prompt',
+    metadata: { category: 'agent-wrapper' },
+  });
+  assert.strictEqual(result.record.canary.rollback, true);
+});
+
+test('AC-4.4: Drift threshold from environment variable overrides default', () => {
+  const gw = new LLMInjectionGateway({
+    env: { [DRIFT_THRESHOLD_ENV]: '0.5' },
+  });
+  assert.strictEqual(gw._driftThreshold, 0.5);
+});
+
+test('AC-4.5: Threshold=1 disables blocking (all candidates pass)', () => {
+  const outputDir = tempDir();
+  const gw = new LLMInjectionGateway({
+    outputDir,
+    mode: MODES.CANDIDATE_RUNTIME,
+    env: { ...process.env, [CANARY_APPROVED_ENV]: 'true', [CANARY_ALLOWLIST_ENV]: '*', [CANARY_PERCENT_ENV]: '100', [DRIFT_THRESHOLD_ENV]: '1' },
+  });
+  const result = gw.prepare({
+    callSite: 'test:no-block',
+    runtimePrompt: 'short',
+    candidatePrompt: 'a very very long candidate prompt that would normally be blocked',
+    metadata: { category: 'agent-wrapper' },
+  });
+  assert.strictEqual(result.changedPromptOutput, true, 'Threshold=1 should not block');
+  assert.strictEqual(result.record.driftBlocked, false);
+});
+
+test('AC-4.9: No OTel/Heartbeat config behaves identically to before', () => {
+  const outputDir = tempDir();
+  const gw = new LLMInjectionGateway({ outputDir, mode: MODES.SHADOW });
+  assert.strictEqual(gw._otelExporter, null);
+  assert.strictEqual(gw._heartbeat, null);
+  const result = gw.prepare({
+    callSite: 'test:compat',
+    runtimePrompt: 'hello',
+  });
+  assert.ok(result.record);
+  assert.strictEqual(result.record.driftBlocked, false);
 });
 
 Promise.all(pendingTests).then(() => {
