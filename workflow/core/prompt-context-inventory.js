@@ -3812,14 +3812,24 @@ function writeUnifiedLLMInjectionSLODashboard(options = {}) {
   fs.writeFileSync(dashboardPath, JSON.stringify(dashboard, null, 2), 'utf-8');
   fs.writeFileSync(dashboardMarkdownPath, formatUnifiedLLMInjectionSLODashboardReport(dashboard), 'utf-8');
   fs.writeFileSync(releaseHealthSummaryPath, formatUnifiedLLMInjectionReleaseHealthSummary(dashboard), 'utf-8');
+  const { evaluateSLOAlerts, formatAlertSignals } = require('./slo-alert-evaluator');
+  const signals = evaluateSLOAlerts(dashboard);
+  const sloAlerts = formatAlertSignals(signals, {
+    sloAlertWebhook: options.sloAlertWebhook,
+    sloAlertWebhookToken: options.sloAlertWebhookToken,
+  });
+  const sloAlertsPath = path.join(outputDir, 'slo-alerts.json');
+  fs.writeFileSync(sloAlertsPath, JSON.stringify(sloAlerts, null, 2), 'utf-8');
   return {
     ...(ciResult || {}),
     sloDashboard: dashboard,
+    sloAlerts,
     paths: {
       ...(ciResult?.paths || {}),
       unifiedLLMInjectionSLODashboard: dashboardPath,
       unifiedLLMInjectionSLODashboardMarkdown: dashboardMarkdownPath,
       unifiedLLMInjectionReleaseHealthSummary: releaseHealthSummaryPath,
+      sloAlerts: sloAlertsPath,
     },
   };
 }
