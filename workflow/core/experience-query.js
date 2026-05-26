@@ -180,9 +180,41 @@ const ExperienceQueryMixin = {
    * @param {object} query
    * @returns {Experience[]}
    */
-  search({ keyword = null, type = null, category = null, skill = null, tags = null, sourceFile = null, moduleId = null, limit = 10, scoreSort = false } = {}) {
+  async search({ keyword = null, type = null, category = null, skill = null, tags = null, sourceFile = null, moduleId = null, limit = 10, scoreSort = false, semanticSort = false, namespace = null, crossNamespace = false } = {}) {
     const now = Date.now();
     let results = this.experiences.filter(e => !e.expiresAt || new Date(e.expiresAt).getTime() > now);
+
+    // Namespace filtering (ADR-43 extension)
+    const effectiveNamespace = namespace !== null ? namespace : (this._namespace || null);
+    if (!crossNamespace && effectiveNamespace !== null) {
+      const nsFiltered = results.filter(e => e.namespace === effectiveNamespace);
+      // Fallback: if no results in current namespace, try fallback namespaces
+      if (nsFiltered.length === 0 && effectiveNamespace !== 'default' && effectiveNamespace !== 'legacy') {
+        const fallbackOrder = ['default', 'legacy'];
+        const minSimilarity = this._config?.phase2?.semanticRetrieval?.minSimilarityScore || 0.3;
+        for (const fbNs of fallbackOrder) {
+          const fbResults = results.filter(e => {
+            if (e.namespace !== fbNs && e.namespace !== null) return false;
+            // T-3: Apply similarity threshold to fallback results
+            if (keyword && (e.title || e.content)) {
+              const text = (e.title || '') + ' ' + (e.content || '').slice(0, 500);
+              const sim = this._calculateSimilarity(keyword, text);
+              return sim >= minSimilarity;
+            }
+            return true;
+          });
+          if (fbResults.length > 0) {
+            results = fbResults;
+            break;
+          }
+        }
+        if (results.length === nsFiltered.length) {
+          results = results.filter(e => e.namespace === effectiveNamespace || e.namespace === null);
+        }
+      } else {
+        results = nsFiltered;
+      }
+    }
 
     if (type) results = results.filter(e => e.type === type);
     if (category) results = results.filter(e => e.category === category);
@@ -255,8 +287,22 @@ const ExperienceQueryMixin = {
         }
       }
 
+      // T-4: Semantic sort using SemanticExperienceRetriever (replaces Plan-C if enabled)
+      if (semanticSort && this._semanticRetriever && keyword) {
+        try {
+          results = await this._semanticRetriever.enrichSearchResults(keyword, results);
+        } catch (err) {
+          console.warn(`[ExperienceQuery] ⚠️ Semantic sort failed: ${err.message}`);
+        }
+      }
+
       results = results
-        .sort((a, b) => scoreSort ? b.score - a.score : b.exp.hitCount - a.exp.hitCount)
+        .sort((a, b) => {
+          // Use combinedScore if available (from SemanticExperienceRetriever)
+          const scoreA = a.combinedScore ?? a.score;
+          const scoreB = b.combinedScore ?? b.score;
+          return scoreSort ? scoreB - scoreA : (b.exp?.hitCount || 0) - (a.exp?.hitCount || 0);
+        })
         .map(({ exp }) => exp);
     } else {
       results = results
@@ -622,6 +668,21 @@ Output:`;
       console.log(`[ExperienceStore] 📖 Synonym table import: ${imported} entries imported, ${skipped} skipped.`);
     }
     return { imported, skipped, total: Object.keys(this._synonymTable).length };
+  },
+
+  /**
+   * T-3: Calculate similarity between keyword and text (simplified Jaccard)
+   * @param {string} keyword - Search keyword
+   * @param {string} text - Text to compare against
+   * @returns {number} Similarity score between 0-1
+   */
+  _calculateSimilarity(keyword, text) {
+    if (!keyword || !text) return 0;
+    const kwWords = new Set(keyword.toLowerCase().split(/\s+/).filter(Boolean));
+    const textWords = new Set(text.toLowerCase().split(/\s+/).filter(Boolean));
+    const intersection = new Set([...kwWords].filter(w => textWords.has(w)));
+    const union = new Set([...kwWords, ...textWords]);
+    return union.size > 0 ? intersection.size / union.size : 0;
   },
 };
 
