@@ -74,6 +74,7 @@ const { AutoDeployStep }        = require('./auto-deploy-step');
 const { DryRunAndLockStep }     = require('./dryrun-lock-step');
 const { FlushExternalStep }     = require('./flush-external-step');
 const { TaskHistoryStep }       = require('./task-history-step');
+const { FixSessionCloseStep }   = require('./fix-session-close-step');
 const { StalenessCheckStep }    = require('./staleness-check-step');
 const { IntrospectionStep }     = require('./introspection-step');
 const { ExecutionValidationStep } = require('./execution-validation-step');
@@ -131,6 +132,7 @@ function createTeardownPipeline() {
     .register(new DryRunAndLockStep())
     .register(new FlushExternalStep())
     .register(new TaskHistoryStep())
+    .register(new FixSessionCloseStep())
 
     // Phase 6: Staleness & Introspection (priority 54-58)
     .register(new StalenessCheckStep())

@@ -47,6 +47,47 @@ module.exports = {
     failOnUnfixed: false,
   },
 
+  // Phase-1A feature flag: enabled=false 时 stage-analyst 跳过 onStep / 不写 trace
+  // shortTaskBypassChars 控制极简任务豁免阈值（小于此长度的需求允许 0 工具调用）
+  // gateOnIncomplete: bridge stage-complete[ANALYSE] 检测 IDE Agent 漏写 trace 时是否硬阻拦
+  // gateMaxRetry: 同一 session ANALYSE 阶段允许 gate 拒绝多少次后降级（防止死循环）
+  analyst: {
+    exploration: {
+      enabled: true,
+      minToolCalls: 1,
+      shortTaskBypassChars: 30,
+      traceFile: 'output/analyst-trace.jsonl',
+      gateOnIncomplete: true,
+      gateMaxRetry: 2,
+    },
+  },
+
+
+
+  // ─── Phase 3 Feature Flags (M-1 + M-2) ──────────────────────────────────
+  phase3: {
+    // M-2: TaskDifficultyEstimator — unified difficulty scoring + resource plan
+    taskDifficultyEstimator: {
+      enabled: true,
+      defaultDifficulty: 5,
+      difficultyOverride: null,
+      persistToManifest: true,
+    },
+
+    // M-1: AdaptiveContextCompiler — elastic context budget per stage
+    adaptiveContextCompiler: {
+      enabled: true,
+      mode: 'observe', // observe | enforce
+      budgetMode: 'difficulty', // difficulty | fixed | hybrid
+      defaultBudget: 2800,
+      minBudget: 1200,
+      maxBudget: 4000,
+      cacheTtlSeconds: 300,
+      minAdequacyScore: 0.7,
+      riskOnLowAdequacy: true,
+    },
+  },
+
   // ─── Project Architecture Profile ─────────────────────────────────────────
   // Auto-populated by ProjectProfiler during init. Contains deep analysis of
   // frameworks, architecture patterns, data layer, communication, testing, etc.
@@ -192,6 +233,7 @@ module.exports = {
     enabled: true,
     tasks: [
       { command: 'experience-evolve', cron: 'weekly', args: [] },
+      { command: 'skill-freshness-check', cron: 'weekly', args: [] },
       { command: 'skill-refine-check', cron: 'weekly', args: [] },
       { command: 'deep-audit', cron: 'weekly', args: ['--incremental'] },
       { command: 'regression-check', cron: 'monthly', args: [] },
@@ -250,6 +292,25 @@ module.exports = {
       defaultMaxInjectTokens: 2800,
       lowBudgetRatio: 0.5,
       highBudgetRatio: 1.5,
+    },
+  },
+
+  // ─── IDE Bridge Token Optimization Telemetry ──────────────────────────────
+  // 'shadow': record filter stats to output/token-proxy.jsonl without modifying stdout.
+  // 'on':     apply filter AND record stats (modifies Bridge stdout output).
+  // 'off':    no filter, no telemetry (default safe mode).
+  tokenOptimization: {
+    bridgeFilterMode: 'shadow',
+    toolResultFilter: {
+      enabled: true,
+      mode: 'shadow',
+      sectionMinChars: 2000,
+      catalogPromptMinChars: 2000,
+    },
+    semanticCompression: {
+      enabled: false,
+      cheapLlmModel: 'claude-3-haiku-20240307',
+      minTokensForCompression: 8000,
     },
   },
 
@@ -341,5 +402,218 @@ module.exports = {
 
   reflectionCycle: {
     enabled: true,
+  },
+
+  // ─── T-3: LLM Provider Configuration ─────────────────────────────────────
+  // Used by detectProvider() for conditional cache_control injection.
+  // When model starts with 'claude', Anthropic Prompt Caching is enabled.
+  // Falls back to LLM_MODEL env var if not set here.
+  llm: {
+    model: process.env.LLM_MODEL || 'claude-3-5-sonnet-20241022',
+  },
+
+  // ─── S1 Optimization (Selective Context + Observability Extension) ─────────
+  // Phase 0.75 replacement: SelectiveContextCompressor for gradient-importance
+  // based block filtering. All features default-disabled for backward compat.
+  s1Optimization: {
+    selectiveContext: {
+      enabled: false,
+      dryRun: false,
+      targetRatio: 0.7,
+      maxSegmentSize: 500,
+      model: 'Xenova/all-MiniLM-L6-v2',
+    },
+    observabilityExtension: {
+      enabled: false,
+    },
+  },
+
+  // ─── Safety Guard (Knowledge Safety) ────────────────────────────────────────
+  // Scans experiences/skills before persistence for dangerous patterns.
+  // mode: 'quarantine' = mark unsafe (default), 'block' = reject entirely
+  // Rules are regex-based and configurable per project.
+  safetyGuard: {
+    enabled: false,            // Master switch — default false for zero regression
+    mode: 'quarantine',        // 'quarantine' = mark only, 'block' = exclude from context
+    scanSkills: true,          // Scan skill files before ContextLoader injection (M-6)
+    scanExperiences: true,     // Scan experiences before persistence (existing)
+    cacheTtlSeconds: 60,       // Skill file scan cache TTL
+    rules: [
+      // Hardcoded secrets / credentials
+      { id: 'SECRET_001', pattern: 'password\\s*[:=]\\s*["\'][^"\']{3,}["\']', severity: 'high', message: 'Possible hardcoded password' },
+      { id: 'SECRET_002', pattern: 'api[_-]?key\\s*[:=]\\s*["\'][^"\']{8,}["\']', severity: 'high', message: 'Possible hardcoded API key' },
+      { id: 'SECRET_003', pattern: 'token\\s*[:=]\\s*["\'][^"\']{16,}["\']', severity: 'high', message: 'Possible hardcoded token' },
+      // Dangerous JS execution
+      { id: 'DANGER_001', pattern: 'eval\\s*\\(', severity: 'high', message: 'Dangerous eval() usage' },
+      { id: 'DANGER_002', pattern: 'new\\s+Function\\s*\\(', severity: 'high', message: 'Dangerous Function constructor' },
+      { id: 'DANGER_003', pattern: 'child_process', severity: 'medium', message: 'Unfiltered child_process usage' },
+      // Dangerous SQL
+      { id: 'SQL_001', pattern: 'SELECT\\s+.*\\s+FROM\\s+.*\\s+WHERE\\s+.*=\\s*["\']?\\$\\{', severity: 'medium', message: 'Possible SQL injection pattern' },
+    ],
+    quarantineThreshold: 0.05,
+  },
+
+  // ─── Budget Governance (Context Layer Budget Enhancement) ───────────────────
+  // Per-role L1 budget, category L2 sub-budget, and cross-layer borrowing.
+  // All features default-disabled for backward compatibility.
+  budgetGovernance: {
+    enabled: false,
+    l1RoleBudgets: {
+      analyst:   3200,
+      architect: 3000,
+      planner:   2800,
+      developer: 2800,
+      tester:    2600,
+    },
+    l2CategoryCaps: {
+      SECURITY_CVE: 0.20,
+      CODE_GRAPH: 0.25,
+      EXPERIENCE: 0.20,
+      COMPLAINTS: 0.15,
+    },
+    maxBorrowRatio: 0.10,
+    observability: true,
+  },
+
+  // ─── M-7: Runtime Safety Guard (保险丝) ─────────────────────────────────────
+  // Intercepts dangerous commands before execution (rm -rf /, git push --force, etc.)
+  // mode: 'audit' = log only, 'warn' = log + execute, 'block' = log + reject
+  runtimeSafety: {
+    enabled: true,
+    mode: 'warn',
+    blockDangerousRm: true,
+    blockDestructiveGit: true,
+    blockDatabaseDrop: true,
+    blockPublishCommands: false,
+    blockK8sDelete: true,
+    allowlist: ['rm -rf dist', 'rm -rf node_modules', 'rm -rf .cache', 'rm -rf build', 'rm -rf output'],
+    customRules: [],
+    eventsLogPath: 'output/runtime-safety-events.jsonl',
+  },
+
+  // ─── M-8: Context Budget Auditor (电池表) ───────────────────────────────────
+  // Offline audit of context token consumption, detects oversized/duplicate/stale content
+  contextBudgetAudit: {
+    enabled: true,
+    reportOnly: true,
+    maxSkillTokens: 1200,
+    maxExperienceTokens: 800,
+    maxArtifactTokens: 3000,
+    similarityThreshold: 0.75,
+    staleDays: 90,
+  },
+
+  // ─── M-9: Skill Compliance Meter (电灯检测器) ───────────────────────────────
+  // Verifies agent behavior against skill rules using execution trace
+  skillCompliance: {
+    enabled: true,
+    mode: 'warn',
+    minComplianceScore: 0.8,
+    coreRules: ['read-before-edit', 'no-bash-write', 'test-after-code', 'review-gate-not-skipped', 'runtime-safety-observed'],
+    customRules: [],
+  },
+
+  // ─── M-10: Skill Canary (灰度发布) ────────────────────────────────────────
+  skillCanary: {
+    enabled: false,
+    canaryRatio: 0.2,
+    minSampleSize: 3,
+    successThreshold: 0.7,
+    failureThreshold: 0.3,
+    maxCanaryHours: 48,
+    // Auto-snapshot every skill evolution as a rollback safety net.
+    // Independent of canary publishing — snapshots are useful even without canary flow.
+    autoSnapshotOnEvolve: true,
+  },
+
+  // ─── P0: Fix Experience Loop (防死循环 + 修复经验沉淀) ─────────────────────
+  fixSession: {
+    enabled: false,
+    // Auto-open a FixSession when RuntimeSafetyGuard blocks a dangerous command.
+    autoOpenOnBlock: true,
+    // Auto-close open sessions at workflow teardown and distill into experiences.
+    autoCloseOnTeardown: true,
+    // Inject resolved fix experiences into Agent context (CODE/ANALYSE stages).
+    injectExperienceToContext: true,
+    maxExperiencesToInject: 3,
+    maxExperienceTokens: 400,
+  },
+
+  // ─── M-10: Atomic Instinct Layer (神经反射) ─────────────────────────────────
+  // Extracts atomic trigger→action rules from experiences for prompt injection
+  instincts: {
+    enabled: true,
+    observeOnly: true,
+    minConfidenceToInject: 0.65,
+    maxInjectedPerStage: 3,
+    confidenceDecayPerDay: 0.01,
+    maxInstincts: 200,
+    storePath: '.workflow/instincts.json',
+  },
+
+  // ─── Namespace & Permission Policy ──────────────────────────────────────────
+  defaultNamespace: 'default',
+  permissionPolicy: 'permissive',
+
+  // ─── Phase2 Features (M-3 + T-4, T-5, T-6) ─────────────────────────────
+  // All features default-disabled for backward compatibility.
+  // Enable individually to activate Phase2 optimizations.
+  phase2: {
+    // 3.2: DNA Distillation — LLM-Lite batch refinement of experiences into Skill DNA
+    // When enabled, auto-triggers when enough new experiences accumulate and cooldown passes.
+    dnaDistillationEnabled: false,
+
+    // M-3: Auto-evolve on FINISHED — automatically trigger experience evolution
+    // after workflow completion when threshold and cooldown conditions are met.
+    autoEvolveOnFinished: false,
+    evolutionMinBatchSize: 10,
+    evolutionCooldownHours: 24,
+
+    // 3.3: Socratic Contract Audit — Pre-Write AntiPattern Gate
+    // Scans code before writing to disk, blocks if antiPattern violations found.
+    socraticContractAudit: {
+      enabled: true,
+      strictMode: false,
+      preferAst: false,
+      autoRecordExperience: true,
+      defaultSkills: ['javascript-dev', 'code-review'],
+    },
+
+    // T-4: Semantic Experience Retrieval
+    // Integrates vector-based semantic search into ExperienceStore.search()
+    // Improves retrieval accuracy by 40%+ when enabled.
+    semanticRetrieval: {
+      enabled: false,           // Set true to enable semantic experience retrieval
+      boostFactor: 0.4,        // Semantic score weight (0-1), rest goes to keyword
+      fallbackToKeyword: true,   // Fall back to keyword-only if semantic fails
+      minSimilarityScore: 0.3,  // Minimum semantic similarity to include result
+    },
+
+    // T-5: Skill Ablation Test Pipeline
+    // Automated A/B testing to identify low-ROI skills and reduce token waste
+    skillAblation: {
+      enabled: false,           // Set true to enable skill ablation testing
+      sampleSize: 5,            // Number of test runs per skill
+      minRoiThreshold: 1.5,     // Minimum ROI to keep a skill (roi = score/tokens)
+      useMockLlm: true,         // Use mock LLM for deterministic testing
+      reportPath: null,          // Custom report path (null = auto-generate)
+    },
+
+    // T-6: Grid Search Threshold Optimizer
+    // Grid search optimization for adaptive threshold parameters
+    // Improves evolution trigger accuracy by 20%+ when enabled.
+    thresholdOptimization: {
+      enabled: false,           // Set true to enable threshold optimization
+      minSamples: 100,          // Minimum samples before optimization runs
+      paramGrid: {               // Parameter grid for grid search
+        windowSize: [20, 50, 100],
+        minThreshold: [0.1, 0.2, 0.3],
+        maxThreshold: [0.6, 0.8, 0.9],
+        learningRate: [0.1, 0.2, 0.3],
+      },
+      cvFolds: 3,              // Cross-validation folds
+      scoring: 'f1',            // Scoring metric: 'f1', 'accuracy', 'precision', 'recall'
+      updateEvolutionLoop: true,  // Auto-update EvolutionLoop with optimized params
+    },
   },
 };

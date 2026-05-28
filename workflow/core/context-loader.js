@@ -45,6 +45,7 @@ const {
   ROLE_CONSTRAINT_SECTIONS,
   SKILL_ROLE_FILTER,
   INCREMENTAL_LOAD_ENABLED,
+  ROLE_MAX_INJECT_TOKENS,
 } = require('./context-loader-config');
 
 // ─── Skill Loading (extracted to context-loader-skills.js) ──────────────────
@@ -61,6 +62,10 @@ const {
 // ─── BM25+Embedding Hybrid Ranking (ADR-OpenSpace) ─────────────────────────
 
 const { SkillRanker } = require('./skill-ranker');
+
+// ─── M-6: Skill Safety Filter (cached batch scanner) ─────────────────────────
+
+const { SkillSafetyFilter } = require('./skill-safety-filter');
 
 // ─── Expert Knowledge Channel (EKIC) ────────────────────────────────────────
 
@@ -134,6 +139,22 @@ class ContextLoader {
     /** @type {Set<string>} Skills currently being enriched (prevent duplicate triggers) */
     this._enrichmentInProgress = new Set();
 
+    // ── M-6: Skill Safety Filter ────────────────────────────────────────────
+    // Scans skill files for dangerous patterns before injecting into LLM context.
+    // Enabled via safetyGuard.scanSkills in workflow.config.js.
+    this._skillSafetyFilter = null;
+    this._safetyScanResult = null;
+    try {
+      const config = require('./config-loader').getConfig();
+      if (config?.safetyGuard?.enabled && config?.safetyGuard?.scanSkills) {
+        const cacheTtlMs = (config.safetyGuard.cacheTtlSeconds || 60) * 1000;
+        this._skillSafetyFilter = new SkillSafetyFilter({ cacheTtlMs });
+        console.log(`[ContextLoader] 🛡️ SkillSafetyFilter enabled (cacheTtl=${cacheTtlMs}ms)`);
+      }
+    } catch (_) {
+      // Config not available — safety filter stays null
+    }
+
     // ── File Read Cache (D1+D3 optimisation) ──────────────────────────────────
     // Caches file contents in memory to avoid redundant disk I/O within the same
     // workflow run. Skills and docs don't change during a run, so caching is safe.
@@ -205,9 +226,29 @@ class ContextLoader {
     const stage      = opts.stage      || this._defaultStage;
     const score      = (typeof opts.score === 'number') ? opts.score : this._defaultScore;
     const modelTier  = opts.modelTier  || this._modelTier;
+    const role       = opts.role       || null;
+    const explicitBudget = Number.isFinite(Number(opts.contextBudget)) ? Number(opts.contextBudget) : null;
 
-    // Legacy path: no signals provided, return static constant.
-    if (!stage && score === null && !modelTier) return MAX_INJECT_TOKENS;
+    // T-2: BudgetGovernance per-role L1 budget
+    let roleBudget = MAX_INJECT_TOKENS;
+    try {
+      const config = require('./config-loader').getConfig();
+      if (config?.budgetGovernance?.enabled === true) {
+        const roleKey = role ? role.toLowerCase().trim() : null;
+        const customRoleBudget = roleKey && config.budgetGovernance.l1RoleBudgets?.[roleKey];
+        const defaultRoleBudget = roleKey && ROLE_MAX_INJECT_TOKENS[roleKey];
+        roleBudget = customRoleBudget || defaultRoleBudget || MAX_INJECT_TOKENS;
+      }
+    } catch (_) {
+      // Config not available — fall through
+    }
+
+    if (explicitBudget !== null) {
+      return explicitBudget;
+    }
+
+    // Legacy path: no signals provided, return role-adjusted budget.
+    if (!stage && score === null && !modelTier) return roleBudget;
 
     try {
       const { resolveInjectBudget } = require('./context-decision-signals');
@@ -221,14 +262,13 @@ class ContextLoader {
       const CHARS_PER_TOKEN = 3.5;
       const budgetTokens = (resolved && typeof resolved.final === 'number')
         ? Math.round(resolved.final / CHARS_PER_TOKEN)
-        : MAX_INJECT_TOKENS;
-      // Never let dynamic sizing shrink the budget below legacy floor —
-      // existing tier reservation percentages assume at least MAX_INJECT_TOKENS.
-      return Math.max(budgetTokens, MAX_INJECT_TOKENS);
+        : roleBudget;
+      // Never let dynamic sizing shrink the budget below role-adjusted floor.
+      return Math.max(budgetTokens, roleBudget);
     } catch (err) {
       // Module missing or signal failure → safe fallback.
       if (process.env.WF_DEBUG) console.error(`[ContextLoader] _resolveBudget fell back: ${err.message}`);
-      return MAX_INJECT_TOKENS;
+      return roleBudget;
     }
   }
 
@@ -335,6 +375,10 @@ class ContextLoader {
    *   sources    – list of file names that were loaded (for logging)
    */
   async resolve(taskText, role, opts = {}) {
+    // M-6: reset safety scan result at resolve() entry so cache-hit paths cannot
+    // leak stale scan state from previous calls.
+    this._safetyScanResult = null;
+
     // T-2: resolve effective budget from caller hints (stage/score/modelTier)
     // or instance defaults, with safe fallback to MAX_INJECT_TOKENS.
     const effectiveBudget = this._resolveBudget(opts);
@@ -375,7 +419,10 @@ class ContextLoader {
     // Layers 1-4 (role-mandatory docs, global/project/always-load skills) don't
     // depend on taskText. Cache their processed sections keyed by role + file mtimes.
     // Only Layer 5 (task-matched skills) and ADR digest vary with taskText.
-    const staticCacheResult = this._resolveStaticLayersCached(role, taskText);
+    // M-6: when skill safety scanning is enabled, do not use static layer cache.
+    // Cached static layers may contain skill sections loaded before a skill became
+    // unsafe; recomputing guarantees every injected skill passes _isSkillSafe().
+    const staticCacheResult = this._skillSafetyFilter ? null : this._resolveStaticLayersCached(role, taskText);
     if (staticCacheResult) {
       sections.push(...staticCacheResult.sections);
       sources.push(...staticCacheResult.sources);
@@ -520,6 +567,7 @@ class ContextLoader {
     for (const skillName of this._globalSkills) {
       if (budget <= 0) break;
       if (this._loadedSkillsInResolve.has(skillName)) continue;
+      if (!this._isSkillSafe(skillName)) continue;
       const loaded = this._loadSkillWithDeps(skillName, budget, 0);
       if (loaded) {
         sections.push(...loaded.sections);
@@ -532,6 +580,7 @@ class ContextLoader {
     for (const skillName of this._projectSkills) {
       if (budget <= 0) break;
       if (this._loadedSkillsInResolve.has(skillName)) continue;
+      if (!this._isSkillSafe(skillName)) continue;
       const loaded = this._loadSkillWithDeps(skillName, budget, 0);
       if (loaded) {
         sections.push(...loaded.sections);
@@ -544,6 +593,7 @@ class ContextLoader {
     for (const skillName of this._alwaysLoadSkills) {
       if (budget <= 0) break;
       if (this._loadedSkillsInResolve.has(skillName)) continue;
+      if (!this._isSkillSafe(skillName)) continue;
       const loaded = this._loadSkillWithDeps(skillName, budget, 0);
       if (loaded) {
         sections.push(...loaded.sections);
@@ -564,6 +614,7 @@ class ContextLoader {
     for (const skillName of riskPackSkills) {
       if (budget <= 0) break;
       if (this._loadedSkillsInResolve.has(skillName)) continue;
+      if (!this._isSkillSafe(skillName)) continue;
       const loaded = this._loadSkillWithDeps(skillName, Math.min(RISK_SKILL_TOKEN_CAP, budget), 0);
       if (loaded) {
         sections.push(...loaded.sections);
@@ -580,7 +631,26 @@ class ContextLoader {
     }
     const directMatchedSkills = this._matchRegisteredSkillsBySignals(skillMatchQuery, role);
     const rankedMatchedSkills = await this._matchSkillsAsync(skillMatchQuery, role);
-    const matchedSkills = Array.from(new Set([...directMatchedSkills, ...rankedMatchedSkills]));
+    let matchedSkills = Array.from(new Set([...directMatchedSkills, ...rankedMatchedSkills]));
+
+    // P0 Gap #3: Apply Skill Canary filter — when canary is enabled, skills
+    // currently in CANARY state are admitted only at canaryRatio probability,
+    // and ROLLED_BACK skills are excluded entirely.
+    // Best-effort: any failure falls back to the unfiltered list.
+    try {
+      const cfg = this._config?.skillCanary || (require('./config-loader').getConfig?.()?.skillCanary);
+      if (cfg && cfg.enabled) {
+        const { SkillCanaryManager } = require('./skill-canary-manager');
+        const mgr = new SkillCanaryManager({ projectRoot: this._projectRoot, config: cfg });
+        const before = matchedSkills.length;
+        matchedSkills = mgr.filterCanarySkills(matchedSkills.map(name => ({ name }))).map(s => s.name);
+        if (matchedSkills.length !== before) {
+          console.log(`[ContextLoader] 🐤 Canary filter: ${before} → ${matchedSkills.length} skills`);
+        }
+      }
+    } catch (canaryErr) {
+      console.warn(`[ContextLoader] ⚠️ Canary filter skipped (non-fatal): ${canaryErr.message}`);
+    }
     const admitted = [];
     const demoted = [];
     for (const skillName of matchedSkills) {
@@ -600,6 +670,7 @@ class ContextLoader {
     for (const skillName of orderedSkills) {
       if (budget <= 0) break;
       if (this._loadedSkillsInResolve.has(skillName)) continue;
+      if (!this._isSkillSafe(skillName)) continue;
       const loaded = this._loadSkillWithDeps(skillName, Math.min(MAX_SKILL_TOKENS, budget), 0);
       if (loaded) {
         sections.push(...loaded.sections);
@@ -634,7 +705,7 @@ class ContextLoader {
     if (this._experienceStore && budget > 0) {
       try {
         // Extract stage from taskText (workflow-stage passes stage in taskText)
-        const stageMatch = taskText.match(/\b(ANALYSE|ARCHITECT|PLAN|DEVELOP|TEST|REVIEW|DEPLOY)\b/i);
+const stageMatch = taskText.match(/\b(INIT|ANALYSE|ARCHITECT|PLAN|CODE|TEST|FINISHED)\b/i);
         const currentStage = stageMatch ? stageMatch[1].toUpperCase() : null;
 
         const queryTags = ['evolution-loop', 'auto-captured'];
@@ -660,12 +731,100 @@ class ContextLoader {
       }
     }
 
+    // 7b. P0 Gap #6: Fix-Experience injection (CODE/ANALYSE stages only)
+    // Retrieves historical fix experiences relevant to current task and injects
+    // them so the Agent can avoid known dead-ends and re-use proven fix paths.
+    // Best-effort: any failure is logged and skipped without breaking context load.
+    try {
+      const fixCfg = this._config?.fixSession || (require('./config-loader').getConfig?.()?.fixSession);
+      if (fixCfg && fixCfg.enabled && fixCfg.injectExperienceToContext !== false && budget > 0) {
+        const stageMatch2 = taskText.match(/\b(INIT|ANALYSE|ARCHITECT|PLAN|CODE|TEST|FINISHED)\b/i);
+        const stage2 = stageMatch2 ? stageMatch2[1].toUpperCase() : null;
+        if (stage2 === 'CODE' || stage2 === 'ANALYSE') {
+          const { FixExperienceEngine } = require('./fix-experience-engine');
+          const engine = new FixExperienceEngine({ projectRoot: this._projectRoot });
+          const limit = Math.max(1, Math.min(10, fixCfg.maxExperiencesToInject || 3));
+          const hits = engine.queryExperience({ problem: taskText, limit });
+          if (hits.length > 0) {
+            const MAX_FIX_TOKENS = Math.max(100, Math.min(1500, fixCfg.maxExperienceTokens || 400));
+            const lines = [
+              '## 🔧 Fix-Experience Recall (historical solutions)',
+              '',
+              `Recalled ${hits.length} past fix sessions ranked by similarity × confidence × recency × feedback.`,
+              '',
+            ];
+            for (const h of hits) {
+              lines.push(`### ${h.problem.slice(0, 80)}`);
+              lines.push(`- **Score**: ${h.effectiveConfidence.toFixed(2)} (relevance ${h.relevanceScore.toFixed(2)})`);
+              if (h.solution) lines.push(`- **Solution**: ${h.solution.slice(0, 200)}`);
+              if (Array.isArray(h.deadEnds) && h.deadEnds.length > 0) {
+                lines.push(`- **Avoid**: ${h.deadEnds.slice(0, 3).join('; ').slice(0, 200)}`);
+              }
+              lines.push('');
+            }
+            const fixBlock = lines.join('\n');
+            const fixTokens = estimateTokens(fixBlock);
+            if (fixTokens <= Math.min(MAX_FIX_TOKENS, budget)) {
+              sections.push(fixBlock);
+              sources.push(`fix-experience (${hits.length})`);
+              budget -= fixTokens;
+              console.log(`[ContextLoader] 🔧 Injected ${hits.length} fix experiences (${fixTokens} tokens)`);
+            }
+          }
+        }
+      }
+    } catch (fixErr) {
+      console.warn(`[ContextLoader] ⚠️ Fix-experience injection skipped (non-fatal): ${fixErr.message}`);
+    }
+
+    // ── M-10: Atomic Instinct Injection ──────────────────────────────────────
+    try {
+      const { getConfig: _cfg } = require('./config-loader');
+      const _config = _cfg();
+      const _instinctCfg = _config?.instincts;
+      if (_instinctCfg && _instinctCfg.enabled && _instinctCfg.observeOnly !== true) {
+        const { InstinctMatcher } = require('./instinct-matcher');
+        const { InstinctStore } = require('./atomic-instinct-store');
+        const _store = new InstinctStore({ ..._instinctCfg, useConfig: false });
+        const _matcher = new InstinctMatcher({ ..._instinctCfg, useConfig: false });
+        const _instincts = _matcher.match(taskText, _store.getAll(), _instinctCfg.maxInjectedPerStage || 3);
+        if (_instincts.length > 0) {
+          const _section = _matcher.formatForInjection(_instincts);
+          const _tokens = estimateTokens(_section);
+          if (_tokens <= budget) {
+            sections.push(_section);
+            sources.push(`instincts (${_instincts.length})`);
+            budget -= _tokens;
+          }
+        }
+      }
+    } catch (_) { /* instinct injection is best-effort */ }
+
     const tokenCount = effectiveBudget - budget;
     if (sources.length > 0) {
       console.log(`[ContextLoader] Injected ${sources.length} context doc(s) (~${tokenCount} tokens): ${sources.join(', ')}`);
     }
 
-    return { sections, tokenCount, sources };
+    const perSection = sections.map((s, i) => ({
+      name: sources[i] || `section-${i}`,
+      chars: s.length,
+      estimatedTokens: estimateTokens(s),
+    }));
+    const totalChars = perSection.reduce((sum, s) => sum + s.chars, 0);
+
+    return {
+      sections,
+      tokenCount,
+      sources,
+      metrics: {
+        perSection,
+        totalChars,
+        estimatedTokens: perSection.reduce((sum, s) => sum + s.estimatedTokens, 0),
+        budgetUsed: tokenCount,
+        budgetTotal: effectiveBudget,
+      },
+      safetyScanResult: this._safetyScanResult,
+    };
   }
 
   // ─── Direction 3: Enrichment Section Cache ─────────────────────────────
@@ -1212,6 +1371,70 @@ class ContextLoader {
    */
   invalidateSkillRanker() {
     this._skillRankerDirty = true;
+  }
+
+  // ─── M-6: Skill Safety Guard ──────────────────────────────────────────────
+
+  /**
+   * Checks if a skill is safe to inject into LLM context.
+   * Uses SkillSafetyFilter when enabled; returns true (safe) when disabled.
+   *
+   * Blocked skills are skipped entirely. Quarantined skills are allowed but
+   * tracked in safetyScanResult for observability.
+   *
+   * @param {string} skillName
+   * @returns {boolean} true if skill should be loaded
+   * @private
+   */
+  _isSkillSafe(skillName) {
+    if (!this._skillSafetyFilter) return true;
+
+    const skillPath = this._resolveSkillPath(skillName);
+    if (!skillPath) return true;
+
+    const result = this._skillSafetyFilter.filterSkills([skillPath]);
+    const { safe, quarantined, blocked, violations } = result;
+
+    // Accumulate safety scan result across all skills in this resolve()
+    if (!this._safetyScanResult) {
+      this._safetyScanResult = { safe: [], quarantined: [], blocked: [], violations: [] };
+    }
+    this._safetyScanResult.safe.push(...safe);
+    this._safetyScanResult.quarantined.push(...quarantined);
+    this._safetyScanResult.blocked.push(...blocked);
+    this._safetyScanResult.violations.push(...violations);
+
+    if (blocked.includes(skillPath)) {
+      console.warn(`[ContextLoader] 🛡️ Skill BLOCKED by safety guard: ${skillName} (${violations.length} violation(s))`);
+      return false;
+    }
+    if (quarantined.includes(skillPath)) {
+      console.warn(`[ContextLoader] ⚠️ Skill quarantined by safety guard: ${skillName} (${violations.length} violation(s))`);
+    }
+    return true;
+  }
+
+  /**
+   * Resolves the file path for a skill name.
+   * Checks registry (for custom filePath) then falls back to skillsDir.
+   *
+   * @param {string} skillName
+   * @returns {string|null} Absolute file path or null
+   * @private
+   */
+  _resolveSkillPath(skillName) {
+    const skillRegistry = this._orchestrator && this._orchestrator.skillEvolution
+      ? this._orchestrator.skillEvolution.registry
+      : this._registeredSkillMap;
+    const meta = skillRegistry?.get?.(skillName);
+    if (meta && meta.filePath && fs.existsSync(meta.filePath)) {
+      return meta.filePath;
+    }
+    const defaultPath = path.join(this._skillsDir, `${skillName}.md`);
+    if (fs.existsSync(defaultPath)) {
+      return defaultPath;
+    }
+    return null;
   }
 
   // ─── Constraint Section Filtering ────────────────────────────────────────

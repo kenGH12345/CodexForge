@@ -15,6 +15,60 @@ const fs = require('fs');
 const path = require('path');
 const { PATHS, getDefaultOutputDir } = require('./constants');
 const { introspectionCollector } = require('./workflow-introspection-collector');
+const { SkillDnaStore } = require('./skill-dna-store');
+
+// ─── P0 Integration: Snapshot + Canary (gap #1, #2) ───────────────────────────
+// Loaded lazily inside evolve() to avoid hard dependency at module load time.
+// Both features are config-gated and best-effort — never fail the evolution flow.
+
+/**
+ * Best-effort: create a pre-evolution snapshot of the skill (MD + DNA + Registry).
+ * Called BEFORE writeFileSync inside evolve() so we can roll back if needed.
+ * @private
+ */
+function _createPreEvolutionSnapshot(skillName, projectRoot, trigger = 'pre-evolution') {
+  try {
+    const { getConfig } = require('./config-loader');
+    const cfg = getConfig?.()?.skillCanary;
+    if (!cfg || cfg.autoSnapshotOnEvolve === false) return null;
+
+    const { SkillSnapshotStore } = require('./skill-snapshot-store');
+    const store = new SkillSnapshotStore({ projectRoot });
+    const result = store.createSnapshot(skillName, { trigger });
+    if (result && result.success) {
+      console.log(`[SkillEvolution] 📸 Snapshot created: ${skillName} v${result.version} (${trigger})`);
+    }
+    return result;
+  } catch (err) {
+    console.warn(`[SkillEvolution] ⚠️ Snapshot skipped (non-fatal): ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Best-effort: start a canary release for the new skill version.
+ * Called AFTER successful writeFileSync inside evolve().
+ * @private
+ */
+function _startCanaryForVersion(skillName, version, projectRoot, previousVersion = null) {
+  try {
+    const { getConfig } = require('./config-loader');
+    const cfg = getConfig?.()?.skillCanary;
+    if (!cfg || !cfg.enabled) return null;
+
+    const { SkillCanaryManager } = require('./skill-canary-manager');
+    const mgr = new SkillCanaryManager({ projectRoot, config: cfg });
+    // Pass previousVersion so rollbackCanary can restore the correct snapshot.
+    const result = mgr.startCanary(skillName, version, { previousVersion });
+    if (result && result.success && !result.skipped) {
+      console.log(`[SkillEvolution] 🐤 Canary started: ${skillName} v${version}${previousVersion ? ` (prev: v${previousVersion})` : ''}`);
+    }
+    return result;
+  } catch (err) {
+    console.warn(`[SkillEvolution] ⚠️ Canary startup skipped (non-fatal): ${err.message}`);
+    return null;
+  }
+}
 
 // ─── Skill Evolution Engine ───────────────────────────────────────────────────
 
@@ -22,8 +76,9 @@ class SkillEvolutionEngine {
   /**
    * @param {string} [skillsDir] - Directory containing skill markdown files
    * @param {string} [registryPath] - Path to skill registry JSON
+   * @param {import('./skill-dna-store').SkillDnaStore} [skillDnaStore] - Injected SkillDnaStore instance
    */
-  constructor(skillsDir = null, registryPath = null) {
+  constructor(skillsDir = null, registryPath = null, skillDnaStore = null) {
     this.skillsDir = skillsDir || PATHS.SKILLS_DIR;
     this.registryPath = registryPath || path.join(getDefaultOutputDir(), 'skill-registry.json');
     /** @type {Map<string, SkillMeta>} */
@@ -40,6 +95,7 @@ class SkillEvolutionEngine {
      * @type {import('./skill-llm-refiner').SkillLlmRefiner|null}
      */
     this._llmRefiner = null;
+    this._skillDnaStore = skillDnaStore || null;
     /**
      * Version DAG (ADR-OpenSpace): Tracks the full lineage of every skill evolution.
      * Inspired by OpenSpace's SkillLineage — each evolution creates a node in a
@@ -136,6 +192,7 @@ class SkillEvolutionEngine {
       domains: meta.domains,
       loadLevel: meta.loadLevel,
     });
+    this._syncSkillDnaBestEffort(name, { rule: null, sourceExpId: null, evidenceType: 'legacy_import' });
     
     return meta;
   }
@@ -295,6 +352,8 @@ class SkillEvolutionEngine {
       }
 
       const dedupTmpPath = meta.filePath + '.tmp';
+      // P0 Gap #1: Pre-write snapshot (dedup path).
+      _createPreEvolutionSnapshot(skillName, this.skillsDir ? path.dirname(path.dirname(this.skillsDir)) : process.cwd(), 'pre-dedup');
       fs.writeFileSync(dedupTmpPath, updatedContent, 'utf-8');
       fs.renameSync(dedupTmpPath, meta.filePath);
       // P1-5 fix: update content cache
@@ -305,6 +364,9 @@ class SkillEvolutionEngine {
       meta.lastEvolvedAt = new Date().toISOString();
       this._saveRegistry();
 
+      // P0 Gap #2: Start canary release for the new (dedup-bumped) version.
+      _startCanaryForVersion(skillName, dedupVersion, this.skillsDir ? path.dirname(path.dirname(this.skillsDir)) : process.cwd(), prevVersion);
+
       // Version DAG: record dedup event
       this._recordLineage(skillName, {
         version: dedupVersion,
@@ -313,6 +375,12 @@ class SkillEvolutionEngine {
         timestamp: meta.lastEvolvedAt,
         summary: `Dedup: "${title}" merged into "${dedupMatch.title}" (Jaccard=${dedupMatch.similarity.toFixed(2)})`,
         sourceExpId,
+      });
+      this._syncSkillDnaBestEffort(skillName, {
+        rule: dedupMatch.title,
+        sourceExpId,
+        evidenceType: sourceExpId ? 'experience' : 'lineage',
+        note: `Dedup evidence for ${title}`,
       });
 
       return true;
@@ -397,6 +465,8 @@ class SkillEvolutionEngine {
     // N48 fix: use atomic write for the skill .md file (write to .tmp then rename)
     // so a process crash during write does not leave a corrupted skill file.
     const skillTmpPath = meta.filePath + '.tmp';
+    // P0 Gap #1: Pre-write snapshot (main evolution path) — enables rollback of failed evolutions.
+    _createPreEvolutionSnapshot(skillName, this.skillsDir ? path.dirname(path.dirname(this.skillsDir)) : process.cwd(), 'pre-evolution');
     fs.writeFileSync(skillTmpPath, skillContent, 'utf-8');
     fs.renameSync(skillTmpPath, meta.filePath);
     // P1-5 fix: update content cache after successful write
@@ -406,6 +476,9 @@ class SkillEvolutionEngine {
     meta.evolutionCount += 1;
     meta.lastEvolvedAt = new Date().toISOString();
     this._saveRegistry();
+
+    // P0 Gap #2: Start canary release for the new evolved version.
+    _startCanaryForVersion(skillName, newVersion, this.skillsDir ? path.dirname(path.dirname(this.skillsDir)) : process.cwd(), oldVersion);
 
     // Version DAG: record evolution event
     this._recordLineage(skillName, {
@@ -429,6 +502,12 @@ class SkillEvolutionEngine {
       section,
       title,
       deduped: false,
+    });
+    this._syncSkillDnaBestEffort(skillName, {
+      rule: title,
+      sourceExpId,
+      evidenceType: sourceExpId ? 'experience' : 'lineage',
+      note: `${section}: ${title}`,
     });
 
     // LLM-Lite: Post-evolve refinement via cheap LLM model.
@@ -463,6 +542,37 @@ class SkillEvolutionEngine {
     }
     
     return true;
+  }
+
+  _getSkillDnaStore() {
+    if (!this._skillDnaStore) {
+      this._skillDnaStore = new SkillDnaStore({
+        skillsDir: this.skillsDir,
+        registryPath: this.registryPath,
+        outputDir: path.dirname(this.registryPath),
+      });
+    }
+    return this._skillDnaStore;
+  }
+
+  _syncSkillDnaBestEffort(skillName, { rule = null, sourceExpId = null, evidenceType = 'lineage', note = '' } = {}) {
+    try {
+      const meta = this.registry.get(skillName);
+      const store = this._getSkillDnaStore();
+      const syncResult = store.syncSkill(skillName, { skillMeta: meta });
+      if (rule && syncResult.success) {
+        store.updateRuleEvidence(skillName, rule, {
+          type: evidenceType,
+          sourceId: sourceExpId || `lineage:${skillName}:${meta?.version || 'unknown'}`,
+          confidence: sourceExpId ? 0.9 : 0.7,
+          note,
+        });
+      }
+      return syncResult;
+    } catch (err) {
+      console.warn(`[SkillEvolution] Skill DNA sync skipped: ${err.message}`);
+      return { success: false, fallback: true, reason: 'dna_sync_failed', error: err.message };
+    }
   }
 
   /**
