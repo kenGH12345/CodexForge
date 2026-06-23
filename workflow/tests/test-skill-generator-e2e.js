@@ -18,18 +18,7 @@ function assert(condition, message) {
 async function runTests() {
   console.log('\n🧪 Skill Generator E2E Tests\n');
 
-  // ── Test 1: skill-scanner language detection ──
-  console.log('Test 1: skill-scanner language detection');
-  try {
-    const { scanDirectory } = require('../core/skill-scanner');
-    const result = await scanDirectory(__dirname, { maxFiles: 50 });
-    assert(result && typeof result === 'object', 'scanDirectory returns object');
-    assert(Array.isArray(result.allLanguages), 'Has allLanguages array');
-    assert(result.fileCount > 0, 'Scanned files > 0');
-  } catch (err) {
-    failCount++;
-    console.error(`  ✗ Test 1 threw: ${err.message}`);
-  }
+  // ── Test 1: (REMOVED — skill-scanner module deleted in Phase 1 skillification) ──
 
   // ── Test 2: pattern-extractor API surface extraction ──
   console.log('\nTest 2: pattern-extractor API surface extraction');
