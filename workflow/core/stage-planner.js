@@ -77,8 +77,31 @@ function buildPlannerUpstreamCtx(orch) {
       if (archCtx.correctionHistory && archCtx.correctionHistory.length > 0) {
         parts.push(`Correction History: ${archCtx.correctionHistory.length} round(s) of self-correction`);
       }
+      // F2: Inject structured component design from ARCHITECT stage
+      const componentDesign = archCtx.meta?.componentDesign;
+      if (componentDesign && Array.isArray(componentDesign.components) && componentDesign.components.length > 0) {
+        parts.push(`\n**Structured Component Design** (${componentDesign.components.length} component(s)):`);
+        for (const comp of componentDesign.components) {
+          const deps = (comp.dependencies || []).join(', ') || 'none';
+          const ifaces = (comp.interfaces || []).join(', ') || 'none';
+          parts.push(`- **${comp.id}** (${comp.name}): ${(comp.description || '').slice(0, 120)} [module: ${comp.module}, deps: ${deps}, interfaces: ${ifaces}]`);
+        }
+        parts.push(`> **Planning hint:** Decompose tasks to align with these component boundaries. Each component should map to one or more implementation tasks.`);
+      }
     }
   }
+
+  // P2-ImportEdges: Inject file-level require() dependency data from CodeGraph
+  try {
+    const CodeGraph = require('./code-graph');
+    const codeGraph = CodeGraph.getInstance ? CodeGraph.getInstance() : null;
+    if (codeGraph && codeGraph._importEdges && codeGraph._importEdges.size > 0) {
+      parts.push(`\n## File-Level Import Dependencies (CodeGraph._importEdges)`);
+      parts.push(`Total files with import edges: ${codeGraph._importEdges.size}`);
+      parts.push(`> **Planning hint:** Check import dependencies before scheduling file deletions.`);
+      parts.push(`> A file with 0 importers can be safely deleted; 5+ importers requires caller refactoring first.`);
+    }
+  } catch (_) { /* non-fatal — CodeGraph may not be available */ }
 
   return parts.join('\n');
 }
@@ -104,6 +127,7 @@ async function buildPlannerContextBlock(orch, upstreamCtx) {
         'execution-planning',
         orch._currentRequirement || '',
         maxExpInjected,
+        { stage: 'PLAN' },
       );
       if (expBlock && expBlock.trim().length > 0) {
         expContext += expBlock;
@@ -280,29 +304,67 @@ const outputPath = await this.agents[AgentRole.PLANNER].run(inputPath, null, pla
   // ── Store PLAN stage context ──────────────────────────────────────────
   const planOutputCtx = await storePlannerContext(this, outputPath);
 
-  // ── Log plan artifact stats ───────────────────────────────────────────
-  if (planOutputCtx.taskCount > 0) {
-    console.error(`[Orchestrator] 📋 Execution plan breakdown: ${planOutputCtx.taskCount} task(s), ${planOutputCtx.keyDecisions.length} key decision(s)`);
-  }
-  if (planOutputCtx.summary) {
-    console.error(`[Orchestrator] 📝 Plan summary: ${planOutputCtx.summary.slice(0, 150)}${planOutputCtx.summary.length > 150 ? '...' : ''}`);
-  }
-
-  // ── Read plan content for detailed logging ─────────────────────────────
+  // ── Requirement-Linked Plan Output Table (Markdown template) ──────────
   try {
-    if (outputPath && fs.existsSync(outputPath)) {
-      const planContent = fs.readFileSync(outputPath, 'utf-8');
-      const planLines = planContent.split('\n').length;
-      const planSize = Buffer.byteLength(planContent, 'utf-8');
+    const requirement = this._currentRequirement || '';
+    const analyseCtx = this.stageCtx?.get?.(WorkflowState.ANALYSE);
+    const userStories = analyseCtx?.meta?.userStories || [];
+    const acceptanceCriteria = analyseCtx?.meta?.acceptanceCriteria || [];
 
-      // Extract phase info
-      const phaseMatches = planContent.match(/###?\s*Phase\s+\d+/gi) || [];
-      // Extract dependency info
-      const depMatches = planContent.match(/depend[s]?\s*(?:on)?\s*[:=]\s*\[?T-\d+/gi) || [];
-
-      console.error(`[Orchestrator] 📊 Plan stats: ${planLines} lines, ${(planSize / 1024).toFixed(1)} KB, ${phaseMatches.length} phase(s), ${depMatches.length} dependency link(s)`);
+    // Build requirement→task mapping from ADR-Task linkage
+    const reqTaskMap = new Map();
+    if (planOutputCtx.adrTaskLinkage && Array.isArray(planOutputCtx.adrTaskLinkage.links)) {
+      for (const link of planOutputCtx.adrTaskLinkage.links) {
+        const key = link.reqId;
+        if (!reqTaskMap.has(key)) reqTaskMap.set(key, []);
+        reqTaskMap.get(key).push(...link.taskIds);
+      }
     }
-  } catch (_) { /* non-fatal logging */ }
+
+    const reqShort = requirement.length > 100 ? requirement.slice(0, 100) + '...' : requirement;
+    const tc = planOutputCtx.taskCount || 0;
+    const kd = planOutputCtx.keyDecisions?.length || 0;
+    const storyRows = userStories.length > 0
+      ? userStories.map((us, i) => {
+          const t = typeof us === 'string' ? us : us.text || us.title || JSON.stringify(us);
+          const s = t.length > 40 ? t.slice(0, 40) + '...' : t;
+          const id = (t.match(/(?:REQ|US)-\d{3,}/i) || [])[0] || '';
+          const tasks = id && reqTaskMap.has(id) ? reqTaskMap.get(id).join(', ') : '见执行计划';
+          return `| ${i + 1} | ${s} | ${tasks} | 任务覆盖需求 |`;
+        }).join('\n')
+      : '| 1 | (整体需求) | 见执行计划 | 任务分解覆盖全部需求 |';
+
+    const acRows = acceptanceCriteria.length > 0
+      ? acceptanceCriteria.slice(0, 8).map((ac, i) => {
+          const t = typeof ac === 'string' ? ac : ac.text || ac.title || JSON.stringify(ac);
+          const s = t.length > 45 ? t.slice(0, 45) + '...' : t;
+          const id = (t.match(/AC-\d{3,}/i) || [])[0] || '';
+          const tasks = id && reqTaskMap.has(id) ? reqTaskMap.get(id).join(', ') : 'TEST 阶段验证';
+          return `| ${i + 1} | ${s} | ${tasks} | 测试用例覆盖 |`;
+        }).join('\n') +
+        (acceptanceCriteria.length > 8 ? `\n| ... | ... (+${acceptanceCriteria.length - 8} more) | ... | ... |` : '')
+      : '';
+
+    const md = `
+${'─'.repeat(60)}
+📋 需求-计划关联表 (Requirement → Plan Traceability)
+${'─'.repeat(60)}
+用户需求: ${reqShort}
+计划统计: ${tc} 个任务, ${kd} 个关键决策
+
+| # | 需求项 | 关联任务 | 满足方式 |
+|---|--------|---------|---------|
+${storyRows}
+${acRows ? `
+| # | 验收标准 | 对应任务 | 验证方式 |
+|---|---------|---------|---------|
+${acRows}` : ''}
+${'─'.repeat(60)}
+`;
+    console.error(md);
+  } catch (tableErr) {
+    console.warn(`[Orchestrator] ⚠️  Requirement-Plan table generation failed (non-fatal): ${tableErr.message}`);
+  }
 
   // ── Bus publish: PLAN → DEVELOPER ─────────────────────────────────────
   // The developer receives both the architecture doc AND the execution plan.
@@ -313,6 +375,18 @@ const outputPath = await this.agents[AgentRole.PLANNER].run(inputPath, null, pla
     contextSummary: planOutputCtx.summary,
     taskCount: planOutputCtx.taskCount || 0,
   };
+
+  // ── Resolve complexity score from ANALYSE stage (I-4: full-chain propagation) ──
+  const complexityScore = (() => {
+    try {
+      const score = this.stageCtx?.get?.(WorkflowState.ANALYSE)?.meta?.complexity?.score;
+      return Number.isFinite(score) ? score : null;
+    } catch { return null; }
+  })();
+  if (complexityScore !== null) {
+    busMeta.complexityScore = complexityScore;
+  }
+
   this.bus.publish(AgentRole.PLANNER, AgentRole.DEVELOPER, inputPath, busMeta);
   console.error(`[Orchestrator] 📤 Bus: PLANNER → DEVELOPER (architecture.md + execution-plan, ${busMeta.taskCount} task(s))`);
 
@@ -321,6 +395,53 @@ const outputPath = await this.agents[AgentRole.PLANNER].run(inputPath, null, pla
 
   const totalDuration = ((Date.now() - planStageStartTime) / 1000).toFixed(1);
   console.error(`[Orchestrator] ✅ PLAN stage completed in ${totalDuration}s (PlannerAgent: ${plannerDuration}s, overhead: ${(totalDuration - plannerDuration).toFixed(1)}s)`);
+
+  // ── TaskBoard sync: load tasks from execution-plan into TaskBoard ──────
+  try {
+    const { TaskBoard } = require('../tools/task-board');
+    const board = new TaskBoard(this.projectRoot);
+    const result = board.syncPlan(outputPath);
+    if (result && result.tasks && result.tasks.length > 0) {
+      console.error(`[TaskBoard] 📋 ${result.tasks.length} task(s) loaded from execution plan`);
+    } else {
+      console.error(`[TaskBoard] ⚠️ No tasks extracted from execution plan`);
+    }
+  } catch (syncErr) {
+    console.warn(`[TaskBoard] ⚠️ Failed to sync tasks from execution plan (non-blocking): ${syncErr.message}`);
+  }
+
+  // ── P0: Initialize task-status.json (all PENDING) ──────────────────────
+  // Previously _writeTaskStatus() was only called AFTER CODE stage, leaving
+  // a gap between PLAN→CODE where no task-status file existed. Now we pre-
+  // initialize all tasks as PENDING so Gate 7/9/10 can verify at any time.
+  try {
+    const planContent = fs.readFileSync(outputPath, 'utf-8');
+    const jsonMatch = planContent.match(/```json\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      const planJson = JSON.parse(jsonMatch[1]);
+      const tasks = planJson.tasks || [];
+      if (tasks.length > 0) {
+        const statusEntries = [];
+        for (const t of tasks) {
+          statusEntries.push({
+            id: t.id,
+            title: t.title || '',
+            status: 'pending',
+            files: t.files || [],
+            subTasks: (t.subTasks || []).map(st => ({
+              id: st.id, title: st.title || '', status: 'pending',
+            })),
+          });
+        }
+        const statusDir = path.join(this.projectRoot, 'output');
+        if (!fs.existsSync(statusDir)) fs.mkdirSync(statusDir, { recursive: true });
+        fs.writeFileSync(path.join(statusDir, 'task-status.json'), JSON.stringify(statusEntries, null, 2), 'utf-8');
+        console.error(`[Orchestrator] 📋 Task status initialized: ${statusEntries.length} task(s) → PENDING (task-status.json)`);
+      }
+    }
+  } catch (initErr) {
+    console.warn(`[TaskStatus] ⚠️ Failed to initialize task-status.json (non-blocking): ${initErr.message}`);
+  }
 
   return outputPath;
 }
