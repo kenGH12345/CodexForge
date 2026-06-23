@@ -13,10 +13,13 @@
 
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const { BaseAgent } = require('./base-agent');
 const { AgentRole } = require('../core/types');
 const { buildJsonBlockInstruction, extractJsonBlock, validateJsonBlock } = require('../core/agent-output-schema');
+const { PersonaLoader } = require('../core/persona-loader');
+const { checkMandatorySections } = require('./agent-section-check');
 
 // ─── Anchor File Extraction ──────────────────────────────────────────────────
 
@@ -56,9 +59,15 @@ function extractAnchorFiles(text) {
     }
   }
 
-  // Pattern 2: Explicit file names with known extensions
+  // Pattern 2: Explicit file names with known extensions (P2-5: Set-based extension check)
   // Matches things like: FarmRobotSettingSubUICtrl.lua, UserService.ts, config.yaml
-  const fileNamePattern = /(?:^|[\s"'`(,])([A-Za-z_][\w\-.]*\.(?:lua|js|ts|tsx|jsx|py|java|cs|cpp|c|h|go|rs|rb|php|swift|kt|vue|svelte|yaml|yml|json|xml|sql|sh|bat|ps1|css|scss|less|html))(?=[\s"'`),;]|$)/gm;
+  const CODE_EXTENSIONS = new Set([
+    'lua', 'js', 'ts', 'tsx', 'jsx', 'py', 'java', 'cs', 'cpp', 'c',
+    'h', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'vue', 'svelte',
+    'yaml', 'yml', 'json', 'xml', 'sql', 'sh', 'bat', 'ps1', 'css', 'scss', 'less', 'html',
+  ]);
+  const extAlternation = [...CODE_EXTENSIONS].join('|');
+  const fileNamePattern = new RegExp('(?:^|[\\s"\'`(,])([A-Za-z_][\\w\\-.]*\\.(?:' + extAlternation + '))(?=[\\s"\'`),;]|$)', 'gm');
   while ((match = fileNamePattern.exec(text)) !== null) {
     const fileName = match[1].trim();
     if (!seen.has(fileName.toLowerCase())) {
@@ -100,6 +109,7 @@ function extractAnchorFiles(text) {
 class AnalystAgent extends BaseAgent {
   constructor(llmCall, hookEmitter, opts = {}) {
     super(AgentRole.ANALYST, llmCall, hookEmitter, opts);
+    this._preComplexityLevel = opts.complexityLevel || null;
   }
 
   /**
@@ -111,78 +121,46 @@ class AnalystAgent extends BaseAgent {
    * @returns {string}
    */
   buildPrompt(inputContent, expContext = null) {
+    // ── CORE: Experience & Knowledge (loaded first — guides analysis) ──
     const expSection = expContext
-      ? `\n## Accumulated Experience (Reference Before Analysis)\n${expContext}\n`
+      ? `\n### Past Experiences (Reference Before Analysis)\n${expContext}\n`
       : '';
-    // P0-NEW-1: inject structured JSON output instruction
+    const knowledgeContext = this._loadKnowledgeContext();
+
+    // ── CORE: JSON output instructions (requirement structure) ──
     const jsonInstruction = buildJsonBlockInstruction('analyst');
 
-    // ── Anchor File Extraction ────────────────────────────────────────────
-    // Extract user-referenced files (@file or explicit names) from the requirement.
-    // These are injected as an "Anchor Files" section so the LLM focuses its
-    // codebase research on these files and their direct dependencies, instead
-    // of performing broad exploratory searches across the entire project.
-    const { anchorFiles, anchorNames } = extractAnchorFiles(inputContent);
+    // ── AUX: Code Graph seed (used for Module Map verification only) ──
+    const codeGraphSeed = this._loadCodeGraphSeed();
+    const importEdgeContext = this._buildImportEdgeContext();
+
+    const { anchorFiles } = extractAnchorFiles(inputContent);
     let anchorSection = '';
     if (anchorFiles.length > 0) {
-      console.error(`[AnalystAgent] \uD83D\uDCCC Anchor files extracted: [${anchorFiles.join(', ')}]`);
-      anchorSection = `\n## Anchor Files (User-Referenced)\nThe user has explicitly referenced the following files. **Focus your codebase research on these files and their direct dependencies ONLY.** Do NOT search broadly across the project.\n${anchorFiles.map(f => `- \`${f}\``).join('\n')}\n\n**Search strategy**: Start by reading these anchor files. Then identify their imports/dependencies and callers. Do NOT search for unrelated files.\n`;
+      console.error(`[AnalystAgent] Anchor files extracted: [${anchorFiles.join(', ')}]`);
+      const topoCtx = this._loadTopologicalContext(anchorFiles);
+      anchorSection = `\n### Anchor Files — Verify Your Module Map Against These\n${anchorFiles.map(f => `- \`${f}\``).join('\n')}\n\n**Usage**: Read the anchor files (offset/limit, NOT full file) to confirm module boundaries in your Module Map. Do NOT search broadly.\n${topoCtx}`;
     } else {
-      // No explicit file references — extract entity names for focused search
       const entityPattern = /\b([A-Z][a-zA-Z0-9]{2,}(?:[A-Z][a-z]+)+)\b/g;
       const entities = [];
       const entitySeen = new Set();
       let m;
       while ((m = entityPattern.exec(inputContent)) !== null) {
-        if (!entitySeen.has(m[1])) {
-          entitySeen.add(m[1]);
-          entities.push(m[1]);
-        }
+        if (!entitySeen.has(m[1])) { entitySeen.add(m[1]); entities.push(m[1]); }
       }
       if (entities.length > 0) {
-        console.error(`[AnalystAgent] \uD83D\uDD0D Inferred entity names: [${entities.slice(0, 8).join(', ')}]`);
-        anchorSection = `\n## Inferred Entities\nNo explicit file references found. The following entity names were extracted from the requirement. **Search for these specific names only** — do NOT perform broad exploratory searches.\n${entities.slice(0, 8).map(e => `- \`${e}\``).join('\n')}\n`;
+        console.error(`[AnalystAgent] Inferred entity names: [${entities.slice(0, 8).join(', ')}]`);
+        anchorSection = `\n### Inferred Entities — Verify Your Module Map Against These\n${entities.slice(0, 8).map(e => `- \`${e}\``).join('\n')}\n`;
       }
     }
 
-    // NOTE: Role identity, thinking process, analysis principles, negative examples,
-    // complexity assessment, module map construction, and output language are all
-    // defined in AGENT_FIXED_PREFIXES.analyst (prompt-agent-prefixes.js).
-    // This buildPrompt() only defines the OUTPUT FORMAT and injects dynamic content
-    // (anchor files, experience, JSON instruction). See Optimization A (token dedup).
-
-    // Optimization F: Conditional prompt injection based on pre-assessed complexity.
-    // For simple tasks, skip verbose section descriptions (5-8) and Module Map example.
-    // The Fixed Prefix already instructs: "Simple tasks: streamline to minimal spec,
-    // skip chapters 5-8. Still produce Module Map (even if just 1 module)."
     const isSimple = this._preComplexityLevel === 'simple';
 
-    // Sections 1-4 are always included (core requirement structure)
-    const coreSections = `## Output Format
-Produce a Markdown document with the following sections:
-1. **Overview** – One-paragraph summary of the business goal
-2. **User Stories** – Bullet list of "As a [role], I want [goal], so that [benefit]"
-3. **Acceptance Criteria** – Numbered list of verifiable conditions (WHEN/THEN/IF format)
-4. **Out of Scope** – Explicit list of things NOT included in this requirement`;
-
-    // Sections 5-8: verbose for complex tasks, compact for simple tasks
     const extendedSections = isSimple
       ? `5. **Open Questions** – List any ambiguities (keep brief for simple tasks)
-6. **Architecture Design** *(mandatory)* – Key entities, functional boundaries, constraints. ⚠️ REQUIRED.
-7. **Execution Plan** *(mandatory)* – Clarifications applied, assumptions made, remaining risks. ⚠️ REQUIRED.
-8. **Functional Module Map** *(mandatory)* – Module ID, name, boundaries, dependencies, complexity, isolatable. ⚠️ REQUIRED. Even for 1-module changes, include the map.`
+6. **Module Map** *(mandatory)* – Module ID, name, boundaries, dependencies, complexity, isolatable. ⚠️ REQUIRED. Even for 1-module changes, include the map.`
       : `5. **Open Questions** – Any ambiguities that need clarification before implementation
-6. **Architecture Design** *(mandatory)* – High-level analysis of the problem domain:
-   - Key entities and their relationships
-   - Major functional boundaries (what subsystems are implied by the requirements)
-   - Constraints and non-functional requirements identified from the user's request
-   - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
-7. **Execution Plan** *(mandatory)* – Ordered list of analysis steps taken and decisions made:
-   - What clarifications were applied to the raw requirement
-   - What assumptions were made and why
-   - What risks or ambiguities remain unresolved
-   - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance error.
-8. **Functional Module Map** *(mandatory)* – A structured decomposition of the codebase into functional modules:
+6. **Module Map** *(mandatory)* – A structured decomposition of the codebase into functional modules:
    - Based on your codebase research, identify the distinct functional modules affected by this requirement.
    - For each module, provide: a short ID (e.g. "mod-auth"), a descriptive name, a one-line description, file path boundaries (glob patterns), dependencies on other modules, complexity estimate (low/medium/high), and whether it is isolatable (can be designed/implemented independently).
    - Also identify cross-cutting concerns that span multiple modules (e.g. logging, error-handling, config).
@@ -197,35 +175,21 @@ Produce a Markdown document with the following sections:
      | mod-auth  | Authentication | User login, registration, token management | src/auth/*, src/middleware/auth* | mod-db, mod-config | medium | yes |
      \`\`\`
      Cross-cutting concerns: logging, error-handling, configuration`;
+// Section 6 "Architecture Design" and 7 "Execution Plan" moved to ARCHITECT/PLAN stages (Spec/Design 分离)
+// Analyst contract (line 8-11) now consistent with output template
 
-    // P1 optimization: structured requirement quality constraints
-    const qualitySection = `9. **Requirements Quality Checks** *(mandatory)*:
-   - Provide stable IDs for requirements and acceptance criteria (e.g. REQ-001, AC-001)
-   - Prefer EARS-style acceptance criteria: use structured forms such as
-     - WHEN <trigger>, the system SHALL <response>
-     - IF <precondition>, THEN the system SHALL <response>
-     - WHILE <state>, the system SHALL <response>
-   - User stories should satisfy INVEST (Independent, Negotiable, Valuable, Estimable, Small, Testable)
-   - Include a **Non-Functional Requirements** subsection with measurable targets (e.g. latency, throughput, error rate, security, reliability)
-   - ⚠️ This section is REQUIRED. If you skip it, the workflow will flag a compliance warning.`;
-
-    // ── Task Classification instruction (LLM-assessed complexity & code-change detection) ──
-    // This replaces the regex-based complexity estimation with a direct LLM judgment.
-    // The LLM has already read the code, searched files, and analyzed the root cause —
-    // its assessment of "does this need code changes" and "how complex is it" is far
-    // more accurate than any keyword-matching heuristic.
     const taskClassificationInstruction = `
 **CRITICAL: Task Classification (REQUIRED in JSON block)**
 You MUST include a "taskClassification" field in your JSON block. This is used to determine which pipeline stages to run.
 Assess based on your ACTUAL analysis of the requirement and codebase — do NOT guess.
 \`\`\`
 "taskClassification": {
-  "requiresCodeChange": true|false,   // Does this task require modifying/creating source code files?
+  "requiresCodeChange": true|false,
   "codeChangeReason": "Brief explanation of why code changes are/aren't needed",
-  "complexity": "simple|moderate|complex|very_complex",  // Overall task complexity
-  "complexityScore": 0-100,           // Numeric score: 0-25=simple, 26-50=moderate, 51-75=complex, 76-100=very_complex
+  "complexity": "simple|moderate|complex|very_complex",
+  "complexityScore": 0-100,
   "complexityReason": "Brief explanation of complexity assessment",
-  "taskIntent": "full|design_only|analysis_only|review_only|research_only",  // What type of deliverable does the user want?
+  "taskIntent": "full|design_only|analysis_only|review_only|research_only",
   "taskIntentReason": "Brief explanation of why this intent was chosen"
 }
 \`\`\`
@@ -239,49 +203,200 @@ Task intent guidelines:
 - **design_only**: User wants a design/architecture plan — no code implementation needed
 - **analysis_only**: User wants analysis, evaluation, comparison — no code changes, no architecture
 - **review_only**: User wants a review/audit of existing code or architecture
-- **research_only**: User wants research, investigation, or information gathering`;
+- **research_only**: User wants research, investigation, or information gathering
 
-    // JSON block instruction: compact for simple tasks
-    const jsonSection = isSimple
-      ? `${jsonInstruction}
+**CRITICAL: Acceptance Criteria (AC) ID Format (MANDATORY)**
+You MUST assign a unique ID to each Acceptance Criteria in the format \`AC-<3-digit-number>\` (e.g., AC-001, AC-002, AC-003).
+These IDs MUST be consistent between:
+  1. The markdown sections in \`output/requirement.md\` (format: \`### AC-001: <title>\`)
+  2. The \`requirementsCheck\` array in the JSON block (format: \`"acId": "AC-001"\`)
+  3. The Functional Acceptance Checklist in \`output/test-report.md\` (column: AC ID)
 
-**IMPORTANT**: JSON block MUST include "moduleMap" with modules array (id, name, description, boundaries, dependencies, complexity, isolatable) and crossCuttingConcerns array.
-${taskClassificationInstruction}`
-      : `${jsonInstruction}
-
-**IMPORTANT for JSON block**: The JSON metadata block MUST include a "moduleMap" field with this structure:
+Example markdown section in requirement.md:
+\`\`\`markdown
+### AC-001: User can login with valid credentials
+**WHEN** user enters valid username and password
+**THEN** system should authenticate and redirect to dashboard
+**IF** credentials are valid
 \`\`\`
-"moduleMap": {
-  "modules": [
-    {
-      "id": "mod-xxx",
-      "name": "Module Name",
-      "description": "One-line description",
-      "boundaries": ["src/xxx/*", "src/yyy/*"],
-      "dependencies": ["mod-yyy"],
-      "complexity": "low|medium|high",
-      "isolatable": true|false
-    }
-  ],
-  "crossCuttingConcerns": ["logging", "error-handling"]
+
+Example JSON block entry:
+\`\`\`json
+{
+  "reqId": "REQ-1",
+  "description": "User Authentication",
+  "acId": "AC-001",
+  "chkId": "CHK-1.1",
+  "chkDescription": "Verify user can login with valid credentials",
+  "priority": "HIGH"
 }
 \`\`\`
-${taskClassificationInstruction}`;
 
-    return `${coreSections}
-${extendedSections}
-${qualitySection}
+**WARNING**: Missing or inconsistent AC IDs will cause TEST stage validation to FAIL.`;
 
-${jsonSection}
+    const jsonSection = `${jsonInstruction}\n\n**IMPORTANT for JSON block**: The JSON metadata block MUST include a "moduleMap" field with this structure:\n\`\`\`\n"moduleMap": {\n  "modules": [\n    {\n      "id": "mod-xxx",\n      "name": "Module Name",\n      "description": "One-line description",\n      "boundaries": ["src/xxx/*", "src/yyy/*"],\n      "dependencies": ["mod-yyy"],\n      "complexity": "low|medium|high",\n      "isolatable": true|false\n    }\n  ],\n  "crossCuttingConcerns": ["logging", "error-handling"]\n}\n\`\`\`\n${taskClassificationInstruction}`;
 
-## User Requirement
-${inputContent}
-${anchorSection}${expSection}
-## Instructions
-First output the JSON metadata block (as instructed above), then write the full Markdown document.
-Remember: NO technical details, NO code, NO architecture.
-**CRITICAL**: Sections 6 (Architecture Design) and 7 (Execution Plan) are MANDATORY. Do not omit them.
-**CRITICAL**: Include stable requirement IDs (REQ-xxx / AC-xxx) and measurable NFR targets.`;
+    const template = this.loadPersona('analyst');
+    const skillConstraints = PersonaLoader.extractSpecTemplateConstraints();
+    return this.buildPromptFromTemplate(template, {
+      inputContent,
+      anchorSection,
+      expSection,
+      extendedSections,
+      jsonSection,
+      skillConstraints,
+      codeGraphSeed,
+      importEdgeContext,
+      knowledgeContext,
+      requirementsCheckInstruction: `
+## Requirements Check Table (MANDATORY in JSON block)
+
+You MUST include a "requirementsCheck" field in your JSON output. This is the structured checklist
+that the TEST stage will use to verify every requirement one-by-one.
+
+\`\`\`
+"requirementsCheck": [
+  {
+    "reqId": "REQ-1",
+    "description": "Brief requirement description",
+    "chkId": "CHK-1.1",
+    "chkDescription": "Verifiable condition (WHEN ... THEN ...)",
+    "priority": "HIGH|MEDIUM|LOW"
+  }
+]
+\`\`\`
+
+Rules:
+- Each requirement (REQ-xxx) may have 1-5 checks (CHK-xxx.y)
+- Each CHK must be a verifiable condition using WHEN/THEN format
+- All HIGH priority CHKs must pass before TEST stage can succeed
+- Maximum 20 CHKs total across all requirements`,
+    });
+  }
+
+  /**
+   * Loads a compact Code Graph summary to seed the Module Map.
+   * Reads output/code-graph.md and extracts module structure + hotspot data.
+   * Non-fatal: returns empty string if the file is unavailable.
+   */
+  _loadCodeGraphSeed() {
+    try {
+      const cgPath = path.join(this._outputDir, 'code-graph.md');
+      if (!fs.existsSync(cgPath)) {
+        // Fallback to project-root-relative path
+        const altPath = path.join(path.dirname(this._outputDir), 'output', 'code-graph.md');
+        if (!fs.existsSync(altPath)) {
+          this._logContextUsage('code-graph', 'miss');
+          return '';
+        }
+        this._logContextUsage('code-graph', 'hit', { source: 'code-graph.md' });
+        return this._formatCodeGraphSeed(fs.readFileSync(altPath, 'utf-8'));
+      }
+      this._logContextUsage('code-graph', 'hit', { source: 'code-graph.md' });
+      return this._formatCodeGraphSeed(fs.readFileSync(cgPath, 'utf-8'));
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /**
+   * Loads transitive call chain context for anchor files via CodeGraph BFS.
+   * Temporarily bypasses IDE detection to ensure call edges are built.
+   * @param {string[]} anchorFiles
+   * @returns {string} Markdown summary of 2-hop call chain
+   */
+  _loadTopologicalContext(anchorFiles) {
+    if (!anchorFiles || anchorFiles.length === 0) return '';
+    try {
+      // Temporarily bypass IDE detection so CodeGraph builds call edges
+      const saveVsCode = process.env.VSCODE_PID;
+      const saveVsCodeCwd = process.env.VSCODE_CWD;
+      delete process.env.VSCODE_PID;
+      delete process.env.VSCODE_CWD;
+      try {
+        const { getCodeGraph } = require('../core/code-graph');
+        const cg = typeof getCodeGraph === 'function'
+          ? getCodeGraph({ projectRoot: this._projectRoot || path.resolve(this._outputDir, '..') })
+          : null;
+        if (!cg || typeof cg.getTopologicalContext !== 'function') return '';
+        const topo = cg.getTopologicalContext(anchorFiles, 2);
+        if (!topo || !topo.symbols || topo.symbols.length === 0) return '';
+        const byHop = topo.byHop;
+        let ctx = '\n\n### Call Chain Analysis (2-hop)\n';
+        for (const [hop, syms] of byHop) {
+          if (hop === 0 || !syms || syms.length === 0) continue;
+          const names = syms.slice(0, 12).map(s => s.name || s.id).filter(Boolean);
+          if (names.length === 0) continue;
+          ctx += `- Hop ${hop}: ${names.join(', ')}${syms.length > 12 ? ' ...' : ''}\n`;
+        }
+        return ctx;
+      } finally {
+        if (saveVsCode) process.env.VSCODE_PID = saveVsCode;
+        if (saveVsCodeCwd) process.env.VSCODE_CWD = saveVsCodeCwd;
+      }
+    } catch (_) {
+      return '';
+    }
+  }
+
+  _formatCodeGraphSeed(content) {
+    // Extract Overview metrics + Directory Groups (the most useful data for Module Map)
+    // DELIBERATELY skip Hotspot Analysis — individual symbol names are noise.
+    const overviewMatch = content.match(/## Overview[\s\S]*?(?=##\s|$)/i);
+    const dirGroupsMatch = content.match(/## Directory Groups[\s\S]*?(?=##\s|$)/i);
+    // Fallback to Top Files if Directory Groups not yet generated
+    const topFilesMatch = content.match(/## Top Files by Symbol Count[\s\S]*?(?=##\s|$)/i);
+
+    const parts = [];
+    if (overviewMatch) parts.push(`## Codebase Metrics\n${overviewMatch[0].match(/^\|.*\|/gm)?.join('\n') || overviewMatch[0].trim()}`);
+    if (dirGroupsMatch) {
+      parts.push(dirGroupsMatch[0].trim());
+    } else if (topFilesMatch) {
+      const lines = topFilesMatch[0].split('\n');
+      parts.push([lines[0], lines[1], ...lines.slice(2).filter(l => l.includes('|')).slice(0, 8)].join('\n'));
+    }
+
+    if (parts.length === 0) return '';
+
+    const combined = `## Codebase Structure (from Code Graph)\n${parts.join('\n\n')}`;
+    const CAP = 1200;
+    const seed = combined.length > CAP ? combined.slice(0, CAP) + '\n> ... (truncated)' : combined;
+
+    return `\n${seed}\n\n> ⚠️ These are static facts (metrics, directory distribution).\n> Use them to understand WHERE code lives and estimate complexity.\n> You determine business module boundaries — Code Graph only shows file/symbol distribution.\n`;
+  }
+
+  /**
+   * Builds import-edge based dependency context from CodeGraph._importEdges.
+   * Cross-validates LLM-generated moduleMap against actual file-level dependencies.
+   *
+   * @returns {string} Markdown table of file-level import dependencies
+   */
+  _buildImportEdgeContext() {
+    try {
+      const CodeGraph = require('../core/code-graph');
+      const codeGraph = CodeGraph.getInstance ? CodeGraph.getInstance() : null;
+      if (!codeGraph || !codeGraph._importEdges || codeGraph._importEdges.size === 0) {
+        return '';
+      }
+      const importEdges = codeGraph._importEdges;
+      const lines = ['\n## File-Level Import Dependencies (from require() scan)\n'];
+      lines.push('| File | Imported by |');
+      lines.push('|------|------------|');
+      let count = 0;
+      for (const [filePath, imported] of importEdges) {
+        if (count >= 50) break;
+        const shortPath = filePath.replace(/^.*[\\/]workflow[\\/]/, 'workflow/');
+        const importers = imported.map(p => p.replace(/^.*[\\/]workflow[\\/]/, 'workflow/'));
+        lines.push(`| ${shortPath} | ${importers.join(', ') || '(no importers)'} |`);
+        count++;
+      }
+      lines.push(`\n> **Source**: CodeGraph._importEdges (${importEdges.size} files).`);
+      lines.push(`> Use this to verify your Module Map — actual file dependencies should align with declared module dependencies.`);
+      lines.push(`> A file with 0 importers in a module vs 5+ importers in another signals a boundary error.`);
+      return lines.join('\n');
+    } catch (_) {
+      return '';
+    }
   }
 
   /**
@@ -292,6 +407,11 @@ Remember: NO technical details, NO code, NO architecture.
    * @returns {string}
    */
   parseResponse(llmResponse) {
+    // ── P1-9: Verify Socratic reasoning section presence ───────────────
+    if (!llmResponse.includes('## 🧠') && !llmResponse.includes('## 思考推理过程') && !llmResponse.includes('## Analysis Reasoning') && !llmResponse.includes('## 分析推理')) {
+      console.warn(`[AnalystAgent] ⚠️  Socratic reasoning section missing. Add '## 🧠 Analysis Reasoning' or '## 思考推理过程' with: (1) what user REALLY needs, (2) complexity assessment, (3) unstated assumptions, (4) minimal requirements capturing full intent.`);
+    }
+
     // P0-NEW-1: validate JSON block presence (imports hoisted to file top – P1-1 fix)
     const jsonBlock = extractJsonBlock(llmResponse);
     if (!jsonBlock) {
@@ -314,20 +434,17 @@ Remember: NO technical details, NO code, NO architecture.
       }
     }
 
+    // ── P2: Parse validation state (initialised before checks) ──────────
+    let parseWarnings = [];
+    let parseModuleCount = 0;
+    let parseModuleMapValid = false;
+
     // ── Mandatory section compliance check (P1-4: bilingual support) ────────
-    // Verify that the mandatory sections are present (English or Chinese).
-    const mandatorySections = [
-      { en: 'Architecture Design', zh: '架构设计' },
-      { en: 'Execution Plan', zh: '执行计划' },
-      { en: 'Functional Module Map', zh: '功能模块' },
+    // Architecture Design + Execution Plan moved to ARCHITECT/PLAN (Spec/Design 分离)
+    checkMandatorySections(llmResponse, [
+      { en: 'Module Map', zh: '功能模块' },
       { en: 'Requirements Quality Checks', zh: '需求质量检查' },
-    ];
-    const missingSections = mandatorySections.filter(s => !llmResponse.includes(s.en) && !llmResponse.includes(s.zh));
-    if (missingSections.length > 0) {
-      console.warn(`[AnalystAgent] ⚠️  COMPLIANCE: Missing mandatory section(s): ${missingSections.map(s => s.en).join(', ')}. The agent output specification requires these sections.`);
-    } else {
-      console.error(`[AnalystAgent] ✅ Mandatory sections present: Architecture Design, Execution Plan, Functional Module Map.`);
-    }
+    ], { agentName: 'AnalystAgent', mode: 'warn' });
 
     // ── P1 quality diagnostics: EARS / IDs / measurable NFR ───────────────
     const hasReqIds = /REQ-\d{3,}/i.test(llmResponse) || /AC-\d{3,}/i.test(llmResponse);
@@ -363,50 +480,48 @@ Remember: NO technical details, NO code, NO architecture.
         // ── Enhanced validation (P2): structural integrity checks ──────────
         const moduleIds = new Set(mm.modules.map(m => m.id).filter(Boolean));
         const VALID_COMPLEXITY = new Set(['low', 'medium', 'high']);
-        const warnings = [];
 
         for (const mod of mm.modules) {
-          if (!mod.id) continue; // Already reported above
+          if (!mod.id) continue;
 
-          // Check boundaries: must be non-empty array of non-empty strings
           if (!Array.isArray(mod.boundaries) || mod.boundaries.length === 0) {
-            warnings.push(`Module "${mod.id}": missing or empty 'boundaries' array`);
+            parseWarnings.push(`Module "${mod.id}": missing or empty 'boundaries' array`);
           } else {
             const emptyBoundaries = mod.boundaries.filter(b => typeof b !== 'string' || !b.trim());
             if (emptyBoundaries.length > 0) {
-              warnings.push(`Module "${mod.id}": ${emptyBoundaries.length} invalid boundary value(s)`);
+              parseWarnings.push(`Module "${mod.id}": ${emptyBoundaries.length} invalid boundary value(s)`);
             }
           }
 
-          // Check dependencies: must reference existing module IDs
           if (Array.isArray(mod.dependencies)) {
             const unknownDeps = mod.dependencies.filter(dep => !moduleIds.has(dep));
             if (unknownDeps.length > 0) {
-              warnings.push(`Module "${mod.id}": unknown dependency ID(s): [${unknownDeps.join(', ')}]`);
+              parseWarnings.push(`Module "${mod.id}": unknown dependency ID(s): [${unknownDeps.join(', ')}]`);
             }
           }
 
-          // Check complexity: must be one of low/medium/high
           if (mod.complexity && !VALID_COMPLEXITY.has(mod.complexity)) {
-            warnings.push(`Module "${mod.id}": invalid complexity "${mod.complexity}" (expected: low/medium/high)`);
+            parseWarnings.push(`Module "${mod.id}": invalid complexity "${mod.complexity}" (expected: low/medium/high)`);
           }
 
-          // Check isolatable: must be boolean
           if (mod.isolatable !== undefined && typeof mod.isolatable !== 'boolean') {
-            warnings.push(`Module "${mod.id}": 'isolatable' should be boolean, got ${typeof mod.isolatable}`);
+            parseWarnings.push(`Module "${mod.id}": 'isolatable' should be boolean, got ${typeof mod.isolatable}`);
           }
         }
 
-        if (warnings.length > 0) {
-          console.warn(`[AnalystAgent] ⚠️  Module Map structural issues (${warnings.length}):`);
-          for (const w of warnings.slice(0, 8)) {
+        parseModuleCount = validModules.length;
+        parseModuleMapValid = parseModuleCount > 0;
+
+        if (parseWarnings.length > 0) {
+          console.warn(`[AnalystAgent] ⚠️  Module Map structural issues (${parseWarnings.length}):`);
+          for (const w of parseWarnings.slice(0, 8)) {
             console.warn(`[AnalystAgent]    - ${w}`);
           }
-          if (warnings.length > 8) {
-            console.warn(`[AnalystAgent]    ... and ${warnings.length - 8} more`);
+          if (parseWarnings.length > 8) {
+            console.warn(`[AnalystAgent]    ... and ${parseWarnings.length - 8} more`);
           }
         } else {
-          console.error(`[AnalystAgent] ✅ Module Map structural validation passed (${validModules.length} module(s), all fields valid).`);
+          console.error(`[AnalystAgent] ✅ Module Map structural validation passed (${parseModuleCount} module(s), all fields valid).`);
         }
       } else {
         console.warn(`[AnalystAgent] ⚠️  Module Map: 'modules' array is empty or missing. Downstream ARCHITECT may not benefit from parallel design.`);
@@ -414,6 +529,11 @@ Remember: NO technical details, NO code, NO architecture.
     } else if (jsonBlock) {
       console.warn(`[AnalystAgent] ⚠️  Module Map: No 'moduleMap' field found in JSON block. ARCHITECT stage will use single-pass design.`);
     }
+
+    // ── P2: Store validation results for downstream consumption ───────
+    this._parseWarnings = parseWarnings;
+    this._parseModuleMapValid = parseModuleMapValid;
+    this._parseModuleCount = parseModuleCount;
 
     return llmResponse;
   }
