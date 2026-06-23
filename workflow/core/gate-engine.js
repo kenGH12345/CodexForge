@@ -42,7 +42,8 @@ class GateEngine {
 
   _loadProjectConfig(projectRoot) {
     try {
-      const config = require('../../workflow.config');
+      const configPath = path.join(projectRoot, 'workflow.config.js');
+      const config = require(configPath);
       const qg = config.qualityGate || {};
       if (qg.maxCriticalCves !== undefined) this.thresholds.maxCriticalCves = qg.maxCriticalCves;
       if (qg.minLintPassRate !== undefined) this.thresholds.minLintPassRate = qg.minLintPassRate;

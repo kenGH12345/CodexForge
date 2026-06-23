@@ -63,6 +63,7 @@ class PostCodeQualityGuard {
     this._verbose = verbose;
     this._findings = [];
     this._phaseResults = {};
+    this._gateEngine = new GateEngine({ projectRoot });
   }
 
   /**
@@ -163,7 +164,7 @@ class PostCodeQualityGuard {
       }
     }
 
-    const synCheck = new GateEngine().checkSyntaxValidity(findings);
+    const synCheck = this._gateEngine.checkSyntaxValidity(findings);
     return {
       phase: PHASE.SYNTAX,
       blocked: !synCheck.pass,

@@ -309,52 +309,49 @@ class QualityGate {
       }
     }
 
-    // Gate 5.6: Skill compliance score (M-9 SkillComplianceMeter)
-    // audit/warn modes are advisory; enforce mode becomes a hard QualityGate failure.
+    // Gate 5.6: Skill compliance score (→ GateEngine.checkComplianceScore)
     const complianceReport = metrics.skillCompliance || QualityGate._loadSkillComplianceReport(metrics.projectRoot);
     if (complianceReport && Number.isFinite(Number(complianceReport.overallScore))) {
       const complianceScore = Number(complianceReport.overallScore);
       const minCompliance = Number.isFinite(Number(g.minComplianceScore)) ? Number(g.minComplianceScore) : 0.8;
       const complianceMode = complianceReport.mode || 'audit';
-      const compliancePassed = complianceScore >= minCompliance;
+      const csCheck = eng.checkComplianceScore(complianceScore, minCompliance);
       gates.push({
         name: 'minComplianceScore',
-        passed: compliancePassed,
+        passed: csCheck.pass,
         advisory: complianceMode !== 'enforce',
         actual: `${(complianceScore * 100).toFixed(1)}%`,
         threshold: `${(minCompliance * 100).toFixed(1)}%`,
-        message: compliancePassed
-          ? `Skill compliance OK (${(complianceScore * 100).toFixed(1)}% ≥ ${(minCompliance * 100).toFixed(1)}%)`
-          : `Skill compliance below threshold (${(complianceScore * 100).toFixed(1)}% < ${(minCompliance * 100).toFixed(1)}%, mode=${complianceMode})`,
+        message: csCheck.reason || `Skill compliance ${csCheck.pass ? 'OK' : 'below threshold'} (mode=${complianceMode})`,
       });
     }
 
-    // Gate 6: File size compliance — advisory (legacy/stock files)
-    // Scans ALL files but does NOT affect overall passed/failed.
-    // Violations are recorded for visibility in progress log.
+    // Gate 6: File size compliance (→ GateEngine.checkFileSize, advisory)
+    // Uses _checkFileSizeCompliance for project-specific directory rules,
+    // delegates numerical threshold decision to GateEngine.
     if (metrics.projectRoot) {
       const allViolations = QualityGate._checkFileSizeCompliance(metrics.projectRoot);
-      const fileSizePassed = allViolations.length === 0;
+      const allEntries = allViolations.map(v => ({ path: v.file, lines: v.lines }));
+      const fsCheck = eng.checkFileSize(allEntries);
       gates.push({
         name: 'fileSizeCompliance',
-        passed: fileSizePassed,
+        passed: fsCheck.pass,
         advisory: true,
-        actual: fileSizePassed ? '0 violations' : `${allViolations.length} file(s) over limit`,
-        threshold: '0 violations',
-        message: fileSizePassed
+        actual: fsCheck.pass ? '0 violations' : `${fsCheck.violations.length} file(s) over limit`,
+        threshold: `${eng.thresholds.maxFileLines} lines`,
+        message: fsCheck.pass
           ? 'All files within architecture line-count limits'
-          : `File size violations (advisory): ${allViolations.map(v => `${v.file} (${v.lines}/${v.limit})`).join(', ')}`,
+          : `File size violations (advisory): ${fsCheck.violations.map(v => `${v.file} (${v.lines}/${v.limit})`).join(', ')}`,
       });
 
       // Gate 6b: File size compliance — strict (modified files only)
-      // Only runs when metrics.modifiedFiles is provided (non-empty array).
-      // Modified files that exceed limits cause a HARD FAIL.
       if (Array.isArray(metrics.modifiedFiles) && metrics.modifiedFiles.length > 0) {
-        const modifiedViolations = QualityGate._checkFileSizeCompliance(metrics.projectRoot, metrics.modifiedFiles);
-        const modifiedPassed = modifiedViolations.length === 0;
+        const modViolations = QualityGate._checkFileSizeCompliance(metrics.projectRoot, metrics.modifiedFiles);
+        const modEntries = modViolations.map(v => ({ path: v.file, lines: v.lines }));
+        const modCheck = eng.checkFileSize(modEntries);
         gates.push({
           name: 'fileSizeCompliance_modified',
-          passed: modifiedPassed,
+          passed: modCheck.pass,
           actual: modifiedPassed ? '0 violations' : `${modifiedViolations.length} modified file(s) over limit`,
           threshold: '0 violations',
           message: modifiedPassed
@@ -604,7 +601,7 @@ class QualityGate {
     // Detected by EPHEMERAL_FILE_GUARD in stage-executor.js via git ls-files --others
     // Primary source: context.orchestrator._ephemeralFileWarnings (in-process)
     // Fallback: output/ephemeral-warnings.json (cross-process, e.g. bridge calls)
-    let ephemeralWarnings = context?.orchestrator?._ephemeralFileWarnings || [];
+    let ephemeralWarnings = stageContext?.orchestrator?._ephemeralFileWarnings || [];
     if (ephemeralWarnings.length === 0) {
       try {
         const warnPath = path.join(metrics.projectRoot || '.', 'output', 'ephemeral-warnings.json');
@@ -624,6 +621,29 @@ class QualityGate {
         message: `${ephemeralWarnings.length} ephemeral file(s) detected across ${new Set(ephemeralWarnings.map(w => w.stage)).size} stage(s). Consider using node -e "..." for one-off checks.`,
       });
     }
+
+    // ─── Consolidated: GateEngine.runAllChecks() summary ────────────────────────
+    // Adds a single consolidated result for all numerical checks.
+    // This is the unified entry point for GateEngine's batch API.
+    const runAllResult = eng.runAllChecks({
+      lintPassRate: metrics.lint != null && Number.isFinite(metrics.lint.passRate) ? metrics.lint.passRate : undefined,
+      testPassRate: metrics.testResult ? (() => { const t=metrics.testResult; const total=t.passed+t.failed; return total>0 ? t.passed/total : 1; })() : undefined,
+      criticalCves: metrics.cve ? Array(metrics.cve.critical || 0).fill({id:'cve'}) : undefined,
+      syntaxErrors: metrics.syntax?.errors || undefined,
+      modifiedFiles: metrics.modifiedFiles ? metrics.modifiedFiles.map(f => ({path:f, lines:0})) : undefined,
+      errorCount: metrics.errors?.count || 0,
+      llmCallCount: metrics.llm?.totalCalls || 0,
+      durationMs: metrics.totalDurationMs || 0,
+      tokenWasteRatio: metrics.blockTelemetry?.summary ? (() => { const s=metrics.blockTelemetry.summary; return s.totalInjected>0 ? s.totalDropped/s.totalInjected : 0; })() : undefined,
+      integrationTests: metrics.coverage?.integration || undefined,
+    });
+    gates.push({
+      name: 'numericalGates',
+      passed: runAllResult.passed,
+      actual: `${runAllResult.checks.filter(c => c.pass).length}/${runAllResult.checks.length} passed`,
+      threshold: 'All numerical checks pass',
+      message: runAllResult.summary,
+    });
 
     // ─── EvoSkill: Diagnostic Mode Handling ─────────────────────────────────────
     // In diagnostic mode: record metrics but don't propagate to skill evolution
