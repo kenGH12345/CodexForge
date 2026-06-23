@@ -82,13 +82,14 @@ class GateEngine {
   }
 
   // ── Check 4: syntax validity ──
-  checkSyntaxValidity(errors) {
+  checkSyntaxValidity(errors, maxAllowed) {
     const errs = Array.isArray(errors) ? errors : [];
-    const pass = errs.length === 0;
+    const threshold = maxAllowed != null ? maxAllowed : 0;
+    const pass = errs.length <= threshold;
     return {
-      check: 'syntax', pass, actual: errs.length, threshold: 0,
+      check: 'syntax', pass, actual: errs.length, threshold,
       errors: errs.slice(0, 5),
-      reason: pass ? '' : `${errs.length} syntax error(s) in modified files`,
+      reason: pass ? '' : `${errs.length} syntax error(s) exceed max ${threshold}`,
     };
   }
 
@@ -110,27 +111,30 @@ class GateEngine {
   }
 
   // ── Check 6: stage-specific error count ──
-  checkErrorCount(errorCount, stage) {
+  checkErrorCount(errorCount, stage, customMax) {
     const st = this.getStageThresholds(stage);
-    const pass = errorCount <= st.maxErrorCount;
-    return { check: 'errorCount', pass, actual: errorCount, threshold: st.maxErrorCount, stage,
-      reason: pass ? '' : `${errorCount} errors exceeds max ${st.maxErrorCount} for ${stage} stage` };
+    const threshold = customMax != null ? customMax : st.maxErrorCount;
+    const pass = errorCount <= threshold;
+    return { check: 'errorCount', pass, actual: errorCount, threshold, stage,
+      reason: pass ? '' : `${errorCount} errors exceeds max ${threshold} for ${stage} stage` };
   }
 
   // ── Check 7: LLM calls ──
-  checkLlmCalls(count, stage) {
+  checkLlmCalls(count, stage, customMax) {
     const st = this.getStageThresholds(stage);
-    const pass = count <= st.maxLlmCalls;
-    return { check: 'llmCalls', pass, actual: count, threshold: st.maxLlmCalls, stage,
-      reason: pass ? '' : `${count} LLM calls exceeds max ${st.maxLlmCalls}` };
+    const threshold = customMax != null ? customMax : st.maxLlmCalls;
+    const pass = count <= threshold;
+    return { check: 'llmCalls', pass, actual: count, threshold, stage,
+      reason: pass ? '' : `${count} LLM calls exceeds max ${threshold}` };
   }
 
   // ── Check 8: duration ──
-  checkDuration(durationMs, stage) {
+  checkDuration(durationMs, stage, customMax) {
     const st = this.getStageThresholds(stage);
-    const pass = durationMs <= st.maxDurationMs;
-    return { check: 'duration', pass, actual: durationMs, threshold: st.maxDurationMs, stage,
-      reason: pass ? '' : `stage duration ${Math.round(durationMs / 1000)}s exceeds max ${Math.round(st.maxDurationMs / 1000)}s` };
+    const threshold = customMax != null ? customMax : st.maxDurationMs;
+    const pass = durationMs <= threshold;
+    return { check: 'duration', pass, actual: durationMs, threshold, stage,
+      reason: pass ? '' : `stage duration ${Math.round(durationMs / 1000)}s exceeds max ${Math.round(threshold / 1000)}s` };
   }
 
   // ── Check 9: token waste ratio ──

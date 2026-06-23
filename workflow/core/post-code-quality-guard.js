@@ -164,7 +164,7 @@ class PostCodeQualityGuard {
       }
     }
 
-    const synCheck = this._gateEngine.checkSyntaxValidity(findings);
+    const synCheck = this._gateEngine.checkSyntaxValidity(findings, this._cfg.maxSyntaxErrors);
     return {
       phase: PHASE.SYNTAX,
       blocked: !synCheck.pass,

@@ -223,9 +223,9 @@ class QualityGate {
     const g = gateConfig;
     const eng = new GateEngine();
 
-    // Gate 1: Error count (→ GateEngine)
+    // Gate 1: Error count (→ GateEngine, config threshold override)
     const errorCount = metrics.errors?.count || 0;
-    const errCheck = eng.checkErrorCount(errorCount, validationType);
+    const errCheck = eng.checkErrorCount(errorCount, validationType, g.maxErrorCount);
     gates.push({
       name: 'maxErrorCount',
       passed: errCheck.pass,
@@ -249,9 +249,9 @@ class QualityGate {
       });
     }
 
-    // Gate 3: Duration (→ GateEngine)
+    // Gate 3: Duration (→ GateEngine, config threshold override)
     const duration = metrics.totalDurationMs || 0;
-    const durCheck = eng.checkDuration(duration, validationType);
+    const durCheck = eng.checkDuration(duration, validationType, g.maxDurationMs);
     gates.push({
       name: 'maxDurationMs',
       passed: durCheck.pass,
@@ -260,9 +260,9 @@ class QualityGate {
       message: durCheck.reason || `Duration within limit`,
     });
 
-    // Gate 4: LLM call count (→ GateEngine)
+    // Gate 4: LLM call count (→ GateEngine, config threshold override)
     const llmCalls = metrics.llm?.totalCalls || 0;
-    const llmCheck = eng.checkLlmCalls(llmCalls, validationType);
+    const llmCheck = eng.checkLlmCalls(llmCalls, validationType, g.maxLlmCalls);
     gates.push({
       name: 'maxLlmCalls',
       passed: llmCheck.pass,
@@ -326,32 +326,30 @@ class QualityGate {
       });
     }
 
-    // Gate 6: File size compliance (→ GateEngine.checkFileSize, advisory)
-    // Uses _checkFileSizeCompliance for project-specific directory rules,
-    // delegates numerical threshold decision to GateEngine.
+    // Gate 6: File size compliance — advisory (legacy/stock files)
+    // Uses _checkFileSizeCompliance for directory-specific rules (core=400, agents=300, etc.)
+    // GateEngine.checkFileSize uses flat 900 — too loose for project conventions.
     if (metrics.projectRoot) {
       const allViolations = QualityGate._checkFileSizeCompliance(metrics.projectRoot);
-      const allEntries = allViolations.map(v => ({ path: v.file, lines: v.lines }));
-      const fsCheck = eng.checkFileSize(allEntries);
+      const fileSizePassed = allViolations.length === 0;
       gates.push({
         name: 'fileSizeCompliance',
-        passed: fsCheck.pass,
+        passed: fileSizePassed,
         advisory: true,
-        actual: fsCheck.pass ? '0 violations' : `${fsCheck.violations.length} file(s) over limit`,
-        threshold: `${eng.thresholds.maxFileLines} lines`,
-        message: fsCheck.pass
+        actual: fileSizePassed ? '0 violations' : `${allViolations.length} file(s) over limit`,
+        threshold: '0 violations',
+        message: fileSizePassed
           ? 'All files within architecture line-count limits'
-          : `File size violations (advisory): ${fsCheck.violations.map(v => `${v.file} (${v.lines}/${v.limit})`).join(', ')}`,
+          : `File size violations (advisory): ${allViolations.map(v => `${v.file} (${v.lines}/${v.limit})`).join(', ')}`,
       });
 
       // Gate 6b: File size compliance — strict (modified files only)
       if (Array.isArray(metrics.modifiedFiles) && metrics.modifiedFiles.length > 0) {
-        const modViolations = QualityGate._checkFileSizeCompliance(metrics.projectRoot, metrics.modifiedFiles);
-        const modEntries = modViolations.map(v => ({ path: v.file, lines: v.lines }));
-        const modCheck = eng.checkFileSize(modEntries);
+        const modifiedViolations = QualityGate._checkFileSizeCompliance(metrics.projectRoot, metrics.modifiedFiles);
+        const modifiedPassed = modifiedViolations.length === 0;
         gates.push({
           name: 'fileSizeCompliance_modified',
-          passed: modCheck.pass,
+          passed: modifiedPassed,
           actual: modifiedPassed ? '0 violations' : `${modifiedViolations.length} modified file(s) over limit`,
           threshold: '0 violations',
           message: modifiedPassed
@@ -524,7 +522,7 @@ class QualityGate {
       const criticalCount = metrics.cve.critical || 0;
       const highCount = metrics.cve.high || 0;
       const maxCritical = Number.isFinite(Number(g.maxCriticalCves)) ? Number(g.maxCriticalCves) : 0;
-      const cveCheck = eng.checkCriticalCves([{id:'cve',count:criticalCount}], maxCritical);
+      const cveCheck = eng.checkCriticalCves(Array.from({length: criticalCount}, (_, i) => ({id: `cve-${i}`})), maxCritical);
       gates.push({
         name: 'cveAuditGate',
         passed: cveCheck.pass,
