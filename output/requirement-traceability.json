@@ -1,0 +1,58 @@
+{
+  "requirement": "评估 WorkFlowAgent 中哪些运行时代码能力可以降级为声明式 Skill，对标业界实践",
+  "userStories": [
+    {
+      "id": "US-1",
+      "actor": "WorkFlowAgent 架构师",
+      "goal": "识别当前系统中过度工程化的模块，判断哪些可以从代码降级为声明式 Skill",
+      "benefit": "降低系统复杂度，减少维护负担，对齐 2026 年业界共识",
+      "criteria": ["AC-1", "AC-4", "AC-5"]
+    },
+    {
+      "id": "US-2",
+      "actor": "WorkFlowAgent 维护者",
+      "goal": "渐进式地将冗余代码模块迁移为 Skill，同时保持输出质量不下降",
+      "benefit": "减少 90% 的冗余代码，每次新增规则只需修改 1 个文件",
+      "criteria": ["AC-2", "AC-3", "AC-6", "AC-8"]
+    },
+    {
+      "id": "US-3",
+      "actor": "质量工程师",
+      "goal": "验证技能化后的门禁系统与原有系统具有等价的质量保障能力",
+      "benefit": "保证系统安全性、正确性不因架构简化而受损",
+      "criteria": ["AC-3", "AC-7"]
+    }
+  ],
+  "acceptanceCriteria": [
+    {"id": "AC-1", "description": "审查规则迁移后，代码审查输出包含相同的检查维度", "type": "correctness", "priority": "HIGH"},
+    {"id": "AC-2", "description": "删除 skill 管理模块后初始化时间减少 30%", "type": "performance", "priority": "MED"},
+    {"id": "AC-3", "description": "统一门禁后相同的变更触发相同的 PASS/FAIL", "type": "equivalence", "priority": "HIGH"},
+    {"id": "AC-4", "description": "渐进式披露后每阶段注入 token 减少 40%", "type": "efficiency", "priority": "MED"},
+    {"id": "AC-5", "description": "新增审查规则只需修改 1 个 Skill 文件", "type": "maintainability", "priority": "MED"},
+    {"id": "AC-6", "description": "benchmark 评分不下降", "type": "quality", "priority": "HIGH"},
+    {"id": "AC-7", "description": "所有历史失败场景仍能被检测", "type": "coverage", "priority": "HIGH"},
+    {"id": "AC-8", "description": "任意阶段迁移失败时 GateEngine 仍阻断缺陷代码", "type": "resilience", "priority": "CRITICAL"}
+  ],
+  "affectedModules": [
+    {"name": "skill management", "files": ["skill-scanner.js", "skill-ranker.js", "skill-discovery.js", "skill-enrichment.js", "skill-llm-refiner.js", "skill-ai-generator.js", "skill-conflict-detector.js", "unified-skill-composer.js"], "action": "DELETE"},
+    {"name": "socratic challenger", "files": ["socratic-challenger.js", "socratic-engine.js", "socratic-gate.js", "socratic-question-builder.js", "socratic-question-*.js"], "action": "DELETE → skills/socratic-challenger.md"},
+    {"name": "code review", "files": ["code-review-agent.js", "review-checklists.js", "deep-audit-orchestrator.js"], "action": "DELETE → skills/code-review.md"},
+    {"name": "agent prompt", "files": ["agent-prompt-template.js", "agents/personas/*.md"], "action": "DELETE → skills/stage-*.md"},
+    {"name": "gate systems", "files": ["quality-gate.js", "acceptance-gate.js", "analysis-quality-gate.js", "post-code-quality-guard.js"], "action": "UNIFY → GateEngine + skills/quality-gate-rules.md"},
+    {"name": "communication", "files": ["agent-handoff-*.js", "agent-mailbox.js"], "action": "DELETE → FileRefBus only"},
+    {"name": "state recording", "files": ["event-journal.js", "conversation-state-store.js"], "action": "DELETE → DecisionTrail only"},
+    {"name": "experience", "files": ["experience-distillation.js", "experience-evolution.js", "fix-experience-engine.js", "failure-pattern-analyzer.js"], "action": "DELETE → skills/knowledge-distillation.md"},
+    {"name": "evolution", "files": ["evolution-loop.js", "evolution-recommender.js"], "action": "DELETE → skills/continuous-improvement.md + light scheduler"},
+    {"name": "context loader", "files": ["context-loader.js"], "action": "SIMPLIFY 89KB → ~500 lines"}
+  ],
+  "risks": [
+    {"id": "R1", "description": "LLM 消费 Skill 时忠实度不足（选择性忽略规则）", "probability": "MED", "impact": "HIGH", "mitigation": "GateEngine 保留数值型硬性门禁"},
+    {"id": "R2", "description": "Skill 文件增多后匹配精度下降", "probability": "MED", "impact": "MED", "mitigation": "保留关键词+embedding 混合匹配"},
+    {"id": "R3", "description": "边界 case 未被覆盖", "probability": "MED", "impact": "MED", "mitigation": "渐进式迁移 + 回归测试"}
+  ],
+  "meta": {
+    "complexity": "high",
+    "estimatedEffort": "3-4 weeks (3 phases)",
+    "industryReferences": ["CodeBuddy Skills", "Superpowers (obra/superpowers)", "Claude Code Dynamic Workflows", "Cursor Rules", "GitHub Copilot Agent Mode"]
+  }
+}
