@@ -620,29 +620,6 @@ class QualityGate {
       });
     }
 
-    // ─── Consolidated: GateEngine.runAllChecks() summary ────────────────────────
-    // Adds a single consolidated result for all numerical checks.
-    // This is the unified entry point for GateEngine's batch API.
-    const runAllResult = eng.runAllChecks({
-      lintPassRate: metrics.lint != null && Number.isFinite(metrics.lint.passRate) ? metrics.lint.passRate : undefined,
-      testPassRate: metrics.testResult ? (() => { const t=metrics.testResult; const total=t.passed+t.failed; return total>0 ? t.passed/total : 1; })() : undefined,
-      criticalCves: metrics.cve ? Array(metrics.cve.critical || 0).fill({id:'cve'}) : undefined,
-      syntaxErrors: metrics.syntax?.errors || undefined,
-      modifiedFiles: metrics.modifiedFiles ? metrics.modifiedFiles.map(f => ({path:f, lines:0})) : undefined,
-      errorCount: metrics.errors?.count || 0,
-      llmCallCount: metrics.llm?.totalCalls || 0,
-      durationMs: metrics.totalDurationMs || 0,
-      tokenWasteRatio: metrics.blockTelemetry?.summary ? (() => { const s=metrics.blockTelemetry.summary; return s.totalInjected>0 ? s.totalDropped/s.totalInjected : 0; })() : undefined,
-      integrationTests: metrics.coverage?.integration || undefined,
-    });
-    gates.push({
-      name: 'numericalGates',
-      passed: runAllResult.passed,
-      actual: `${runAllResult.checks.filter(c => c.pass).length}/${runAllResult.checks.length} passed`,
-      threshold: 'All numerical checks pass',
-      message: runAllResult.summary,
-    });
-
     // ─── EvoSkill: Diagnostic Mode Handling ─────────────────────────────────────
     // In diagnostic mode: record metrics but don't propagate to skill evolution
 

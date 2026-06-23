@@ -1,5 +1,7 @@
 'use strict';
 
+const path = require('path');
+
 /**
  * GateEngine — 统一数值门禁检查器
  *
