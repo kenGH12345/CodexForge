@@ -132,6 +132,30 @@ class GateEngine {
       reason: pass ? '' : `stage duration ${Math.round(durationMs / 1000)}s exceeds max ${Math.round(st.maxDurationMs / 1000)}s` };
   }
 
+  // ── Check 9: token waste ratio ──
+  checkTokenWasteRatio(wasteRatio, maxRatio) {
+    const threshold = maxRatio == null ? this.thresholds.maxTokenWasteRatio : maxRatio;
+    const pass = wasteRatio <= threshold;
+    return { check: 'tokenWasteRatio', pass, actual: wasteRatio, threshold,
+      reason: pass ? '' : `token waste ratio ${wasteRatio} exceeds max ${threshold}` };
+  }
+
+  // ── Check 10: compliance score ──
+  checkComplianceScore(score, minScore) {
+    const threshold = minScore == null ? this.thresholds.minComplianceScore : minScore;
+    const pass = score >= threshold;
+    return { check: 'complianceScore', pass, actual: score, threshold,
+      reason: pass ? '' : `compliance score ${score} below minimum ${threshold}` };
+  }
+
+  // ── Check 11: integration tests ──
+  checkIntegrationTests(count, minCount) {
+    const threshold = minCount == null ? this.thresholds.minIntegrationTests : minCount;
+    const pass = count >= threshold;
+    return { check: 'integrationTests', pass, actual: count, threshold,
+      reason: pass ? '' : `integration tests ${count} below minimum ${threshold}` };
+  }
+
   // ── Run all checks ──
   runAllChecks(metrics, stage = 'FULL') {
     const results = [];
@@ -143,6 +167,9 @@ class GateEngine {
     if (metrics.errorCount != null)       results.push(this.checkErrorCount(metrics.errorCount, stage));
     if (metrics.llmCallCount != null)     results.push(this.checkLlmCalls(metrics.llmCallCount, stage));
     if (metrics.durationMs != null)       results.push(this.checkDuration(metrics.durationMs, stage));
+    if (metrics.tokenWasteRatio != null)  results.push(this.checkTokenWasteRatio(metrics.tokenWasteRatio));
+    if (metrics.complianceScore != null)  results.push(this.checkComplianceScore(metrics.complianceScore));
+    if (metrics.integrationTests != null) results.push(this.checkIntegrationTests(metrics.integrationTests));
 
     const blockedBy = results.filter(r => !r.pass).map(r => r.check);
     const warnings = results.filter(r => r.pass && r.warnings && r.warnings.length > 0)

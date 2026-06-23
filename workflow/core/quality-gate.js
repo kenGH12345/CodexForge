@@ -16,6 +16,7 @@ const fs   = require('fs');
 const path = require('path');
 const { ReflectionType, ReflectionSeverity } = require('./self-reflection-types');
 const { prepareGatewayPrompt } = require('./llm-injection-gateway');
+const { GateEngine } = require('./gate-engine');
 
 const DEFAULT_QUALITY_GATES = {
   maxErrorCount:       3,
@@ -23,8 +24,10 @@ const DEFAULT_QUALITY_GATES = {
   minTestPassRate:     0.70,
   maxDurationMs:       600000,
   maxLlmCalls:         15,
-  maxPluginSkipRatio:  0.80,
-  minPluginSkipRatio:  0.10,
+  minComplianceScore:  0.80,
+  minLintPassRate:     0.80,
+  maxCriticalCves:     0,
+  minIntegrationTests: 1,
 };
 
 // Stage-specific gate configurations (P0-Enhancement: per-stage thresholds)
@@ -61,7 +64,9 @@ class QualityGate {
    * @param {number}   [options.mapeTriggerThreshold=3] - Consecutive failures before triggering MAPE
    */
   constructor(options = {}) {
-    this._gates = { ...DEFAULT_QUALITY_GATES, ...options.qualityGates };
+    const configGateOptions = QualityGate._loadConfiguredGateOptions(options.projectRoot || process.cwd());
+    this._gateOptions = { ...configGateOptions, ...(options.gateOptions || {}) };
+    this._gates = { ...DEFAULT_QUALITY_GATES, ...QualityGate._flattenGateThresholds(this._gateOptions), ...options.qualityGates };
     this._recordIssue = options.recordIssue;
     this._cheapLlmCall = typeof options.cheapLlmCall === 'function' ? options.cheapLlmCall : null;
 
@@ -81,6 +86,57 @@ class QualityGate {
     this._consecutiveFailures = 0;
     this._mapeCooldownMs = options.mapeCooldownMs || 300000; // 5 min cooldown
     this._lastMapeTrigger = 0;
+  }
+
+  static _loadConfiguredGateOptions(projectRoot) {
+    try {
+      const p = path.resolve(projectRoot || process.cwd(), 'workflow.config.js');
+      if (!fs.existsSync(p)) return {};
+      // Safe load: read raw source, extract the phase2.qualityGates object without
+      // executing arbitrary code or invalidating module caches with delete require.cache.
+      const raw = fs.readFileSync(p, 'utf-8');
+      const gatesMatch = raw.match(/phase2\s*:\s*\{[\s\S]*?qualityGates\s*:\s*(\{[\s\S]*?\})\s*[,}]/);
+      if (gatesMatch) {
+        try {
+          // Use Function constructor as a safe evaluator — no filesystem/side-effects.
+          const evaluator = new Function(`return (${gatesMatch[1]})`);
+          const parsed = evaluator();
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+        } catch (_) { /* fall through to require-based fallback */ }
+      }
+      // Fallback: still use require() for complex configs, but without cache invalidation
+      try {
+        const config = require(p);
+        return (config && config.phase2 && config.phase2.qualityGates) || {};
+      } catch (_) { return {}; }
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static _flattenGateThresholds(gateOptions = {}) {
+    const flat = {};
+    if (gateOptions.lintPassRate?.minPassRate !== undefined) flat.minLintPassRate = gateOptions.lintPassRate.minPassRate;
+    if (gateOptions.cveAuditGate?.maxCritical !== undefined) flat.maxCriticalCves = gateOptions.cveAuditGate.maxCritical;
+    if (gateOptions.integrationCoverage?.minTests !== undefined) flat.minIntegrationTests = gateOptions.integrationCoverage.minTests;
+
+    // O-1: Propagate severity field — maps config severity ('HIGH'|'MED'|'LOW') to advisory flag.
+    // 'MED' or 'LOW' → advisory (non-blocking); 'HIGH' or absent → blocking.
+    const severityToAdvisory = (name) => {
+      const sev = gateOptions[name]?.severity;
+      return sev === 'MED' || sev === 'LOW';
+    };
+    flat._advisoryMap = {}; // lazy-evaluated per gate via this._gates._advisoryMap
+    for (const name of ['lintPassRate', 'cveAuditGate', 'noHardcodedSecrets', 'noCircularDep', 'interfaceValid', 'integrationCoverage', 'allAcVerified', 'allReqCovered']) {
+      flat._severityMap = flat._severityMap || {};
+      flat._severityMap[name] = gateOptions[name]?.severity || 'HIGH';
+    }
+    return flat;
+  }
+
+  _isGateEnabled(name) {
+    const opt = this._gateOptions?.[name];
+    return !opt || opt.enabled !== false;
   }
 
   /**
@@ -165,12 +221,15 @@ class QualityGate {
     const gates = [];
     const reflections = [];
     const g = gateConfig;
+    let eng = null;
+    try { eng = new GateEngine(); } catch (_) { /* fallback to inline checks */ }
 
     // Gate 1: Error count
     const errorCount = metrics.errors?.count || 0;
+    const errCheck = eng ? eng.checkErrorCount(errorCount, validationType) : null;
     gates.push({
       name: 'maxErrorCount',
-      passed: errorCount <= g.maxErrorCount,
+      passed: errCheck ? errCheck.pass : errorCount <= g.maxErrorCount,
       actual: errorCount,
       threshold: g.maxErrorCount,
       message: errorCount <= g.maxErrorCount
@@ -183,9 +242,10 @@ class QualityGate {
       const { passed: tp = 0, failed: tf = 0 } = metrics.testResult;
       const total = tp + tf;
       const passRate = total > 0 ? tp / total : 1;
+      const tpCheck = eng ? eng.checkTestPassRate(passRate, g.minTestPassRate) : null;
       gates.push({
         name: 'minTestPassRate',
-        passed: passRate >= g.minTestPassRate,
+        passed: tpCheck ? tpCheck.pass : passRate >= g.minTestPassRate,
         actual: `${(passRate * 100).toFixed(0)}%`,
         threshold: `${(g.minTestPassRate * 100).toFixed(0)}%`,
         message: passRate >= g.minTestPassRate
@@ -196,9 +256,10 @@ class QualityGate {
 
     // Gate 3: Duration
     const duration = metrics.totalDurationMs || 0;
+    const durCheck = eng ? eng.checkDuration(duration, validationType) : null;
     gates.push({
       name: 'maxDurationMs',
-      passed: duration <= g.maxDurationMs,
+      passed: durCheck ? durCheck.pass : duration <= g.maxDurationMs,
       actual: `${(duration / 1000).toFixed(1)}s`,
       threshold: `${(g.maxDurationMs / 1000).toFixed(1)}s`,
       message: duration <= g.maxDurationMs
@@ -206,11 +267,12 @@ class QualityGate {
         : `Duration exceeded (${(duration / 1000).toFixed(1)}s > ${(g.maxDurationMs / 1000).toFixed(1)}s)`,
     });
 
-    // Gate 4: LLM call count (detect retry storms)
+    // Gate 4: LLM call count
     const llmCalls = metrics.llm?.totalCalls || 0;
+    const llmCheck = eng ? eng.checkLlmCalls(llmCalls, validationType) : null;
     gates.push({
       name: 'maxLlmCalls',
-      passed: llmCalls <= g.maxLlmCalls,
+      passed: llmCheck ? llmCheck.pass : llmCalls <= g.maxLlmCalls,
       actual: llmCalls,
       threshold: g.maxLlmCalls,
       message: llmCalls <= g.maxLlmCalls
@@ -218,18 +280,63 @@ class QualityGate {
         : `LLM call count high \u2014 possible retry storm (${llmCalls} > ${g.maxLlmCalls})`,
     });
 
-    // Gate 5: Token waste ratio (if blockTelemetry available)
+    // Gate 5: Token waste ratio
     if (metrics.blockTelemetry?.summary) {
       const { totalInjected = 0, totalDropped = 0 } = metrics.blockTelemetry.summary;
       const wasteRatio = totalInjected > 0 ? totalDropped / totalInjected : 0;
+      const twCheck = eng ? eng.checkTokenWasteRatio(wasteRatio, g.maxTokenWasteRatio) : null;
       gates.push({
         name: 'maxTokenWasteRatio',
-        passed: wasteRatio <= g.maxTokenWasteRatio,
+        passed: twCheck ? twCheck.pass : wasteRatio <= g.maxTokenWasteRatio,
         actual: `${(wasteRatio * 100).toFixed(0)}%`,
         threshold: `${(g.maxTokenWasteRatio * 100).toFixed(0)}%`,
         message: wasteRatio <= g.maxTokenWasteRatio
           ? `Token waste acceptable (${(wasteRatio * 100).toFixed(0)}% \u2264 ${(g.maxTokenWasteRatio * 100).toFixed(0)}%)`
           : `Token waste too high (${(wasteRatio * 100).toFixed(0)}% > ${(g.maxTokenWasteRatio * 100).toFixed(0)}%)`,
+      });
+    }
+
+    // Gate 5.5: Quarantine ratio (Knowledge Safety Guard)
+    // Advisory-only: warns if quarantined experiences exceed threshold.
+    const quarantineThreshold = gateConfig.quarantineThreshold ?? 0.05;
+    if (this._experienceStore && typeof this._experienceStore.getAll === 'function') {
+      try {
+        const allExps = this._experienceStore.getAll();
+        const total = allExps.length;
+        const quarantined = allExps.filter(e => e.safetyStatus === 'quarantine').length;
+        const ratio = total > 0 ? quarantined / total : 0;
+        gates.push({
+          name: 'quarantineRatio',
+          passed: ratio <= quarantineThreshold,
+          advisory: true,
+          actual: `${(ratio * 100).toFixed(1)}% (${quarantined}/${total})`,
+          threshold: `${(quarantineThreshold * 100).toFixed(0)}%`,
+          message: ratio <= quarantineThreshold
+            ? `Quarantine ratio OK (${(ratio * 100).toFixed(1)}% ≤ ${(quarantineThreshold * 100).toFixed(0)}%)`
+            : `Quarantine ratio elevated (${(ratio * 100).toFixed(1)}% > ${(quarantineThreshold * 100).toFixed(0)}%) — review quarantined experiences`,
+        });
+      } catch (_) {
+        // Non-blocking: skip if experience store unavailable
+      }
+    }
+
+    // Gate 5.6: Skill compliance score (M-9 SkillComplianceMeter)
+    // audit/warn modes are advisory; enforce mode becomes a hard QualityGate failure.
+    const complianceReport = metrics.skillCompliance || QualityGate._loadSkillComplianceReport(metrics.projectRoot);
+    if (complianceReport && Number.isFinite(Number(complianceReport.overallScore))) {
+      const complianceScore = Number(complianceReport.overallScore);
+      const minCompliance = Number.isFinite(Number(g.minComplianceScore)) ? Number(g.minComplianceScore) : 0.8;
+      const complianceMode = complianceReport.mode || 'audit';
+      const compliancePassed = complianceScore >= minCompliance;
+      gates.push({
+        name: 'minComplianceScore',
+        passed: compliancePassed,
+        advisory: complianceMode !== 'enforce',
+        actual: `${(complianceScore * 100).toFixed(1)}%`,
+        threshold: `${(minCompliance * 100).toFixed(1)}%`,
+        message: compliancePassed
+          ? `Skill compliance OK (${(complianceScore * 100).toFixed(1)}% ≥ ${(minCompliance * 100).toFixed(1)}%)`
+          : `Skill compliance below threshold (${(complianceScore * 100).toFixed(1)}% < ${(minCompliance * 100).toFixed(1)}%, mode=${complianceMode})`,
       });
     }
 
@@ -266,6 +373,278 @@ class QualityGate {
             : `Modified file size violations: ${modifiedViolations.map(v => `${v.file} (${v.lines}/${v.limit})`).join(', ')}`,
         });
       }
+    }
+
+    // Gate 7: Task completion — all T-N tasks must be done before TEST
+    // Reads output/task-status.json. 'partial' status (subtasks partially done) is non-blocking.
+    try {
+      const statusPath = path.join(metrics.projectRoot || '.', 'output', 'task-status.json');
+      if (fs.existsSync(statusPath)) {
+        const tasks = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+        if (Array.isArray(tasks) && tasks.length > 0) {
+          const failed = tasks.filter(t => t.status === 'failed');
+          const partial = tasks.filter(t => t.status === 'partial');
+          const done = tasks.filter(t => t.status === 'done');
+          const allDone = failed.length === 0;
+          const summary = `${done.length}/${tasks.length} done` + (partial.length > 0 ? `, ${partial.length} partial` : '') + (failed.length > 0 ? `, ${failed.length} failed` : '');
+          gates.push({
+            name: 'allTasksComplete',
+            passed: allDone,
+            actual: allDone ? summary : `${failed.map(t => t.id).join(', ')} failed (${summary})`,
+            threshold: 'no failed tasks (partial OK)',
+            message: allDone
+              ? `All tasks completed or partially done (${summary})`
+              : `${failed.length}/${tasks.length} task(s) FAILED: ${failed.map(t => t.id).join(', ')}`,
+          });
+        }
+      }
+    } catch (_) { /* task-status.json missing or corrupt — skip gate */ }
+
+    // Gate 8: Requirements check completion — all HIGH CHKs must pass before TEST succeeds
+    // Reads test-report.md to find CHK status table
+    try {
+      const statusPath = path.join(metrics.projectRoot || '.', 'output', 'test-report.md');
+      if (fs.existsSync(statusPath)) {
+        const report = fs.readFileSync(statusPath, 'utf-8');
+        // Match CHK status rows: | CHK-1.1 | ... | ✅ PASS or ❌ FAIL |
+        const highFailMatches = report.match(/\| CHK-[\d.]+ \|.*\| (?:HIGH) \|.*\| ❌ FAIL/gi);
+        const highPassMatches = report.match(/\| CHK-[\d.]+ \|.*\| (?:HIGH) \|.*\| ✅ PASS/gi);
+        const highTotal = (highPassMatches?.length || 0) + (highFailMatches?.length || 0);
+        if (highTotal > 0) {
+          const highFailed = highFailMatches?.length || 0;
+          const allPassed = highFailed === 0;
+          gates.push({
+            name: 'allChecksPassed',
+            passed: allPassed,
+            actual: allPassed ? `${highTotal}/${highTotal} HIGH CHKs passed` : `${highTotal - highFailed}/${highTotal} HIGH CHKs passed (${highFailed} FAILED)`,
+            threshold: 'all HIGH CHKs must pass',
+            message: allPassed
+              ? `All ${highTotal} HIGH-priority check(s) passed`
+              : `${highFailed} HIGH-priority check(s) FAILED — TEST cannot complete`,
+          });
+        }
+      }
+    } catch (_) { /* test-report.md missing or corrupt — skip gate */ }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  NEW GATES: 功能完整性 + 代码质量 + 整合度
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Gate 9: allAcVerified — all ACs must be covered by at least one task
+    try {
+      const statusPath2 = path.join(metrics.projectRoot || '.', 'output', 'task-status.json');
+      const planPath2 = path.join(metrics.projectRoot || '.', 'output', 'execution-plan.md');
+      if (fs.existsSync(statusPath2) && fs.existsSync(planPath2)) {
+        const taskStatus = JSON.parse(fs.readFileSync(statusPath2, 'utf-8'));
+        const planContent = fs.readFileSync(planPath2, 'utf-8');
+        const jsonMatch = planContent.match(/```json\s*([\s\S]*?)```/);
+        if (jsonMatch && Array.isArray(taskStatus)) {
+          const planJson = JSON.parse(jsonMatch[1]);
+          const adrLinkage = planJson.adrTaskLinkage;
+          if (this._isGateEnabled('allAcVerified') && adrLinkage && Array.isArray(adrLinkage.links)) {
+            const taskStatusMap = {};
+            for (const ts of taskStatus) taskStatusMap[ts.id] = ts.status || 'unknown';
+            const acceptable = status => status === 'done' || status === 'partial';
+            const linkedAcIds = new Set();
+            const uncovered = [];
+            for (const link of adrLinkage.links) {
+              const acIds = Array.isArray(link.acIds) && link.acIds.length > 0
+                ? link.acIds
+                : (/^AC-\d{3,}$/i.test(String(link.reqId)) ? [link.reqId] : []);
+              acIds.forEach(ac => linkedAcIds.add(String(ac).toUpperCase()));
+              const allCovered = (link.taskIds || []).every(tid => acceptable(taskStatusMap[tid]));
+              if (acIds.length > 0 && !allCovered) uncovered.push({ reqId: link.reqId, taskIds: link.taskIds, acs: acIds.join(',') });
+            }
+            let totalAcCount = linkedAcIds.size;
+            try {
+              const tracePath = path.join(metrics.projectRoot || '.', 'output', 'requirement-traceability.json');
+              if (fs.existsSync(tracePath)) {
+                const trace = JSON.parse(fs.readFileSync(tracePath, 'utf-8'));
+                const traceAcs = new Set();
+                for (const req of (trace.requirements || [])) {
+                  for (const ac of (req.acceptanceCriteria || [])) traceAcs.add(String(ac.id || ac).toUpperCase());
+                }
+                for (const ac of traceAcs) if (!linkedAcIds.has(ac)) uncovered.push({ reqId: ac, taskIds: [], acs: ac });
+                totalAcCount = traceAcs.size || totalAcCount;
+              }
+            } catch (_) { /* optional traceability check */ }
+            const passed = uncovered.length === 0;
+            gates.push({
+              name: 'allAcVerified',
+              passed,
+              actual: passed ? `${totalAcCount} ACs covered` : `${uncovered.length}/${Math.max(totalAcCount, linkedAcIds.size)} AC(s) uncovered or incomplete`,
+              threshold: 'all ACs must map to done/partial tasks',
+              message: passed
+                ? `All acceptance criteria are mapped to completed or partial-accepted tasks`
+                : `Uncovered/incomplete ACs: ${uncovered.map(u => `${u.reqId}(${u.acs})`).join(', ')}`,
+            });
+          }
+        }
+      }
+    } catch (_) { /* skip gate if data missing */ }
+
+    // Gate 10: allReqCovered — every REQ in adrTaskLinkage must have completed tasks
+    try {
+      const statusPath3 = path.join(metrics.projectRoot || '.', 'output', 'task-status.json');
+      const planPath3 = path.join(metrics.projectRoot || '.', 'output', 'execution-plan.md');
+      if (fs.existsSync(statusPath3) && fs.existsSync(planPath3)) {
+        const taskStatus = JSON.parse(fs.readFileSync(statusPath3, 'utf-8'));
+        const planContent = fs.readFileSync(planPath3, 'utf-8');
+        const jsonMatch = planContent.match(/```json\s*([\s\S]*?)```/);
+        if (jsonMatch && Array.isArray(taskStatus)) {
+          const planJson = JSON.parse(jsonMatch[1]);
+          const adrLinkage = planJson.adrTaskLinkage;
+          if (this._isGateEnabled('allReqCovered') && adrLinkage && Array.isArray(adrLinkage.links)) {
+            const taskStatusMap = {};
+            for (const ts of taskStatus) taskStatusMap[ts.id] = ts.status || 'unknown';
+            const acceptable = status => status === 'done' || status === 'partial';
+            const allReqIds = new Set(adrLinkage.links.map(l => String(l.reqId).toUpperCase()).filter(id => /^REQ-\d{3,}$/i.test(id)));
+            const uncoveredReqs = [];
+            for (const reqId of allReqIds) {
+              const links = adrLinkage.links.filter(l => String(l.reqId).toUpperCase() === reqId);
+              const allCovered = links.every(l => (l.taskIds || []).every(tid => acceptable(taskStatusMap[tid])));
+              if (!allCovered) uncoveredReqs.push(reqId);
+            }
+            const passed = uncoveredReqs.length === 0;
+            gates.push({
+              name: 'allReqCovered',
+              passed,
+              actual: passed ? `${allReqIds.size} REQs covered` : `${uncoveredReqs.length}/${allReqIds.size} REQs uncovered`,
+              threshold: 'all REQs must map to done/partial tasks',
+              message: passed
+                ? `All ${allReqIds.size} requirements covered by completed or partial-accepted tasks`
+                : `Uncovered requirements: ${uncoveredReqs.join(', ')}`,
+            });
+          }
+        }
+      }
+    } catch (_) { /* skip gate if data missing */ }
+
+    // Gate 11: lintPassRate — modified files must pass lint at configured threshold
+    // Gate 11: lintPassRate
+    if (this._isGateEnabled('lintPassRate') && metrics.lint && Number.isFinite(metrics.lint.passRate)) {
+      const minLintRate = gateConfig.minLintPassRate ?? 0.80;
+      const lintCheck = eng ? eng.checkLintPassRate(metrics.lint.passRate, minLintRate) : null;
+      const passed = lintCheck ? lintCheck.pass : metrics.lint.passRate >= minLintRate;
+      gates.push({
+        name: 'lintPassRate',
+        passed,
+        actual: `${(metrics.lint.passRate * 100).toFixed(0)}% (${metrics.lint.passed || 0}/${(metrics.lint.total || 0)})`,
+        threshold: `${(minLintRate * 100).toFixed(0)}%`,
+        message: passed
+          ? `Lint pass rate OK (${(metrics.lint.passRate * 100).toFixed(0)}% ≥ ${(minLintRate * 100).toFixed(0)}%)`
+          : `Lint pass rate too low (${(metrics.lint.passRate * 100).toFixed(0)}% < ${(minLintRate * 100).toFixed(0)}%)`,
+      });
+    }
+
+    // Gate 12: cveAuditGate — uses GateEngine
+    if (this._isGateEnabled('cveAuditGate') && metrics.cve) {
+      const criticalCount = metrics.cve.critical || 0;
+      const highCount = metrics.cve.high || 0;
+      const maxCritical = Number.isFinite(Number(g.maxCriticalCves)) ? Number(g.maxCriticalCves) : 0;
+      const cveCheck = eng ? eng.checkCriticalCves([{id:'cve',count:criticalCount}], maxCritical) : null;
+      const passed = cveCheck ? cveCheck.pass : criticalCount <= maxCritical;
+      gates.push({
+        name: 'cveAuditGate',
+        passed,
+        actual: `${criticalCount} CRITICAL, ${highCount} HIGH`,
+        threshold: `${maxCritical} CRITICAL CVEs`,
+        message: passed
+          ? `CRITICAL CVEs within limit (${criticalCount} ≤ ${maxCritical})`
+          : `${criticalCount} CRITICAL CVE(s) found — must upgrade affected dependencies`,
+      });
+    }
+
+    // Gate 13: noHardcodedSecrets — no hardcoded secrets in modified files
+    if (this._isGateEnabled('noHardcodedSecrets') && metrics.secrets) {
+      const secretCount = metrics.secrets.violations || 0;
+      const passed = secretCount === 0;
+      gates.push({
+        name: 'noHardcodedSecrets',
+        passed,
+        actual: secretCount > 0 ? `${secretCount} violation(s): ${(metrics.secrets.details || []).slice(0, 3).join(', ')}` : '0 violations',
+        threshold: '0 hardcoded secrets',
+        message: passed
+          ? 'No hardcoded secrets detected'
+          : `${secretCount} hardcoded secret(s) detected — remove before proceeding`,
+      });
+    }
+
+    // Gate 14: noCircularDep — no circular dependencies introduced
+    if (this._isGateEnabled('noCircularDep') && metrics.deps) {
+      const hasCircular = metrics.deps.hasCircular || false;
+      const cycles = metrics.deps.cycles || [];
+      const passed = !hasCircular;
+      gates.push({
+        name: 'noCircularDep',
+        passed,
+        actual: hasCircular ? `${cycles.length} cycle(s): ${cycles.slice(0, 3).map(c => c.path.join('→')).join('; ')}` : '0 cycles',
+        threshold: '0 circular dependencies',
+        message: passed
+          ? 'No circular dependencies detected in modified files'
+          : `${cycles.length} circular dependency cycle(s) detected — refactor to break cycles`,
+      });
+    }
+
+    // Gate 15: interfaceValid — module interface contract self-consistency
+    // advisory-only: interface design is a creative process, gate warns but doesn't block
+    if (this._isGateEnabled('interfaceValid') && metrics.interfaces) {
+      const violations = metrics.interfaces.violations || 0;
+      const passed = violations === 0;
+      gates.push({
+        name: 'interfaceValid',
+        passed,
+        advisory: true,
+        actual: violations > 0 ? `${violations} violation(s)` : '0 violations',
+        threshold: '0 contract violations',
+        message: passed
+          ? 'Module interface contracts are self-consistent'
+          : `${violations} interface contract violation(s) detected — review before proceeding`,
+      });
+    }
+
+    // Gate 16: integrationCoverage — at least N integration tests exist
+    // Gate 16: integrationCoverage — uses GateEngine
+    if (this._isGateEnabled('integrationCoverage') && metrics.coverage) {
+      const integrationTests = metrics.coverage.integration || 0;
+      const minTests = gateConfig.minIntegrationTests ?? 1;
+      const intCheck = eng ? eng.checkIntegrationTests(integrationTests, minTests) : null;
+      const passed = intCheck ? intCheck.pass : integrationTests >= minTests;
+      gates.push({
+        name: 'integrationCoverage',
+        passed,
+        actual: `${integrationTests} integration test(s)`,
+        threshold: `≥${minTests} integration test(s)`,
+        advisory: true,
+        message: passed
+          ? `Integration test coverage OK (${integrationTests} ≥ ${minTests})`
+          : `Insufficient integration tests (${integrationTests} < ${minTests}) — consider adding cross-module tests`,
+      });
+    }
+
+    // Gate 17: Ephemeral file count — advisory warning
+    // Detected by EPHEMERAL_FILE_GUARD in stage-executor.js via git ls-files --others
+    // Primary source: context.orchestrator._ephemeralFileWarnings (in-process)
+    // Fallback: output/ephemeral-warnings.json (cross-process, e.g. bridge calls)
+    let ephemeralWarnings = context?.orchestrator?._ephemeralFileWarnings || [];
+    if (ephemeralWarnings.length === 0) {
+      try {
+        const warnPath = path.join(metrics.projectRoot || '.', 'output', 'ephemeral-warnings.json');
+        if (fs.existsSync(warnPath)) {
+          const persisted = JSON.parse(fs.readFileSync(warnPath, 'utf-8'));
+          ephemeralWarnings = persisted.warnings || [];
+        }
+      } catch (_) { /* non-blocking */ }
+    }
+    if (ephemeralWarnings.length > 3) {
+      gates.push({
+        name: 'maxEphemeralFiles',
+        passed: false,
+        advisory: true,
+        actual: `${ephemeralWarnings.length} temp file(s)`,
+        threshold: '≤3 temp files',
+        message: `${ephemeralWarnings.length} ephemeral file(s) detected across ${new Set(ephemeralWarnings.map(w => w.stage)).size} stage(s). Consider using node -e "..." for one-off checks.`,
+      });
     }
 
     // ─── EvoSkill: Diagnostic Mode Handling ─────────────────────────────────────
@@ -634,6 +1013,19 @@ Keep total output under 500 characters. Be specific and actionable.`;
     return diagnostic;
   }
 
+  // ─── Skill Compliance Report Loader ───────────────────────────────────
+
+  static _loadSkillComplianceReport(projectRoot) {
+    if (!projectRoot) return null;
+    try {
+      const reportPath = path.join(projectRoot, 'output', 'skill-compliance-report.json');
+      if (!fs.existsSync(reportPath)) return null;
+      return JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ─── File Size Compliance Check ───────────────────────────────────────
 
   /**
@@ -728,28 +1120,52 @@ Keep total output under 500 characters. Be specific and actionable.`;
    * @param {number} rollbackCount - Current rollback count for this stage
    * @returns {{ pass: boolean, rollback: boolean, reason: string, riskNotes: string[] }}
    */
-  evaluate(reviewResult, workflowState, rollbackCount = 0) {
+  evaluate(reviewResult, workflowState, rollbackCount = 0, metricsOpts = {}) {
     const failures = reviewResult?.failures || [];
     const riskNotes = reviewResult?.riskNotes || [];
     const needsHumanReview = reviewResult?.needsHumanReview || false;
     const maxRollbacks = this._gates.maxRollbacks || 1;
 
     // Determine pass/fail based on failures and human review flag
-    const pass = failures.length === 0 && !needsHumanReview;
+    let pass = failures.length === 0 && !needsHumanReview;
 
     // Determine if rollback is recommended
     const canRollback = rollbackCount < maxRollbacks;
-    const shouldRollback = !pass && canRollback && failures.some(f => {
+    let shouldRollback = !pass && canRollback && failures.some(f => {
       // Check if any failure is high severity
       const item = reviewResult?.allResults?.find(r => r.id === f.id);
       return item?.severity === 'high' || f.severity === 'high';
     });
 
-    const reason = pass
-      ? `All ${reviewResult?.totalItems || 0} checklist items passed`
-      : `${failures.length} failure(s), ${riskNotes.length} risk note(s)${needsHumanReview ? ', needs human review' : ''}`;
+    // ── Integration: merge metrics-based gate (chain B) results into review-based decision (chain A) ──
+    let metricsFailures = [];
+    const { projectRoot, metrics } = metricsOpts;
+    if (projectRoot || metrics) {
+      try {
+        const effectiveMetrics = metrics || {};
+        if (projectRoot) effectiveMetrics.projectRoot = projectRoot;
+        const metricsResult = this._validateInternal(effectiveMetrics, this._gates, workflowState);
+        metricsFailures = metricsResult.gates
+          .filter(g => !g.passed && !g.advisory)
+          .map(g => ({ id: g.name, severity: 'high', message: g.message }));
 
-    console.log(`[QualityGate] 📊 evaluate(${workflowState}): pass=${pass}, rollback=${shouldRollback}, failures=${failures.length}, rollbackCount=${rollbackCount}/${maxRollbacks}`);
+        if (metricsFailures.length > 0) {
+          pass = false;
+          shouldRollback = canRollback; // HIGH metric failures should trigger rollback
+          console.warn(`[QualityGate] 🔗 Chain merge: ${metricsFailures.length} metric gate(s) failed — overriding review decision`);
+        }
+      } catch (mergeErr) {
+        const msg = `[QualityGate] metrics merge failed: ${mergeErr.message}`;
+        console.warn(msg);
+        riskNotes.push(msg);
+      }
+    }
+
+    const reason = pass
+      ? `All ${reviewResult?.totalItems || 0} checklist items passed` + (metricsFailures.length > 0 ? '' : '')
+      : `${failures.length} failure(s)${metricsFailures.length > 0 ? ` + ${metricsFailures.length} metric failure(s)` : ''}, ${riskNotes.length} risk note(s)${needsHumanReview ? ', needs human review' : ''}`;
+
+    console.log(`[QualityGate] 📊 evaluate(${workflowState}): pass=${pass}, rollback=${shouldRollback}, failures=${failures.length}, metricsFailures=${metricsFailures.length}, rollbackCount=${rollbackCount}/${maxRollbacks}`);
 
     return {
       pass,
@@ -757,6 +1173,7 @@ Keep total output under 500 characters. Be specific and actionable.`;
       reason,
       riskNotes,
       failures,
+      metricsFailures,
       rollbackCount,
     };
   }
