@@ -166,7 +166,7 @@ class PostCodeQualityGuard {
     const synCheck = new GateEngine().checkSyntaxValidity(findings);
     return {
       phase: PHASE.SYNTAX,
-      blocked: synCheck ? !synCheck.pass : errorCount > this._cfg.maxSyntaxErrors,
+      blocked: !synCheck.pass,
       errorCount,
       warningCount: 0,
       skippedFiles: skipped,

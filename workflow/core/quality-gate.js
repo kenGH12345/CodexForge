@@ -221,78 +221,67 @@ class QualityGate {
     const gates = [];
     const reflections = [];
     const g = gateConfig;
-    let eng = null;
-    try { eng = new GateEngine(); } catch (_) { /* fallback to inline checks */ }
+    const eng = new GateEngine();
 
-    // Gate 1: Error count
+    // Gate 1: Error count (→ GateEngine)
     const errorCount = metrics.errors?.count || 0;
-    const errCheck = eng ? eng.checkErrorCount(errorCount, validationType) : null;
+    const errCheck = eng.checkErrorCount(errorCount, validationType);
     gates.push({
       name: 'maxErrorCount',
-      passed: errCheck ? errCheck.pass : errorCount <= g.maxErrorCount,
-      actual: errorCount,
-      threshold: g.maxErrorCount,
-      message: errorCount <= g.maxErrorCount
-        ? `Errors within limit (${errorCount} \u2264 ${g.maxErrorCount})`
-        : `Error count exceeded (${errorCount} > ${g.maxErrorCount})`,
+      passed: errCheck.pass,
+      actual: errCheck.actual,
+      threshold: errCheck.threshold,
+      message: errCheck.reason || `Error count within limit`,
     });
 
-    // Gate 2: Test pass rate
+    // Gate 2: Test pass rate (→ GateEngine)
     if (metrics.testResult) {
       const { passed: tp = 0, failed: tf = 0 } = metrics.testResult;
       const total = tp + tf;
       const passRate = total > 0 ? tp / total : 1;
-      const tpCheck = eng ? eng.checkTestPassRate(passRate, g.minTestPassRate) : null;
+      const tpCheck = eng.checkTestPassRate(passRate, g.minTestPassRate);
       gates.push({
         name: 'minTestPassRate',
-        passed: tpCheck ? tpCheck.pass : passRate >= g.minTestPassRate,
+        passed: tpCheck.pass,
         actual: `${(passRate * 100).toFixed(0)}%`,
-        threshold: `${(g.minTestPassRate * 100).toFixed(0)}%`,
-        message: passRate >= g.minTestPassRate
-          ? `Test pass rate OK (${(passRate * 100).toFixed(0)}% \u2265 ${(g.minTestPassRate * 100).toFixed(0)}%)`
-          : `Test pass rate too low (${(passRate * 100).toFixed(0)}% < ${(g.minTestPassRate * 100).toFixed(0)}%)`,
+        threshold: `${Math.round(tpCheck.threshold * 100)}%`,
+        message: tpCheck.reason || `Test pass rate ${tpCheck.pass ? 'OK' : 'too low'}`,
       });
     }
 
-    // Gate 3: Duration
+    // Gate 3: Duration (→ GateEngine)
     const duration = metrics.totalDurationMs || 0;
-    const durCheck = eng ? eng.checkDuration(duration, validationType) : null;
+    const durCheck = eng.checkDuration(duration, validationType);
     gates.push({
       name: 'maxDurationMs',
-      passed: durCheck ? durCheck.pass : duration <= g.maxDurationMs,
+      passed: durCheck.pass,
       actual: `${(duration / 1000).toFixed(1)}s`,
-      threshold: `${(g.maxDurationMs / 1000).toFixed(1)}s`,
-      message: duration <= g.maxDurationMs
-        ? `Duration within limit (${(duration / 1000).toFixed(1)}s \u2264 ${(g.maxDurationMs / 1000).toFixed(1)}s)`
-        : `Duration exceeded (${(duration / 1000).toFixed(1)}s > ${(g.maxDurationMs / 1000).toFixed(1)}s)`,
+      threshold: durCheck.threshold != null ? `${Math.round(durCheck.threshold / 1000)}s` : `${(g.maxDurationMs / 1000).toFixed(1)}s`,
+      message: durCheck.reason || `Duration within limit`,
     });
 
-    // Gate 4: LLM call count
+    // Gate 4: LLM call count (→ GateEngine)
     const llmCalls = metrics.llm?.totalCalls || 0;
-    const llmCheck = eng ? eng.checkLlmCalls(llmCalls, validationType) : null;
+    const llmCheck = eng.checkLlmCalls(llmCalls, validationType);
     gates.push({
       name: 'maxLlmCalls',
-      passed: llmCheck ? llmCheck.pass : llmCalls <= g.maxLlmCalls,
-      actual: llmCalls,
-      threshold: g.maxLlmCalls,
-      message: llmCalls <= g.maxLlmCalls
-        ? `LLM calls within limit (${llmCalls} \u2264 ${g.maxLlmCalls})`
-        : `LLM call count high \u2014 possible retry storm (${llmCalls} > ${g.maxLlmCalls})`,
+      passed: llmCheck.pass,
+      actual: llmCheck.actual,
+      threshold: llmCheck.threshold,
+      message: llmCheck.reason || `LLM call count ${llmCheck.pass ? 'OK' : 'too high'}`,
     });
 
-    // Gate 5: Token waste ratio
+    // Gate 5: Token waste ratio (→ GateEngine)
     if (metrics.blockTelemetry?.summary) {
       const { totalInjected = 0, totalDropped = 0 } = metrics.blockTelemetry.summary;
       const wasteRatio = totalInjected > 0 ? totalDropped / totalInjected : 0;
-      const twCheck = eng ? eng.checkTokenWasteRatio(wasteRatio, g.maxTokenWasteRatio) : null;
+      const twCheck = eng.checkTokenWasteRatio(wasteRatio, g.maxTokenWasteRatio);
       gates.push({
         name: 'maxTokenWasteRatio',
-        passed: twCheck ? twCheck.pass : wasteRatio <= g.maxTokenWasteRatio,
+        passed: twCheck.pass,
         actual: `${(wasteRatio * 100).toFixed(0)}%`,
-        threshold: `${(g.maxTokenWasteRatio * 100).toFixed(0)}%`,
-        message: wasteRatio <= g.maxTokenWasteRatio
-          ? `Token waste acceptable (${(wasteRatio * 100).toFixed(0)}% \u2264 ${(g.maxTokenWasteRatio * 100).toFixed(0)}%)`
-          : `Token waste too high (${(wasteRatio * 100).toFixed(0)}% > ${(g.maxTokenWasteRatio * 100).toFixed(0)}%)`,
+        threshold: `${Math.round(twCheck.threshold * 100)}%`,
+        message: twCheck.reason || `Token waste ${twCheck.pass ? 'OK' : 'too high'}`,
       });
     }
 
@@ -520,38 +509,31 @@ class QualityGate {
       }
     } catch (_) { /* skip gate if data missing */ }
 
-    // Gate 11: lintPassRate — modified files must pass lint at configured threshold
-    // Gate 11: lintPassRate
+    // Gate 11: lintPassRate (→ GateEngine)
     if (this._isGateEnabled('lintPassRate') && metrics.lint && Number.isFinite(metrics.lint.passRate)) {
       const minLintRate = gateConfig.minLintPassRate ?? 0.80;
-      const lintCheck = eng ? eng.checkLintPassRate(metrics.lint.passRate, minLintRate) : null;
-      const passed = lintCheck ? lintCheck.pass : metrics.lint.passRate >= minLintRate;
+      const lintCheck = eng.checkLintPassRate(metrics.lint.passRate, minLintRate);
       gates.push({
         name: 'lintPassRate',
-        passed,
+        passed: lintCheck.pass,
         actual: `${(metrics.lint.passRate * 100).toFixed(0)}% (${metrics.lint.passed || 0}/${(metrics.lint.total || 0)})`,
-        threshold: `${(minLintRate * 100).toFixed(0)}%`,
-        message: passed
-          ? `Lint pass rate OK (${(metrics.lint.passRate * 100).toFixed(0)}% ≥ ${(minLintRate * 100).toFixed(0)}%)`
-          : `Lint pass rate too low (${(metrics.lint.passRate * 100).toFixed(0)}% < ${(minLintRate * 100).toFixed(0)}%)`,
+        threshold: `${Math.round(lintCheck.threshold * 100)}%`,
+        message: lintCheck.reason || `Lint pass rate ${lintCheck.pass ? 'OK' : 'too low'}`,
       });
     }
 
-    // Gate 12: cveAuditGate — uses GateEngine
+    // Gate 12: cveAuditGate (→ GateEngine)
     if (this._isGateEnabled('cveAuditGate') && metrics.cve) {
       const criticalCount = metrics.cve.critical || 0;
       const highCount = metrics.cve.high || 0;
       const maxCritical = Number.isFinite(Number(g.maxCriticalCves)) ? Number(g.maxCriticalCves) : 0;
-      const cveCheck = eng ? eng.checkCriticalCves([{id:'cve',count:criticalCount}], maxCritical) : null;
-      const passed = cveCheck ? cveCheck.pass : criticalCount <= maxCritical;
+      const cveCheck = eng.checkCriticalCves([{id:'cve',count:criticalCount}], maxCritical);
       gates.push({
         name: 'cveAuditGate',
-        passed,
+        passed: cveCheck.pass,
         actual: `${criticalCount} CRITICAL, ${highCount} HIGH`,
         threshold: `${maxCritical} CRITICAL CVEs`,
-        message: passed
-          ? `CRITICAL CVEs within limit (${criticalCount} ≤ ${maxCritical})`
-          : `${criticalCount} CRITICAL CVE(s) found — must upgrade affected dependencies`,
+        message: cveCheck.reason || `CVE audit ${cveCheck.pass ? 'OK' : 'failed'}`,
       });
     }
 
@@ -603,22 +585,18 @@ class QualityGate {
       });
     }
 
-    // Gate 16: integrationCoverage — at least N integration tests exist
-    // Gate 16: integrationCoverage — uses GateEngine
+    // Gate 16: integrationCoverage (→ GateEngine)
     if (this._isGateEnabled('integrationCoverage') && metrics.coverage) {
       const integrationTests = metrics.coverage.integration || 0;
       const minTests = gateConfig.minIntegrationTests ?? 1;
-      const intCheck = eng ? eng.checkIntegrationTests(integrationTests, minTests) : null;
-      const passed = intCheck ? intCheck.pass : integrationTests >= minTests;
+      const intCheck = eng.checkIntegrationTests(integrationTests, minTests);
       gates.push({
         name: 'integrationCoverage',
-        passed,
+        passed: intCheck.pass,
         actual: `${integrationTests} integration test(s)`,
         threshold: `≥${minTests} integration test(s)`,
         advisory: true,
-        message: passed
-          ? `Integration test coverage OK (${integrationTests} ≥ ${minTests})`
-          : `Insufficient integration tests (${integrationTests} < ${minTests}) — consider adding cross-module tests`,
+        message: intCheck.reason || `Integration test coverage ${intCheck.pass ? 'OK' : 'insufficient'}`,
       });
     }
 
